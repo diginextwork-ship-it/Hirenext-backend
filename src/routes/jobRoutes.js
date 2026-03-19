@@ -205,6 +205,8 @@ const allowedManualResumeStatuses = new Set([
   "dropout",
   "on_hold",
   "pending",
+  "billed",
+  "left",
 ]);
 
 router.get("/api/jobs", async (_req, res) => {
@@ -804,7 +806,9 @@ router.post(
         ? req.body.note
         : normalizedStatus === "verified"
           ? (req.body?.verifiedReason ?? req.body?.verified_reason)
-          : undefined;
+          : normalizedStatus === "left"
+            ? (req.body?.leftReason ?? req.body?.left_reason)
+            : undefined;
     const normalizedNote =
       rawNote === undefined || rawNote === null
         ? null
@@ -858,6 +862,7 @@ router.post(
           rejected: "rejectReason",
           joined: "joinedReason",
           dropout: "dropoutReason",
+          left: "leftReason",
         };
         const reasonField = statusReasonMap[normalizedStatus];
         const statusReasonValue = reasonField
@@ -874,6 +879,24 @@ router.post(
           toTrimmedString(
             existingSelectionRows[0]?.selectionStatus,
           ).toLowerCase() || "pending";
+
+        // "left" can only be set from "billed" and requires a note
+        if (normalizedStatus === "left") {
+          if (previousStatus !== "billed") {
+            await connection.rollback();
+            return res.status(400).json({
+              message:
+                "Cannot move to 'left' status. Only candidates in 'billed' status can be moved to 'left'.",
+            });
+          }
+          if (!normalizedNote) {
+            await connection.rollback();
+            return res.status(400).json({
+              message:
+                "A note (left_reason) is required when moving a candidate to 'left' status.",
+            });
+          }
+        }
 
         if (normalizedStatus === "pending") {
           await connection.query(
@@ -923,24 +946,42 @@ router.post(
           const rejectDelta =
             (normalizedStatus === "rejected" ? 1 : 0) -
             (previousStatus === "rejected" ? 1 : 0);
+          const billedDelta =
+            (normalizedStatus === "billed" ? 1 : 0) -
+            (previousStatus === "billed" ? 1 : 0);
+          const leftDelta =
+            (normalizedStatus === "left" ? 1 : 0) -
+            (previousStatus === "left" ? 1 : 0);
 
-          if (verifiedDelta !== 0 || selectDelta !== 0 || rejectDelta !== 0) {
+          if (
+            verifiedDelta !== 0 ||
+            selectDelta !== 0 ||
+            rejectDelta !== 0 ||
+            billedDelta !== 0 ||
+            leftDelta !== 0
+          ) {
             await connection.query(
-              `INSERT INTO status (recruiter_rid, submitted, verified, \`select\`, reject, last_updated)
-               VALUES (?, 0, ?, ?, ?, CURRENT_TIMESTAMP)
+              `INSERT INTO status (recruiter_rid, submitted, verified, \`select\`, reject, billed, \`left\`, last_updated)
+               VALUES (?, 0, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                ON DUPLICATE KEY UPDATE
                  verified = GREATEST(0, COALESCE(verified, 0) + ?),
                  \`select\` = GREATEST(0, COALESCE(\`select\`, 0) + ?),
                  reject = GREATEST(0, COALESCE(reject, 0) + ?),
+                 billed = GREATEST(0, COALESCE(billed, 0) + ?),
+                 \`left\` = GREATEST(0, COALESCE(\`left\`, 0) + ?),
                  last_updated = CURRENT_TIMESTAMP`,
               [
                 recruiterRid,
                 Math.max(0, verifiedDelta),
                 Math.max(0, selectDelta),
                 Math.max(0, rejectDelta),
+                Math.max(0, billedDelta),
+                Math.max(0, leftDelta),
                 verifiedDelta,
                 selectDelta,
                 rejectDelta,
+                billedDelta,
+                leftDelta,
               ],
             );
           }
@@ -970,6 +1011,149 @@ router.post(
     } catch (error) {
       return res.status(500).json({
         message: "Failed to update resume status.",
+        error: error.message,
+      });
+    }
+  },
+);
+
+// Recruiter endpoint: move own candidate from billed -> left with required note
+router.post(
+  "/api/jobs/:jid/resume-statuses/left",
+  requireAuth,
+  requireRoles("recruiter", "job creator", "team leader", "team_leader"),
+  async (req, res) => {
+    const normalizedResId = toTrimmedString(req.body?.resId);
+    const rawNote =
+      req.body?.note ?? req.body?.leftReason ?? req.body?.left_reason;
+    const normalizedNote =
+      rawNote === undefined || rawNote === null
+        ? null
+        : toTrimmedString(rawNote);
+    const actorRid = toTrimmedString(req.auth?.rid);
+    const jobJid = normalizeJobJid(req.params.jid);
+
+    if (!normalizedResId) {
+      return res.status(400).json({ message: "resId is required." });
+    }
+    if (!jobJid) {
+      return res.status(400).json({ message: "Valid job jid is required." });
+    }
+    if (!normalizedNote) {
+      return res.status(400).json({
+        message:
+          "A note (left_reason) is required when moving a candidate to 'left' status.",
+      });
+    }
+
+    try {
+      const connection = await pool.getConnection();
+      try {
+        await connection.beginTransaction();
+
+        const [resumeRows] = await connection.query(
+          `SELECT
+            rd.res_id AS resId,
+            rd.job_jid AS jobJid,
+            rd.rid AS recruiterRid,
+            rd.applicant_name AS candidateName,
+            rd.applicant_email AS email
+           FROM resumes_data rd
+           WHERE rd.res_id = ? AND rd.job_jid = ?
+           LIMIT 1`,
+          [normalizedResId, jobJid],
+        );
+
+        if (resumeRows.length === 0) {
+          await connection.rollback();
+          return res
+            .status(404)
+            .json({ message: "Resume not found for this job." });
+        }
+
+        const recruiterRid = toTrimmedString(resumeRows[0].recruiterRid);
+        const authRole = normalizeRoleAlias(req.auth?.role);
+
+        // Recruiters can only move their own candidates
+        if (authRole === "recruiter" && recruiterRid !== actorRid) {
+          await connection.rollback();
+          return res.status(403).json({
+            message: "You can only update status for your own candidates.",
+          });
+        }
+
+        const [selectionRows] = await connection.query(
+          `SELECT selection_status AS selectionStatus
+           FROM job_resume_selection
+           WHERE job_jid = ? AND res_id = ?
+           LIMIT 1`,
+          [jobJid, normalizedResId],
+        );
+
+        const currentStatus =
+          toTrimmedString(selectionRows[0]?.selectionStatus).toLowerCase() ||
+          "pending";
+
+        if (currentStatus !== "billed") {
+          await connection.rollback();
+          return res.status(400).json({
+            message:
+              "Cannot move to 'left' status. Only candidates in 'billed' status can be moved to 'left'.",
+          });
+        }
+
+        await connection.query(
+          `UPDATE job_resume_selection
+           SET selection_status = 'left',
+               selection_note = ?,
+               selected_by_admin = ?,
+               selected_at = CURRENT_TIMESTAMP
+           WHERE job_jid = ? AND res_id = ?`,
+          [normalizedNote, actorRid || "recruiter", jobJid, normalizedResId],
+        );
+
+        await upsertExtraInfoFields(connection, {
+          resId: normalizedResId,
+          jobJid,
+          recruiterRid,
+          candidateName:
+            toTrimmedString(resumeRows[0].candidateName) || undefined,
+          email: toTrimmedString(resumeRows[0].email) || undefined,
+          leftReason: normalizedNote,
+        });
+
+        if (recruiterRid) {
+          await connection.query(
+            `INSERT INTO status (recruiter_rid, submitted, billed, \`left\`, last_updated)
+             VALUES (?, 0, 0, 1, CURRENT_TIMESTAMP)
+             ON DUPLICATE KEY UPDATE
+               billed = GREATEST(0, COALESCE(billed, 0) - 1),
+               \`left\` = GREATEST(0, COALESCE(\`left\`, 0) + 1),
+               last_updated = CURRENT_TIMESTAMP`,
+            [recruiterRid],
+          );
+        }
+
+        await connection.commit();
+        return res.status(200).json({
+          message: "Candidate moved from billed to left successfully.",
+          data: {
+            jobId: jobJid,
+            resId: normalizedResId,
+            status: "left",
+            leftReason: normalizedNote,
+            updatedBy: actorRid,
+          },
+        });
+      } catch (innerError) {
+        await connection.rollback();
+        throw innerError;
+      } finally {
+        connection.release();
+      }
+    } catch (error) {
+      return res.status(500).json({
+        message: "Failed to update candidate status to left.",
         error: error.message,
       });
     }
@@ -1580,4 +1764,84 @@ router.post("/api/applications", async (req, res) => {
   }
 });
 
+// --- Auto-billing: move "joined" candidates to "billed" after BILLING_PERIOD_DAYS ---
+const BILLING_PERIOD_DAYS = Math.max(
+  0,
+  Number(process.env.BILLING_PERIOD_DAYS) || 90,
+);
+
+const processBillingTransitions = async () => {
+  try {
+    const hasTable = await tableExists("job_resume_selection");
+    if (!hasTable) return { transitioned: 0 };
+
+    const hasBilledStatus = await columnExists("status", "billed");
+    if (!hasBilledStatus) return { transitioned: 0 };
+
+    // Find all "joined" candidates whose selected_at is older than the billing period
+    const [joinedRows] = await pool.query(
+      `SELECT jrs.id, jrs.job_jid, jrs.res_id, rd.rid AS recruiterRid
+       FROM job_resume_selection jrs
+       INNER JOIN resumes_data rd ON rd.res_id = jrs.res_id AND rd.job_jid = jrs.job_jid
+       WHERE jrs.selection_status = 'joined'
+         AND jrs.selected_at <= DATE_SUB(NOW(), INTERVAL ? DAY)`,
+      [BILLING_PERIOD_DAYS],
+    );
+
+    if (joinedRows.length === 0) return { transitioned: 0 };
+
+    let transitioned = 0;
+    for (const row of joinedRows) {
+      const connection = await pool.getConnection();
+      try {
+        await connection.beginTransaction();
+
+        await connection.query(
+          `UPDATE job_resume_selection
+           SET selection_status = 'billed',
+               selection_note = 'Auto-billed after billing period',
+               selected_at = CURRENT_TIMESTAMP
+           WHERE id = ? AND selection_status = 'joined'`,
+          [row.id],
+        );
+
+        if (row.recruiterRid) {
+          await connection.query(
+            `INSERT INTO status (recruiter_rid, submitted, billed, joined, last_updated)
+             VALUES (?, 0, 1, 0, CURRENT_TIMESTAMP)
+             ON DUPLICATE KEY UPDATE
+               billed = GREATEST(0, COALESCE(billed, 0) + 1),
+               joined = GREATEST(0, COALESCE(joined, 0) - 1),
+               last_updated = CURRENT_TIMESTAMP`,
+            [row.recruiterRid],
+          );
+        }
+
+        await connection.commit();
+        transitioned += 1;
+      } catch (innerError) {
+        await connection.rollback();
+        console.error(
+          `[auto-billing] Failed to transition res_id=${row.res_id}:`,
+          innerError.message,
+        );
+      } finally {
+        connection.release();
+      }
+    }
+
+    if (transitioned > 0) {
+      console.log(
+        `[auto-billing] Transitioned ${transitioned} candidate(s) from joined to billed`,
+      );
+    }
+
+    return { transitioned };
+  } catch (error) {
+    console.error("[auto-billing] Error:", error.message);
+    return { transitioned: 0, error: error.message };
+  }
+};
+
 module.exports = router;
+module.exports.processBillingTransitions = processBillingTransitions;

@@ -603,6 +603,9 @@ const ensureExtraInfoTable = async () => {
       "ALTER TABLE extra_info ADD COLUMN verified_reason TEXT NULL",
     );
   }
+  if (!(await columnExists("extra_info", "left_reason"))) {
+    await pool.query("ALTER TABLE extra_info ADD COLUMN left_reason TEXT NULL");
+  }
   if (!(await columnExists("extra_info", "updated_at"))) {
     await pool.query(
       "ALTER TABLE extra_info ADD COLUMN updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP",
@@ -849,6 +852,8 @@ const ensureJobResumeSelectionTable = async () => {
     "joined",
     "dropout",
     "on_hold",
+    "billed",
+    "left",
   ];
   const hasAllStatuses = requiredStatuses.every((status) =>
     selectionStatusType.includes(`'${status}'`),
@@ -858,7 +863,7 @@ const ensureJobResumeSelectionTable = async () => {
     await pool.query(
       `ALTER TABLE job_resume_selection
        MODIFY COLUMN selection_status
-       ENUM('verified','walk_in','selected','rejected','joined','dropout','on_hold')
+       ENUM('verified','walk_in','selected','rejected','joined','dropout','on_hold','billed','left')
        NOT NULL DEFAULT 'selected'`,
     );
   }
@@ -1090,6 +1095,14 @@ const ensureStatusTable = async () => {
 
   if (!(await columnExists("status", "dropout"))) {
     await pool.query("ALTER TABLE status ADD COLUMN dropout INT NULL");
+  }
+
+  if (!(await columnExists("status", "billed"))) {
+    await pool.query("ALTER TABLE status ADD COLUMN billed INT NULL");
+  }
+
+  if (!(await columnExists("status", "left"))) {
+    await pool.query("ALTER TABLE status ADD COLUMN `left` INT NULL");
   }
 
   if (!(await columnExists("status", "last_updated"))) {

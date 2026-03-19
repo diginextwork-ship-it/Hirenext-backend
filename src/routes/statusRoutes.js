@@ -94,6 +94,8 @@ const recruiterStatsSubquery = `
     SUM(CASE WHEN jrs.selection_status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
     SUM(CASE WHEN jrs.selection_status = 'joined' THEN 1 ELSE 0 END) AS joined,
     SUM(CASE WHEN jrs.selection_status = 'dropout' THEN 1 ELSE 0 END) AS dropout,
+    SUM(CASE WHEN jrs.selection_status = 'billed' THEN 1 ELSE 0 END) AS billed,
+    SUM(CASE WHEN jrs.selection_status = 'left' THEN 1 ELSE 0 END) AS \`left\`,
     MAX(COALESCE(jrs.selected_at, rd.uploaded_at)) AS last_updated,
     MIN(rd.uploaded_at) AS created_at
   FROM resumes_data rd
@@ -137,6 +139,8 @@ const buildCalculatedMetrics = (stats) => {
   const selected = toNullableNumber(stats.select);
   const joined = toNullableNumber(stats.joined);
   const dropout = toNullableNumber(stats.dropout);
+  const billed = toNullableNumber(stats.billed);
+  const left = toNullableNumber(stats.left);
 
   return {
     verificationRate:
@@ -155,6 +159,14 @@ const buildCalculatedMetrics = (stats) => {
       selected && selected > 0 && dropout !== null
         ? Number(((dropout / selected) * 100).toFixed(2))
         : null,
+    billingRate:
+      joined && joined > 0 && billed !== null
+        ? Number(((billed / (joined + billed + (left || 0))) * 100).toFixed(2))
+        : null,
+    leftRate:
+      billed && billed > 0 && left !== null
+        ? Number(((left / (billed + left)) * 100).toFixed(2))
+        : null,
   };
 };
 
@@ -166,6 +178,8 @@ const mapStats = (row) => ({
   reject: Number(row.reject) || 0,
   joined: Number(row.joined) || 0,
   dropout: Number(row.dropout) || 0,
+  billed: Number(row.billed) || 0,
+  left: Number(row.left) || 0,
   last_updated: row.last_updated || null,
   created_at: row.created_at || null,
 });
@@ -194,6 +208,8 @@ router.get(
           COALESCE(rs.rejected, 0) AS reject,
           COALESCE(rs.joined, 0) AS joined,
           COALESCE(rs.dropout, 0) AS dropout,
+          COALESCE(rs.billed, 0) AS billed,
+          COALESCE(rs.\`left\`, 0) AS \`left\`,
           rs.last_updated,
           rs.created_at
         FROM recruiter r
@@ -255,6 +271,8 @@ router.get(
       reject: "COALESCE(rs.rejected, 0)",
       joined: "COALESCE(rs.joined, 0)",
       dropout: "COALESCE(rs.dropout, 0)",
+      billed: "COALESCE(rs.billed, 0)",
+      left: "COALESCE(rs.`left`, 0)",
       points: "COALESCE(r.points, 0)",
       last_updated: "rs.last_updated",
     };
@@ -289,6 +307,8 @@ router.get(
           COALESCE(rs.rejected, 0) AS reject,
           COALESCE(rs.joined, 0) AS joined,
           COALESCE(rs.dropout, 0) AS dropout,
+          COALESCE(rs.billed, 0) AS billed,
+          COALESCE(rs.\`left\`, 0) AS \`left\`,
           rs.last_updated
         FROM recruiter r
         LEFT JOIN (${recruiterStatsSubquery}) rs ON r.rid = rs.recruiter_rid
@@ -321,6 +341,14 @@ router.get(
         (sum, item) => sum + item.stats.joined,
         0,
       );
+      const totalBilled = recruiters.reduce(
+        (sum, item) => sum + item.stats.billed,
+        0,
+      );
+      const totalLeft = recruiters.reduce(
+        (sum, item) => sum + item.stats.left,
+        0,
+      );
 
       return res.status(200).json({
         recruiters,
@@ -329,6 +357,8 @@ router.get(
           totalSubmitted,
           totalVerified,
           totalJoined,
+          totalBilled,
+          totalLeft,
           avgSubmittedPerRecruiter: recruiters.length
             ? Number((totalSubmitted / recruiters.length).toFixed(2))
             : 0,
@@ -454,7 +484,7 @@ router.get(
         : "1=1";
       const statsQueryParams = [];
       if (hasDateRange) {
-        for (let idx = 0; idx < 10; idx += 1) {
+        for (let idx = 0; idx < 12; idx += 1) {
           statsQueryParams.push(startDateTime, endExclusiveDateTime);
         }
       }
@@ -473,6 +503,8 @@ router.get(
           COALESCE(rs.rejected, 0) AS reject,
           COALESCE(rs.joined, 0) AS joined,
           COALESCE(rs.dropout, 0) AS dropout,
+          COALESCE(rs.billed, 0) AS billed,
+          COALESCE(rs.\`left\`, 0) AS \`left\`,
           rs.last_updated
         FROM recruiter r
         LEFT JOIN (
@@ -485,6 +517,8 @@ router.get(
             SUM(CASE WHEN jrs.selection_status = 'rejected' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS rejected,
             SUM(CASE WHEN jrs.selection_status = 'joined' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS joined,
             SUM(CASE WHEN jrs.selection_status = 'dropout' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS dropout,
+            SUM(CASE WHEN jrs.selection_status = 'billed' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS billed,
+            SUM(CASE WHEN jrs.selection_status = 'left' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS \`left\`,
             MAX(CASE WHEN ${activityRangeCondition} THEN COALESCE(jrs.selected_at, rd.uploaded_at) ELSE NULL END) AS last_updated,
             MIN(CASE WHEN ${submittedRangeCondition} THEN rd.uploaded_at ELSE NULL END) AS created_at
           FROM resumes_data rd

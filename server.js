@@ -3,8 +3,11 @@ dotenv.config();
 
 const app = require("./src/app");
 const pool = require("./src/config/db");
+const { processBillingTransitions } = require("./src/routes/jobRoutes");
 
 const PORT = process.env.PORT || 5000;
+const BILLING_CHECK_INTERVAL_MS =
+  Number(process.env.BILLING_CHECK_INTERVAL_MS) || 3600000; // default 1 hour
 
 const startServer = async () => {
   // Start server IMMEDIATELY - don't wait for database
@@ -27,6 +30,13 @@ const startServer = async () => {
   try {
     await pool.initDatabase();
     console.log("Database initialized successfully");
+
+    // Start auto-billing background job after DB is ready
+    processBillingTransitions(); // Run once immediately
+    setInterval(processBillingTransitions, BILLING_CHECK_INTERVAL_MS);
+    console.log(
+      `Auto-billing check scheduled every ${Math.round(BILLING_CHECK_INTERVAL_MS / 60000)} minute(s)`,
+    );
   } catch (error) {
     console.error("Database initialization failed:", error.message);
     console.error("Server is running but database may not be ready");

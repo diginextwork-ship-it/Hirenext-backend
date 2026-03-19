@@ -399,6 +399,24 @@ router.post("/api/admin/login", (req, res) => {
 
 router.use("/api/admin", requireAuth, requireRoles("admin"));
 
+router.post("/api/admin/billing/process", async (req, res) => {
+  if (!ensureAdminAuthorized(req, res)) return;
+
+  try {
+    const { processBillingTransitions } = require("./jobRoutes");
+    const result = await processBillingTransitions();
+    return res.status(200).json({
+      message: `Billing processing complete. ${result.transitioned} candidate(s) transitioned from joined to billed.`,
+      transitioned: result.transitioned,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to process billing transitions.",
+      error: error.message,
+    });
+  }
+});
+
 router.get("/api/admin/dashboard", async (_req, res) => {
   try {
     let totalResumeCount = 0;

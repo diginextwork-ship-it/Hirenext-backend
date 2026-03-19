@@ -111,6 +111,7 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
   const hasJoinedReason = columns.has("joined_reason");
   const hasDropoutReason = columns.has("dropout_reason");
   const hasRejectReason = columns.has("reject_reason");
+  const hasLeftReason = columns.has("left_reason");
 
   const hasAnyReason =
     hasSubmittedReason ||
@@ -119,7 +120,8 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
     hasSelectReason ||
     hasJoinedReason ||
     hasDropoutReason ||
-    hasRejectReason;
+    hasRejectReason ||
+    hasLeftReason;
 
   if (!resumeIdColumn || !hasAnyReason) return new Map();
 
@@ -133,6 +135,7 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
   if (hasJoinedReason) selectColumns.push("joined_reason AS joinedReason");
   if (hasDropoutReason) selectColumns.push("dropout_reason AS dropoutReason");
   if (hasRejectReason) selectColumns.push("reject_reason AS rejectReason");
+  if (hasLeftReason) selectColumns.push("left_reason AS leftReason");
 
   const [rows] = await connection.query(
     `SELECT ${selectColumns.join(", ")}
@@ -152,6 +155,7 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
         joinedReason: row.joinedReason || null,
         dropoutReason: row.dropoutReason || null,
         rejectReason: row.rejectReason || null,
+        leftReason: row.leftReason || null,
       },
     ]),
   );
@@ -243,6 +247,13 @@ const upsertExtraInfoFields = async (connection, payload) => {
     insertValues.push(payload.rejectReason);
     placeholders.push("?");
     updates.push("reject_reason = VALUES(reject_reason)");
+  }
+
+  if (payload.leftReason !== undefined && columns.has("left_reason")) {
+    insertColumns.push("left_reason");
+    insertValues.push(payload.leftReason);
+    placeholders.push("?");
+    updates.push("left_reason = VALUES(left_reason)");
   }
 
   if (insertColumns.length === 0 || updates.length === 0) return;

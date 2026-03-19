@@ -183,6 +183,8 @@ ALTER TABLE extra_info
   ADD COLUMN IF NOT EXISTS dropout_reason TEXT NULL;
 ALTER TABLE extra_info
   ADD COLUMN IF NOT EXISTS reject_reason TEXT NULL;
+ALTER TABLE extra_info
+  ADD COLUMN IF NOT EXISTS left_reason TEXT NULL;
 
 ALTER TABLE resumes_data
   ADD COLUMN IF NOT EXISTS submitted_by_role VARCHAR(30) NULL DEFAULT 'recruiter';
@@ -223,7 +225,7 @@ CREATE TABLE IF NOT EXISTS job_resume_selection (
 );
 
 ALTER TABLE job_resume_selection
-  MODIFY COLUMN selection_status ENUM('selected', 'rejected', 'on_hold', 'verified', 'walk_in', 'joined', 'dropout', 'pending') NOT NULL DEFAULT 'selected';
+  MODIFY COLUMN selection_status ENUM('selected', 'rejected', 'on_hold', 'verified', 'walk_in', 'joined', 'dropout', 'pending', 'billed', 'left') NOT NULL DEFAULT 'selected';
 
 CREATE TABLE IF NOT EXISTS money_sum (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -310,6 +312,8 @@ CREATE TABLE IF NOT EXISTS status (
   reject INT NULL,
   joined INT NULL,
   dropout INT NULL,
+  billed INT NULL,
+  `left` INT NULL,
   last_updated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_status_recruiter_rid (recruiter_rid),
@@ -317,6 +321,9 @@ CREATE TABLE IF NOT EXISTS status (
     FOREIGN KEY (recruiter_rid) REFERENCES recruiter(rid)
     ON UPDATE CASCADE ON DELETE CASCADE
 );
+
+ALTER TABLE status ADD COLUMN IF NOT EXISTS billed INT NULL;
+ALTER TABLE status ADD COLUMN IF NOT EXISTS `left` INT NULL;
 
 -- Add password change tracking for first-time login
 ALTER TABLE recruiter
