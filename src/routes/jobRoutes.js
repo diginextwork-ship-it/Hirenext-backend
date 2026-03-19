@@ -1268,7 +1268,7 @@ router.post(
           );
         }
 
-        if (verifiedReason !== undefined) {
+        if (reasonField && statusReasonValue !== undefined) {
           await upsertExtraInfoFields(connection, {
             resId: normalizedResId,
             jobJid: req.ownedJob.jid,
@@ -1276,7 +1276,7 @@ router.post(
             candidateName:
               toTrimmedString(resumeRows[0].candidateName) || undefined,
             email: toTrimmedString(resumeRows[0].email) || undefined,
-            verifiedReason,
+            [reasonField]: statusReasonValue,
           });
         }
 
@@ -1322,7 +1322,9 @@ router.post(
             status: normalizedStatus,
             note: normalizedNote || null,
             verifiedReason:
-              verifiedReason === undefined ? null : verifiedReason,
+              reasonField === "verifiedReason"
+                ? (statusReasonValue ?? null)
+                : null,
             updatedBy: actorRid || "team-leader",
           },
         });
