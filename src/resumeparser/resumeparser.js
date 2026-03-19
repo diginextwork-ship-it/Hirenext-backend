@@ -3,11 +3,15 @@ const fs = require("fs");
 const path = require("path");
 const yaml = require("js-yaml");
 const dotenv = require("dotenv");
+const { cleanJsonText } = require("../utils/textExtractor");
 
 dotenv.config();
 
 // Load API key from environment or config file
-let apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.API_KEY;
+let apiKey =
+  process.env.GEMINI_API_KEY ||
+  process.env.GOOGLE_API_KEY ||
+  process.env.API_KEY;
 let apiKeySource = "environment";
 
 if (!apiKey) {
@@ -239,33 +243,6 @@ const getGeminiStatus = () => ({
 });
 
 /**
- * Clean JSON text by removing markdown code blocks
- */
-function cleanJsonText(rawText) {
-  if (!rawText) {
-    return null;
-  }
-
-  let cleaned = rawText.trim();
-
-  // Remove ```json ... ``` blocks
-  if (cleaned.includes("```json")) {
-    const parts = cleaned.split("```json");
-    if (parts.length > 1) {
-      cleaned = parts[1].split("```")[0].trim();
-    }
-  } else if (cleaned.includes("```")) {
-    // Remove generic ``` blocks
-    const parts = cleaned.split("```");
-    if (parts.length > 1) {
-      cleaned = parts[1].split("```")[0].trim();
-    }
-  }
-
-  return cleaned;
-}
-
-/**
  * Extract structured data from resume with optimized prompting
  */
 async function atsExtractor(resumeData) {
@@ -387,4 +364,5 @@ module.exports = {
   atsExtractor,
   calculateAtsScore,
   getGeminiStatus,
+  generateWithFallbackModels,
 };

@@ -6,6 +6,13 @@ const {
   requireAuth,
   requireRoles,
 } = require("../middleware/auth");
+const {
+  tableExists,
+  columnExists,
+  getColumnMetadata,
+  constraintExists,
+} = require("../utils/dbHelpers");
+const { toMoneyNumber, normalizeJobJid } = require("../utils/formatters");
 
 const router = express.Router();
 const ADMIN_API_KEY = String(process.env.ADMIN_API_KEY || "admin123");
@@ -46,67 +53,6 @@ const parseRevenueUpload = (req, res, next) => {
       message: error?.message || "Invalid attachment upload.",
     });
   });
-};
-
-const normalizeJobJid = (value) => {
-  const normalized = String(value || "").trim();
-  return normalized || null;
-};
-
-const tableExists = async (tableName) => {
-  try {
-    const [rows] = await pool.query(
-      `SELECT 1
-       FROM information_schema.tables
-       WHERE table_schema = DATABASE() AND table_name = ?
-       LIMIT 1`,
-      [tableName],
-    );
-    if (rows.length > 0) return true;
-  } catch {}
-
-  try {
-    await pool.query(`SELECT 1 FROM \`${tableName}\` LIMIT 1`);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-const columnExists = async (tableName, columnName) => {
-  const [rows] = await pool.query(
-    `SELECT 1
-     FROM information_schema.columns
-     WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?
-     LIMIT 1`,
-    [tableName, columnName],
-  );
-  return rows.length > 0;
-};
-
-const getColumnMetadata = async (tableName, columnName) => {
-  const [rows] = await pool.query(
-    `SELECT
-      COLUMN_TYPE AS columnType,
-      DATA_TYPE AS dataType,
-      IS_NULLABLE AS isNullable
-     FROM information_schema.columns
-     WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?
-     LIMIT 1`,
-    [tableName, columnName],
-  );
-  return rows[0] || null;
-};
-
-const constraintExists = async (tableName, constraintName) => {
-  const [rows] = await pool.query(
-    `SELECT 1
-     FROM information_schema.table_constraints
-     WHERE table_schema = DATABASE() AND table_name = ? AND constraint_name = ?
-     LIMIT 1`,
-    [tableName, constraintName],
-  );
-  return rows.length > 0;
 };
 
 const ensureMoneySumTable = async () => {
@@ -274,12 +220,6 @@ const ensureAdminAuthorized = (req, res) => {
 const toPositiveMoney = (value) => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return null;
-  return Math.round(parsed * 100) / 100;
-};
-
-const toMoneyNumber = (value) => {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return 0;
   return Math.round(parsed * 100) / 100;
 };
 
@@ -2128,6 +2068,139 @@ router.put("/api/admin/resumes/:resId/verified-reason", async (req, res) => {
   } catch (error) {
     return res.status(500).json({
       message: "Failed to update team leader note.",
+      error: error.message,
+    });
+  }
+});
+
+// ─── Admin Performance Dashboard ───────────────────────────────────────────────
+router.get("/api/admin/performance", async (_req, res) => {
+  try {
+    // ── Team Leaders: jobs created ──────────────────────────────────────────
+    const [teamLeaderRows] = await pool.query(
+      `SELECT
+        r.rid,
+        r.name,
+        r.email,
+        COALESCE(r.points, 0) AS points,
+        COALESCE(jc.jobs_created, 0) AS jobsCreated,
+        COALESCE(jc.total_positions, 0) AS totalPositions,
+        COALESCE(jc.open_jobs, 0) AS openJobs,
+        COALESCE(jc.restricted_jobs, 0) AS restrictedJobs
+      FROM recruiter r
+      LEFT JOIN (
+        SELECT
+          j.recruiter_rid,
+          COUNT(*) AS jobs_created,
+          COALESCE(SUM(j.positions_open), 0) AS total_positions,
+          SUM(CASE WHEN j.access_mode = 'open' THEN 1 ELSE 0 END) AS open_jobs,
+          SUM(CASE WHEN j.access_mode = 'restricted' THEN 1 ELSE 0 END) AS restricted_jobs
+        FROM jobs j
+        GROUP BY j.recruiter_rid
+      ) jc ON jc.recruiter_rid = r.rid
+      WHERE LOWER(TRIM(COALESCE(r.role, 'recruiter'))) IN ('team leader', 'team_leader', 'job creator')
+      ORDER BY COALESCE(jc.jobs_created, 0) DESC, r.name ASC`,
+    );
+
+    const teamLeaders = teamLeaderRows.map((row) => ({
+      rid: row.rid,
+      name: row.name,
+      email: row.email,
+      points: Number(row.points) || 0,
+      jobsCreated: Number(row.jobsCreated) || 0,
+      totalPositions: Number(row.totalPositions) || 0,
+      openJobs: Number(row.openJobs) || 0,
+      restrictedJobs: Number(row.restrictedJobs) || 0,
+    }));
+
+    // ── Recruiters: resume statuses ─────────────────────────────────────────
+    const [recruiterRows] = await pool.query(
+      `SELECT
+        r.rid,
+        r.name,
+        r.email,
+        COALESCE(r.points, 0) AS points,
+        COALESCE(rs.submitted, 0) AS submitted,
+        COALESCE(rs.verified, 0) AS verified,
+        COALESCE(rs.walk_in, 0) AS walk_in,
+        COALESCE(rs.selected, 0) AS \`select\`,
+        COALESCE(rs.rejected, 0) AS reject,
+        COALESCE(rs.joined, 0) AS joined,
+        COALESCE(rs.dropout, 0) AS dropout,
+        COALESCE(rs.on_hold, 0) AS on_hold,
+        rs.last_updated
+      FROM recruiter r
+      LEFT JOIN (
+        SELECT
+          rd.rid AS recruiter_rid,
+          COUNT(*) AS submitted,
+          SUM(CASE WHEN jrs.selection_status = 'verified' THEN 1 ELSE 0 END) AS verified,
+          SUM(CASE WHEN jrs.selection_status = 'walk_in' THEN 1 ELSE 0 END) AS walk_in,
+          SUM(CASE WHEN jrs.selection_status = 'selected' THEN 1 ELSE 0 END) AS selected,
+          SUM(CASE WHEN jrs.selection_status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
+          SUM(CASE WHEN jrs.selection_status = 'joined' THEN 1 ELSE 0 END) AS joined,
+          SUM(CASE WHEN jrs.selection_status = 'dropout' THEN 1 ELSE 0 END) AS dropout,
+          SUM(CASE WHEN jrs.selection_status = 'on_hold' THEN 1 ELSE 0 END) AS on_hold,
+          MAX(COALESCE(jrs.selected_at, rd.uploaded_at)) AS last_updated
+        FROM resumes_data rd
+        LEFT JOIN job_resume_selection jrs
+          ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
+        WHERE COALESCE(rd.submitted_by_role, 'recruiter') = 'recruiter'
+        GROUP BY rd.rid
+      ) rs ON r.rid = rs.recruiter_rid
+      WHERE LOWER(TRIM(COALESCE(r.role, 'recruiter'))) = 'recruiter'
+      ORDER BY COALESCE(rs.submitted, 0) DESC, r.name ASC`,
+    );
+
+    const recruiters = recruiterRows.map((row) => {
+      const submitted = Number(row.submitted) || 0;
+      const verified = Number(row.verified) || 0;
+      const selected = Number(row.select) || 0;
+      const joined = Number(row.joined) || 0;
+      const dropout = Number(row.dropout) || 0;
+      return {
+        rid: row.rid,
+        name: row.name,
+        email: row.email,
+        points: Number(row.points) || 0,
+        submitted,
+        verified,
+        walk_in: Number(row.walk_in) || 0,
+        selected,
+        rejected: Number(row.reject) || 0,
+        joined,
+        dropout,
+        on_hold: Number(row.on_hold) || 0,
+        lastUpdated: row.last_updated || null,
+        verificationRate:
+          submitted > 0 ? Number(((verified / submitted) * 100).toFixed(1)) : 0,
+        selectionRate:
+          verified > 0 ? Number(((selected / verified) * 100).toFixed(1)) : 0,
+        joiningRate:
+          selected > 0 ? Number(((joined / selected) * 100).toFixed(1)) : 0,
+        dropoutRate:
+          selected > 0 ? Number(((dropout / selected) * 100).toFixed(1)) : 0,
+      };
+    });
+
+    // ── Summary totals ──────────────────────────────────────────────────────
+    const summary = {
+      totalTeamLeaders: teamLeaders.length,
+      totalRecruiters: recruiters.length,
+      totalJobsCreated: teamLeaders.reduce((s, tl) => s + tl.jobsCreated, 0),
+      totalPositions: teamLeaders.reduce((s, tl) => s + tl.totalPositions, 0),
+      totalSubmitted: recruiters.reduce((s, r) => s + r.submitted, 0),
+      totalVerified: recruiters.reduce((s, r) => s + r.verified, 0),
+      totalSelected: recruiters.reduce((s, r) => s + r.selected, 0),
+      totalJoined: recruiters.reduce((s, r) => s + r.joined, 0),
+      totalDropout: recruiters.reduce((s, r) => s + r.dropout, 0),
+      totalRejected: recruiters.reduce((s, r) => s + r.rejected, 0),
+    };
+
+    return res.status(200).json({ teamLeaders, recruiters, summary });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to fetch performance data.",
       error: error.message,
     });
   }

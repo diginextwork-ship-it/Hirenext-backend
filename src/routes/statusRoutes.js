@@ -1,13 +1,17 @@
 const express = require("express");
 const pool = require("../config/db");
 const { requireAuth, requireRoles } = require("../middleware/auth");
+const { escapeLike } = require("../utils/formatters");
 
 const router = express.Router();
 
-const toRole = (value) => String(value || "").trim().toLowerCase();
+const toRole = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase();
 const toRid = (value) => String(value || "").trim();
-const toNullableNumber = (value) => (value === null || value === undefined ? null : Number(value));
-const escapeLike = (value) => String(value || "").replace(/[\\%_]/g, "\\$&");
+const toNullableNumber = (value) =>
+  value === null || value === undefined ? null : Number(value);
 const isValidDateOnly = (value) => {
   const normalized = String(value || "").trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return false;
@@ -16,7 +20,12 @@ const isValidDateOnly = (value) => {
   const year = Number(yearText);
   const month = Number(monthText);
   const day = Number(dayText);
-  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return false;
+  if (
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    !Number.isInteger(day)
+  )
+    return false;
 
   const parsed = new Date(Date.UTC(year, month - 1, day));
   return (
@@ -27,7 +36,9 @@ const isValidDateOnly = (value) => {
 };
 const addDaysDateOnly = (value, days) => {
   const [yearText, monthText, dayText] = String(value).split("-");
-  const parsed = new Date(Date.UTC(Number(yearText), Number(monthText) - 1, Number(dayText)));
+  const parsed = new Date(
+    Date.UTC(Number(yearText), Number(monthText) - 1, Number(dayText)),
+  );
   parsed.setUTCDate(parsed.getUTCDate() + Number(days || 0));
   return parsed.toISOString().slice(0, 10);
 };
@@ -106,7 +117,13 @@ const assertOwnRidOrTeamLeader = (req, res) => {
   const requestedRid = toRid(req.params?.rid);
 
   if (isTeamLeaderRole(authRole)) return true;
-  if (isRecruiterRole(authRole) && authRid && requestedRid && authRid === requestedRid) return true;
+  if (
+    isRecruiterRole(authRole) &&
+    authRid &&
+    requestedRid &&
+    authRid === requestedRid
+  )
+    return true;
 
   res.status(403).json({
     error: "Forbidden: You can only access your own data",
@@ -184,7 +201,7 @@ router.get(
         WHERE r.rid = ?
           AND LOWER(TRIM(COALESCE(r.role, 'recruiter'))) = 'recruiter'
         LIMIT 1`,
-        [rid]
+        [rid],
       );
 
       if (rows.length === 0) {
@@ -209,7 +226,7 @@ router.get(
         details: error.message,
       });
     }
-  }
+  },
 );
 
 router.get(
@@ -218,8 +235,15 @@ router.get(
   requireRoles("team leader", "team_leader"),
   async (req, res) => {
     const search = String(req.query?.search || "").trim();
-    const sortBy = String(req.query?.sortBy || "submitted").trim().toLowerCase();
-    const sortOrder = String(req.query?.sortOrder || "desc").trim().toLowerCase() === "asc" ? "ASC" : "DESC";
+    const sortBy = String(req.query?.sortBy || "submitted")
+      .trim()
+      .toLowerCase();
+    const sortOrder =
+      String(req.query?.sortOrder || "desc")
+        .trim()
+        .toLowerCase() === "asc"
+        ? "ASC"
+        : "DESC";
 
     const sortMap = {
       name: "r.name",
@@ -236,12 +260,16 @@ router.get(
     };
 
     const orderBySql = sortMap[sortBy] || sortMap.submitted;
-    const whereClauses = ["LOWER(TRIM(COALESCE(r.role, 'recruiter'))) = 'recruiter'"];
+    const whereClauses = [
+      "LOWER(TRIM(COALESCE(r.role, 'recruiter'))) = 'recruiter'",
+    ];
     const params = [];
 
     if (search) {
       const safeLike = `%${escapeLike(search)}%`;
-      whereClauses.push("(r.name LIKE ? ESCAPE '\\\\' OR r.email LIKE ? ESCAPE '\\\\')");
+      whereClauses.push(
+        "(r.name LIKE ? ESCAPE '\\\\' OR r.email LIKE ? ESCAPE '\\\\')",
+      );
       params.push(safeLike, safeLike);
     }
 
@@ -266,7 +294,7 @@ router.get(
         LEFT JOIN (${recruiterStatsSubquery}) rs ON r.rid = rs.recruiter_rid
         WHERE ${whereSql}
         ORDER BY ${orderBySql} ${sortOrder}, r.name ASC`,
-        params
+        params,
       );
 
       const recruiters = rows.map((row) => {
@@ -283,15 +311,15 @@ router.get(
 
       const totalSubmitted = recruiters.reduce(
         (sum, item) => sum + item.stats.submitted,
-        0
+        0,
       );
       const totalVerified = recruiters.reduce(
         (sum, item) => sum + item.stats.verified,
-        0
+        0,
       );
       const totalJoined = recruiters.reduce(
         (sum, item) => sum + item.stats.joined,
-        0
+        0,
       );
 
       return res.status(200).json({
@@ -312,7 +340,7 @@ router.get(
         details: error.message,
       });
     }
-  }
+  },
 );
 
 const getTeamLeaderDashboard = async (_req, res) => {
@@ -322,14 +350,14 @@ const getTeamLeaderDashboard = async (_req, res) => {
         COUNT(*) AS totalJobs,
         SUM(CASE WHEN access_mode = 'open' THEN 1 ELSE 0 END) AS openJobs,
         SUM(CASE WHEN access_mode = 'restricted' THEN 1 ELSE 0 END) AS restrictedJobs
-      FROM jobs`
+      FROM jobs`,
     );
 
     const [[recruiterOverview]] = await pool.query(
       `SELECT
         COUNT(*) AS totalRecruiters
       FROM recruiter
-      WHERE LOWER(TRIM(COALESCE(role, 'recruiter'))) = 'recruiter'`
+      WHERE LOWER(TRIM(COALESCE(role, 'recruiter'))) = 'recruiter'`,
     );
 
     const [[activeOverview]] = await pool.query(
@@ -341,7 +369,7 @@ const getTeamLeaderDashboard = async (_req, res) => {
         FROM resumes_data rd
         WHERE COALESCE(rd.submitted_by_role, 'recruiter') = 'recruiter'
         GROUP BY rd.rid
-      ) stats`
+      ) stats`,
     );
 
     const [topPerformersRows] = await pool.query(
@@ -359,7 +387,7 @@ const getTeamLeaderDashboard = async (_req, res) => {
       ) stats ON stats.rid = r.rid
       WHERE LOWER(TRIM(COALESCE(r.role, 'recruiter'))) = 'recruiter'
       ORDER BY COALESCE(stats.submitted, 0) DESC, COALESCE(r.points, 0) DESC, r.name ASC
-      LIMIT 8`
+      LIMIT 8`,
     );
 
     return res.status(200).json({
@@ -390,7 +418,7 @@ router.get(
   "/api/dashboard/team-leader",
   requireAuth,
   requireRoles("team leader", "team_leader"),
-  getTeamLeaderDashboard
+  getTeamLeaderDashboard,
 );
 
 router.get(
@@ -415,8 +443,12 @@ router.get(
     }
 
     try {
-      const submittedRangeCondition = hasDateRange ? "rd.uploaded_at >= ? AND rd.uploaded_at < ?" : "1=1";
-      const statusRangeCondition = hasDateRange ? "jrs.selected_at >= ? AND jrs.selected_at < ?" : "1=1";
+      const submittedRangeCondition = hasDateRange
+        ? "rd.uploaded_at >= ? AND rd.uploaded_at < ?"
+        : "1=1";
+      const statusRangeCondition = hasDateRange
+        ? "jrs.selected_at >= ? AND jrs.selected_at < ?"
+        : "1=1";
       const activityRangeCondition = hasDateRange
         ? "((rd.uploaded_at >= ? AND rd.uploaded_at < ?) OR (jrs.selected_at >= ? AND jrs.selected_at < ?))"
         : "1=1";
@@ -465,7 +497,7 @@ router.get(
         WHERE r.rid = ?
           AND LOWER(TRIM(COALESCE(r.role, 'recruiter'))) = 'recruiter'
         LIMIT 1`,
-        statsQueryParams
+        statsQueryParams,
       );
 
       if (recruiterRows.length === 0) {
@@ -483,7 +515,7 @@ router.get(
           AND jra.is_active = TRUE
          WHERE j.access_mode = 'open'
             OR (j.access_mode = 'restricted' AND jra.id IS NOT NULL)`,
-        [rid]
+        [rid],
       );
 
       const stats = mapStats(recruiterRow);
@@ -505,7 +537,7 @@ router.get(
         details: error.message,
       });
     }
-  }
+  },
 );
 
 module.exports = router;

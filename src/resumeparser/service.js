@@ -1,14 +1,8 @@
-const pdfParse = require("pdf-parse");
-const mammoth = require("mammoth");
 const { atsExtractor, calculateAtsScore } = require("./resumeparser");
+const { extractTextFromBuffer } = require("../utils/textExtractor");
+const { toNumberOrNull } = require("../utils/formatters");
 
 const SUPPORTED_RESUME_TYPES = new Set(["pdf", "docx"]);
-
-const toNumberOrNull = (value) => {
-  if (value === undefined || value === null || value === "") return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-};
 
 const toPercentageNumber = (value) => {
   if (value === undefined || value === null || value === "") return null;
@@ -22,7 +16,9 @@ const toPercentageNumber = (value) => {
 };
 
 const getResumeExtension = (filename) => {
-  const match = String(filename || "").trim().match(/\.([a-z0-9]+)$/i);
+  const match = String(filename || "")
+    .trim()
+    .match(/\.([a-z0-9]+)$/i);
   return match ? match[1].toLowerCase() : "";
 };
 
@@ -54,14 +50,19 @@ const safeJson = (rawValue, fallbackKey) => {
 
 const pickFirstNonEmpty = (...values) => {
   for (const value of values) {
-    const candidate = value === undefined || value === null ? "" : String(value).trim();
+    const candidate =
+      value === undefined || value === null ? "" : String(value).trim();
     if (candidate) return candidate;
   }
   return "";
 };
 
 const extractApplicantName = (parsedData) => {
-  if (!parsedData || typeof parsedData !== "object" || Array.isArray(parsedData)) {
+  if (
+    !parsedData ||
+    typeof parsedData !== "object" ||
+    Array.isArray(parsedData)
+  ) {
     return null;
   }
 
@@ -74,7 +75,7 @@ const extractApplicantName = (parsedData) => {
     parsedData.applicant_name,
     parsedData.applicantName,
     parsedData.personal_info?.name,
-    parsedData.personalInfo?.name
+    parsedData.personalInfo?.name,
   );
 
   return candidate || null;
@@ -89,13 +90,19 @@ const extractAutofillFallbackFromText = (resumeText) => {
 
   const emailMatch = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
   const phoneMatch =
-    text.match(/(?:\+?\d{1,3}[\s-]?)?(?:\(?\d{3,5}\)?[\s-]?)\d{3,5}[\s-]?\d{3,5}/) || null;
+    text.match(
+      /(?:\+?\d{1,3}[\s-]?)?(?:\(?\d{3,5}\)?[\s-]?)\d{3,5}[\s-]?\d{3,5}/,
+    ) || null;
   const ageMatch = text.match(/\bage\s*[:\-]?\s*(\d{2})\b/i);
   const dobMatch =
-    text.match(/\b(?:dob|date of birth)\s*[:\-]?\s*([0-3]?\d[\/\-][01]?\d[\/\-](?:19|20)\d{2})\b/i) ||
-    text.match(/\b([0-3]?\d[\/\-][01]?\d[\/\-](?:19|20)\d{2})\b/);
+    text.match(
+      /\b(?:dob|date of birth)\s*[:\-]?\s*([0-3]?\d[\/\-][01]?\d[\/\-](?:19|20)\d{2})\b/i,
+    ) || text.match(/\b([0-3]?\d[\/\-][01]?\d[\/\-](?:19|20)\d{2})\b/);
 
-  const normalizedPhoneDigits = String(phoneMatch?.[0] || "").replace(/\D/g, "");
+  const normalizedPhoneDigits = String(phoneMatch?.[0] || "").replace(
+    /\D/g,
+    "",
+  );
   const phone =
     normalizedPhoneDigits.length >= 10
       ? normalizedPhoneDigits.slice(normalizedPhoneDigits.length - 10)
@@ -115,14 +122,17 @@ const extractAutofillFallbackFromText = (resumeText) => {
     lines.find((line) => {
       if (ignoreLine(line)) return false;
       const tokens = line.split(/\s+/).filter(Boolean);
-      return tokens.length >= 2 && tokens.length <= 5 && /^[a-z .'-]+$/i.test(line);
+      return (
+        tokens.length >= 2 && tokens.length <= 5 && /^[a-z .'-]+$/i.test(line)
+      );
     }) || "";
 
   const toAgeFromDob = (dobText) => {
     const normalized = String(dobText || "").trim();
     if (!normalized) return null;
     const parts = normalized.split(/[\/\-]/).map((item) => Number(item));
-    if (parts.length !== 3 || parts.some((item) => !Number.isFinite(item))) return null;
+    if (parts.length !== 3 || parts.some((item) => !Number.isFinite(item)))
+      return null;
     const [day, month, year] = parts;
     const dob = new Date(year, month - 1, day);
     if (Number.isNaN(dob.getTime())) return null;
@@ -139,20 +149,28 @@ const extractAutofillFallbackFromText = (resumeText) => {
 
   const educationSectionLines = lines.filter((line) =>
     /(university|college|institute|institution|school|board|education|bachelor|master|degree|gpa|percentage)/i.test(
-      line
-    )
+      line,
+    ),
   );
 
   const boardUniversity =
-    educationSectionLines.find((line) => /(university|board)/i.test(line)) || null;
-  const institutionName =
-    educationSectionLines.find((line) => /(college|institute|institution|school)/i.test(line)) ||
+    educationSectionLines.find((line) => /(university|board)/i.test(line)) ||
     null;
+  const institutionName =
+    educationSectionLines.find((line) =>
+      /(college|institute|institution|school)/i.test(line),
+    ) || null;
 
   const degreeHints = [
     { pattern: /\b(phd|doctorate)\b/i, level: "phd" },
-    { pattern: /\b(master|m\.?tech|m\.?e|mba|mca|m\.?sc)\b/i, level: "masters" },
-    { pattern: /\b(bachelor|b\.?tech|b\.?e|bca|b\.?sc|bcom|ba)\b/i, level: "bachelors" },
+    {
+      pattern: /\b(master|m\.?tech|m\.?e|mba|mca|m\.?sc)\b/i,
+      level: "masters",
+    },
+    {
+      pattern: /\b(bachelor|b\.?tech|b\.?e|bca|b\.?sc|bcom|ba)\b/i,
+      level: "bachelors",
+    },
     { pattern: /\b(12th|higher secondary|intermediate)\b/i, level: "12th" },
     { pattern: /\b(10th|secondary school)\b/i, level: "10th" },
   ];
@@ -174,13 +192,18 @@ const extractAutofillFallbackFromText = (resumeText) => {
 };
 
 const hasParsedAutofillSignal = (parsedData) => {
-  if (!parsedData || typeof parsedData !== "object" || Array.isArray(parsedData)) return false;
+  if (
+    !parsedData ||
+    typeof parsedData !== "object" ||
+    Array.isArray(parsedData)
+  )
+    return false;
 
   const educationCandidate = Array.isArray(parsedData.education)
     ? parsedData.education[0] || null
     : parsedData.education && typeof parsedData.education === "object"
-    ? parsedData.education
-    : null;
+      ? parsedData.education
+      : null;
 
   return Boolean(
     pickFirstNonEmpty(
@@ -193,8 +216,8 @@ const hasParsedAutofillSignal = (parsedData) => {
       educationCandidate?.latest_education_level,
       educationCandidate?.latestEducationLevel,
       educationCandidate?.institution_name,
-      educationCandidate?.institutionName
-    )
+      educationCandidate?.institutionName,
+    ),
   );
 };
 
@@ -206,8 +229,8 @@ const uniqueWords = (text) =>
         .replace(/[^a-z0-9\s]/g, " ")
         .split(/\s+/)
         .map((item) => item.trim())
-        .filter((item) => item.length >= 3)
-    )
+        .filter((item) => item.length >= 3),
+    ),
   );
 
 const calculateFallbackAts = (resumeText, jobDescription) => {
@@ -223,13 +246,18 @@ const calculateFallbackAts = (resumeText, jobDescription) => {
       strengths: [],
       weaknesses: [],
       recommendations: [],
-      overall_assessment: "ATS could not be calculated because job description is unavailable.",
+      overall_assessment:
+        "ATS could not be calculated because job description is unavailable.",
     };
   }
 
   const resumeSet = new Set(resumeWords);
-  const matchingKeywords = jobWords.filter((word) => resumeSet.has(word)).slice(0, 25);
-  const missingKeywords = jobWords.filter((word) => !resumeSet.has(word)).slice(0, 25);
+  const matchingKeywords = jobWords
+    .filter((word) => resumeSet.has(word))
+    .slice(0, 25);
+  const missingKeywords = jobWords
+    .filter((word) => !resumeSet.has(word))
+    .slice(0, 25);
 
   const ratio = jobWords.length ? matchingKeywords.length / jobWords.length : 0;
   const percentage = Number((ratio * 100).toFixed(2));
@@ -249,32 +277,26 @@ const calculateFallbackAts = (resumeText, jobDescription) => {
         : [],
     recommendations:
       missingKeywords.length > 0
-        ? [`Consider adding measurable experience with: ${missingKeywords.slice(0, 6).join(", ")}.`]
-        : ["Maintain keyword alignment while improving role-specific achievements."],
+        ? [
+            `Consider adding measurable experience with: ${missingKeywords.slice(0, 6).join(", ")}.`,
+          ]
+        : [
+            "Maintain keyword alignment while improving role-specific achievements.",
+          ],
     overall_assessment:
       percentage >= 75
         ? "Strong keyword alignment with the role."
         : percentage >= 50
-        ? "Moderate keyword alignment with room for improvement."
-        : "Low keyword alignment; resume tailoring recommended.",
+          ? "Moderate keyword alignment with room for improvement."
+          : "Low keyword alignment; resume tailoring recommended.",
   };
 };
 
-const readResumeText = async (resumeBuffer, extension) => {
-  if (extension === "pdf") {
-    const parsed = await pdfParse(resumeBuffer);
-    return parsed.text || "";
-  }
-
-  if (extension === "docx") {
-    const parsed = await mammoth.extractRawText({ buffer: resumeBuffer });
-    return parsed.value || "";
-  }
-
-  throw new Error(`Unsupported resume format: ${extension}`);
-};
-
-const parseResumeWithAts = async ({ resumeBuffer, resumeFilename, jobDescription }) => {
+const parseResumeWithAts = async ({
+  resumeBuffer,
+  resumeFilename,
+  jobDescription,
+}) => {
   try {
     const extension = getResumeExtension(resumeFilename);
     if (!SUPPORTED_RESUME_TYPES.has(extension)) {
@@ -288,14 +310,25 @@ const parseResumeWithAts = async ({ resumeBuffer, resumeFilename, jobDescription
       };
     }
 
-    const resumeText = await readResumeText(resumeBuffer, extension);
-    const aiParsedData = safeJson(await atsExtractor(resumeText), "resume data");
+    const resumeText = await extractTextFromBuffer(resumeBuffer, extension);
+    const aiParsedData = safeJson(
+      await atsExtractor(resumeText),
+      "resume data",
+    );
     const fallbackParsedData = extractAutofillFallbackFromText(resumeText);
-    const parsedData = hasParsedAutofillSignal(aiParsedData) ? aiParsedData : fallbackParsedData;
+    const parsedData = hasParsedAutofillSignal(aiParsedData)
+      ? aiParsedData
+      : fallbackParsedData;
     const aiAtsRawJson = String(jobDescription || "").trim()
-      ? safeJson(await calculateAtsScore(resumeText, String(jobDescription).trim()), "ATS score")
+      ? safeJson(
+          await calculateAtsScore(resumeText, String(jobDescription).trim()),
+          "ATS score",
+        )
       : null;
-    const fallbackAtsRawJson = calculateFallbackAts(resumeText, String(jobDescription || "").trim());
+    const fallbackAtsRawJson = calculateFallbackAts(
+      resumeText,
+      String(jobDescription || "").trim(),
+    );
     const atsRawJson =
       aiAtsRawJson && typeof aiAtsRawJson === "object" && !aiAtsRawJson.error
         ? aiAtsRawJson
@@ -315,9 +348,13 @@ const parseResumeWithAts = async ({ resumeBuffer, resumeFilename, jobDescription
       atsMatchPercentage,
       atsRawJson,
       parserMeta: {
-        parsedDataSource: hasParsedAutofillSignal(aiParsedData) ? "ai" : "fallback",
+        parsedDataSource: hasParsedAutofillSignal(aiParsedData)
+          ? "ai"
+          : "fallback",
         atsSource:
-          aiAtsRawJson && typeof aiAtsRawJson === "object" && !aiAtsRawJson.error
+          aiAtsRawJson &&
+          typeof aiAtsRawJson === "object" &&
+          !aiAtsRawJson.error
             ? "ai"
             : "fallback",
       },
@@ -335,7 +372,11 @@ const parseResumeWithAts = async ({ resumeBuffer, resumeFilename, jobDescription
   }
 };
 
-const extractResumeAts = async ({ resumeBuffer, resumeFilename, jobDescription }) => {
+const extractResumeAts = async ({
+  resumeBuffer,
+  resumeFilename,
+  jobDescription,
+}) => {
   const extension = getResumeExtension(resumeFilename);
   if (!SUPPORTED_RESUME_TYPES.has(extension)) {
     return {

@@ -1,9 +1,11 @@
 const express = require("express");
 const router = express.Router();
 const multer = require("multer");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-const pdfParse = require("pdf-parse");
-const mammoth = require("mammoth");
+const {
+  extractTextFromBuffer,
+  cleanJsonText,
+} = require("../utils/textExtractor");
+const { generateWithFallbackModels } = require("../resumeparser/resumeparser");
 
 // Configure multer for file uploads
 const storage = multer.memoryStorage();
@@ -28,52 +30,10 @@ const upload = multer({
   },
 });
 
-// Initialize Gemini AI
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
-// Extract text from different file types
-async function extractTextFromFile(file) {
-  try {
-    console.log(
-      `Extracting text from file: ${file.originalname} (${file.mimetype})`,
-    );
-
-    if (file.mimetype === "application/pdf") {
-      const data = await pdfParse(file.buffer);
-      const text = data.text;
-      console.log(`Extracted ${text.length} characters from PDF`);
-      return text;
-    } else if (
-      file.mimetype ===
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    ) {
-      const result = await mammoth.extractRawText({ buffer: file.buffer });
-      const text = result.value;
-      console.log(`Extracted ${text.length} characters from DOCX`);
-      return text;
-    } else if (file.mimetype === "text/plain") {
-      const text = file.buffer.toString("utf-8");
-      console.log(`Extracted ${text.length} characters from TXT`);
-      return text;
-    }
-    throw new Error(`Unsupported file type: ${file.mimetype}`);
-  } catch (error) {
-    console.error("Text extraction error:", error);
-    throw new Error(`Failed to extract text: ${error.message}`);
-  }
-}
-
 // Parse JD using Gemini AI
 async function parseJDWithAI(jdText) {
   try {
     console.log("Starting JD parsing with AI...");
-    if (!process.env.GEMINI_API_KEY) {
-      throw new Error(
-        "GEMINI_API_KEY is not configured in environment variables",
-      );
-    }
-
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
     const prompt = `You are an expert HR data extraction system. Extract the following information from the job description below and return it as valid JSON only (no markdown, no explanation).
 
@@ -103,21 +63,10 @@ ${jdText}
 
 Return the extracted data as JSON:`;
 
-    const result = await model.generateContent(prompt);
-    const response = result.response;
-    const text = response.text();
+    const text = await generateWithFallbackModels(prompt);
     console.log("Raw Gemini response received, cleaning...");
 
-    // Clean the response - remove markdown code blocks if present
-    let cleanedText = text.trim();
-    if (cleanedText.startsWith("```json")) {
-      cleanedText = cleanedText
-        .replace(/```json\n?/g, "")
-        .replace(/```\n?$/g, "");
-    } else if (cleanedText.startsWith("```")) {
-      cleanedText = cleanedText.replace(/```\n?/g, "").replace(/```\n?$/g, "");
-    }
-
+    const cleanedText = cleanJsonText(text) || "";
     console.log("Cleaned response:", cleanedText.substring(0, 100) + "...");
 
     let parsedData;
@@ -165,7 +114,11 @@ router.post("/upload", upload.single("jdFile"), async (req, res) => {
     console.log(`[JD Parser] Processing file: ${req.file.originalname}`);
 
     // Extract text from file
-    const jdText = await extractTextFromFile(req.file);
+    const extMatch = String(req.file.originalname || "").match(
+      /\.([a-z0-9]+)$/i,
+    );
+    const extension = extMatch ? extMatch[1].toLowerCase() : "";
+    const jdText = await extractTextFromBuffer(req.file.buffer, extension);
 
     if (!jdText || jdText.trim().length === 0) {
       console.log("[JD Parser] Extracted text is empty");
