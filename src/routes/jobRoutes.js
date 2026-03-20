@@ -880,20 +880,13 @@ router.post(
             existingSelectionRows[0]?.selectionStatus,
           ).toLowerCase() || "pending";
 
-        // "left" can only be set from "billed" and requires a note
+        // "left" can only be set from "billed"; note is optional
         if (normalizedStatus === "left") {
           if (previousStatus !== "billed") {
             await connection.rollback();
             return res.status(400).json({
               message:
                 "Cannot move to 'left' status. Only candidates in 'billed' status can be moved to 'left'.",
-            });
-          }
-          if (!normalizedNote) {
-            await connection.rollback();
-            return res.status(400).json({
-              message:
-                "A note (left_reason) is required when moving a candidate to 'left' status.",
             });
           }
         }
@@ -1039,13 +1032,6 @@ router.post(
     if (!jobJid) {
       return res.status(400).json({ message: "Valid job jid is required." });
     }
-    if (!normalizedNote) {
-      return res.status(400).json({
-        message:
-          "A note (left_reason) is required when moving a candidate to 'left' status.",
-      });
-    }
-
     try {
       const connection = await pool.getConnection();
       try {

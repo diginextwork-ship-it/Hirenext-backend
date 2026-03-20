@@ -227,6 +227,11 @@ CREATE TABLE IF NOT EXISTS job_resume_selection (
 ALTER TABLE job_resume_selection
   MODIFY COLUMN selection_status ENUM('selected', 'rejected', 'on_hold', 'verified', 'walk_in', 'joined', 'dropout', 'pending', 'billed', 'left') NOT NULL DEFAULT 'selected';
 
+ALTER TABLE job_resume_selection
+  ADD COLUMN IF NOT EXISTS joining_date DATE NULL;
+ALTER TABLE job_resume_selection
+  ADD COLUMN IF NOT EXISTS joining_note TEXT NULL;
+
 CREATE TABLE IF NOT EXISTS money_sum (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   company_rev DECIMAL(14,2) NOT NULL DEFAULT 0,

@@ -1287,7 +1287,9 @@ router.get(
         ${atsMatchSelection}
         rd.uploaded_at AS uploadedAt,
         COALESCE(jrs.selection_status, 'pending') AS workflowStatus,
-        jrs.selected_at AS workflowUpdatedAt
+        jrs.selected_at AS workflowUpdatedAt,
+        jrs.joining_date AS joiningDate,
+        jrs.joining_note AS joiningNote
       FROM resumes_data rd
       LEFT JOIN job_resume_selection jrs
         ON jrs.job_jid = rd.job_jid
@@ -1312,6 +1314,8 @@ router.get(
               : Number(row.atsMatchPercentage),
           workflowStatus: row.workflowStatus || "pending",
           workflowUpdatedAt: row.workflowUpdatedAt || null,
+          joiningDate: row.joiningDate || null,
+          joiningNote: row.joiningNote || null,
           ...(extraInfoByResumeId.get(String(row.resId || "").trim()) || {}),
         })),
       });
@@ -1664,9 +1668,23 @@ router.post(
       .trim()
       .toLowerCase();
     const reason = String(req.body?.reason || "").trim() || null;
+    const joiningDate = req.body?.joining_date
+      ? String(req.body.joining_date).trim()
+      : null;
+    const joiningNote = req.body?.joining_note
+      ? String(req.body.joining_note).trim()
+      : null;
 
     if (!targetStatus) {
       return res.status(400).json({ message: "status is required." });
+    }
+
+    if (targetStatus === "joined" && joiningDate) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(joiningDate)) {
+        return res.status(400).json({
+          message: "joining_date must be in YYYY-MM-DD format.",
+        });
+      }
     }
 
     try {
@@ -1708,14 +1726,24 @@ router.post(
 
         await connection.query(
           `INSERT INTO job_resume_selection
-            (job_jid, res_id, selected_by_admin, selection_status, selection_note)
-           VALUES (?, ?, ?, ?, ?)
+            (job_jid, res_id, selected_by_admin, selection_status, selection_note, joining_date, joining_note)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
            ON DUPLICATE KEY UPDATE
              selected_by_admin = VALUES(selected_by_admin),
              selection_status = VALUES(selection_status),
              selection_note = VALUES(selection_note),
+             joining_date = CASE WHEN VALUES(selection_status) = 'joined' THEN VALUES(joining_date) ELSE joining_date END,
+             joining_note = CASE WHEN VALUES(selection_status) = 'joined' THEN VALUES(joining_note) ELSE joining_note END,
              selected_at = CURRENT_TIMESTAMP`,
-          [resume.jobJid, resId, rid, targetStatus, reason],
+          [
+            resume.jobJid,
+            resId,
+            rid,
+            targetStatus,
+            reason,
+            targetStatus === "joined" ? joiningDate : null,
+            targetStatus === "joined" ? joiningNote : null,
+          ],
         );
 
         const reasonColumn = statusReasonColumnMap[targetStatus];
@@ -1802,6 +1830,8 @@ router.post(
             previousStatus: currentStatus,
             status: targetStatus,
             reason,
+            joining_date: targetStatus === "joined" ? joiningDate : undefined,
+            joining_note: targetStatus === "joined" ? joiningNote : undefined,
           },
         });
       } catch (innerError) {

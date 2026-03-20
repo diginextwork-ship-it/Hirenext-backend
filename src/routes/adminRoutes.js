@@ -804,11 +804,15 @@ router.get("/api/admin/candidate-resumes", async (req, res) => {
       ? `jrs.selection_status AS selectionStatus,
         jrs.selection_note AS selectionNote,
         jrs.selected_by_admin AS selectedByAdmin,
-        jrs.selected_at AS selectedAt`
+        jrs.selected_at AS selectedAt,
+        jrs.joining_date AS joiningDate,
+        jrs.joining_note AS joiningNote`
       : `NULL AS selectionStatus,
         NULL AS selectionNote,
         NULL AS selectedByAdmin,
-        NULL AS selectedAt`;
+        NULL AS selectedAt,
+        NULL AS joiningDate,
+        NULL AS joiningNote`;
     const selectionJoin = hasSelectionTable
       ? `LEFT JOIN job_resume_selection jrs
         ON jrs.job_jid = rd.job_jid
@@ -915,6 +919,8 @@ router.get("/api/admin/candidate-resumes", async (req, res) => {
               note: row.selectionNote || null,
               selectedByAdmin: row.selectedByAdmin || null,
               selectedAt: row.selectedAt || null,
+              joiningDate: row.joiningDate || null,
+              joiningNote: row.joiningNote || null,
             }
           : null,
       })),
@@ -1145,7 +1151,9 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
         jrs.selection_status AS selectionStatus,
         jrs.selection_note AS selectionNote,
         jrs.selected_by_admin AS selectedByAdmin,
-        jrs.selected_at AS selectedAt
+        jrs.selected_at AS selectedAt,
+        jrs.joining_date AS joiningDate,
+        jrs.joining_note AS joiningNote
       FROM resumes_data rd
       INNER JOIN recruiter r ON r.rid = rd.rid
       ${extraInfoJoin}
@@ -1185,6 +1193,8 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
               note: row.selectionNote || null,
               selectedByAdmin: row.selectedByAdmin || null,
               selectedAt: row.selectedAt || null,
+              joiningDate: row.joiningDate || null,
+              joiningNote: row.joiningNote || null,
             }
           : null,
       })),
