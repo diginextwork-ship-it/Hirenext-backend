@@ -185,6 +185,8 @@ ALTER TABLE extra_info
   ADD COLUMN IF NOT EXISTS reject_reason TEXT NULL;
 ALTER TABLE extra_info
   ADD COLUMN IF NOT EXISTS left_reason TEXT NULL;
+ALTER TABLE extra_info
+  ADD COLUMN IF NOT EXISTS billed_reason TEXT NULL;
 
 ALTER TABLE resumes_data
   ADD COLUMN IF NOT EXISTS submitted_by_role VARCHAR(30) NULL DEFAULT 'recruiter';

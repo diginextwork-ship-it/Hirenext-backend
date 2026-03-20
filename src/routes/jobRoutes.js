@@ -808,7 +808,9 @@ router.post(
           ? (req.body?.verifiedReason ?? req.body?.verified_reason)
           : normalizedStatus === "left"
             ? (req.body?.leftReason ?? req.body?.left_reason)
-            : undefined;
+            : normalizedStatus === "billed"
+              ? (req.body?.billedReason ?? req.body?.billed_reason)
+              : undefined;
     const normalizedNote =
       rawNote === undefined || rawNote === null
         ? null
@@ -862,6 +864,7 @@ router.post(
           rejected: "rejectReason",
           joined: "joinedReason",
           dropout: "dropoutReason",
+          billed: "billedReason",
           left: "leftReason",
         };
         const reasonField = statusReasonMap[normalizedStatus];
@@ -880,13 +883,13 @@ router.post(
             existingSelectionRows[0]?.selectionStatus,
           ).toLowerCase() || "pending";
 
-        // "left" can only be set from "billed"; note is optional
+        // "left" can only be set from "joined"
         if (normalizedStatus === "left") {
-          if (previousStatus !== "billed") {
+          if (previousStatus !== "joined") {
             await connection.rollback();
             return res.status(400).json({
               message:
-                "Cannot move to 'left' status. Only candidates in 'billed' status can be moved to 'left'.",
+                "Cannot move to 'left' status. Only candidates in 'joined' status can be moved to 'left'.",
             });
           }
         }

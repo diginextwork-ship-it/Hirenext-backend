@@ -1647,6 +1647,7 @@ const allowedRecruiterTransitions = {
   verified: ["walk_in", "rejected"],
   walk_in: ["selected", "rejected"],
   selected: ["joined", "dropout", "rejected"],
+  joined: ["billed", "left"],
 };
 
 const statusReasonColumnMap = {
@@ -1655,6 +1656,8 @@ const statusReasonColumnMap = {
   rejected: "reject_reason",
   joined: "joined_reason",
   dropout: "dropout_reason",
+  billed: "billed_reason",
+  left: "left_reason",
 };
 
 router.post(
@@ -1677,6 +1680,10 @@ router.post(
 
     if (!targetStatus) {
       return res.status(400).json({ message: "status is required." });
+    }
+
+    if ((targetStatus === "billed" || targetStatus === "left") && !reason) {
+      return res.status(400).json({ message: "reason is required." });
     }
 
     if (targetStatus === "joined" && joiningDate) {
@@ -1800,6 +1807,8 @@ router.post(
           rejected: "reject",
           joined: "joined",
           dropout: "dropout",
+          billed: "billed",
+          left: "`left`",
         };
         const currentCol = statusDeltaMap[currentStatus];
         const targetCol = statusDeltaMap[targetStatus];

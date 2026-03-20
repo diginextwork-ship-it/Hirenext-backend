@@ -606,6 +606,11 @@ const ensureExtraInfoTable = async () => {
   if (!(await columnExists("extra_info", "left_reason"))) {
     await pool.query("ALTER TABLE extra_info ADD COLUMN left_reason TEXT NULL");
   }
+  if (!(await columnExists("extra_info", "billed_reason"))) {
+    await pool.query(
+      "ALTER TABLE extra_info ADD COLUMN billed_reason TEXT NULL",
+    );
+  }
   if (!(await columnExists("extra_info", "updated_at"))) {
     await pool.query(
       "ALTER TABLE extra_info ADD COLUMN updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP",
