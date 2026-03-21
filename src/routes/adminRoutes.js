@@ -2399,4 +2399,251 @@ router.get("/api/admin/performance", async (_req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// DELETE /api/admin/recruiters/:rid — Cascade-delete recruiter & all data
+// ═══════════════════════════════════════════════════════════════════════════
+router.delete(
+  "/api/admin/recruiters/:rid",
+  requireAuth,
+  requireRoles("admin"),
+  async (req, res) => {
+    const rid = String(req.params.rid || "").trim();
+    if (!rid) {
+      return res.status(400).json({ message: "Recruiter RID is required." });
+    }
+
+    let conn;
+    try {
+      conn = await pool.getConnection();
+      await conn.beginTransaction();
+
+      // Verify recruiter exists
+      const [[recruiter]] = await conn.query(
+        "SELECT rid, role FROM recruiter WHERE rid = ?",
+        [rid],
+      );
+      if (!recruiter) {
+        conn.release();
+        return res.status(404).json({ message: `Recruiter ${rid} not found.` });
+      }
+
+      // 1. Collect money_sum IDs tied to this recruiter's attendance rows
+      const [attendanceRows] = await conn.query(
+        "SELECT money_sum_id FROM recruiter_attendance WHERE recruiter_rid = ? AND money_sum_id IS NOT NULL",
+        [rid],
+      );
+      const attendanceMoneySumIds = attendanceRows.map((r) => r.money_sum_id);
+
+      // 2. Collect money_sum IDs tied to this recruiter's reimbursements
+      const [reimbursementRows] = await conn.query(
+        "SELECT money_sum_id FROM reimbursements WHERE rid = ? AND money_sum_id IS NOT NULL",
+        [rid],
+      );
+      const reimbursementMoneySumIds = reimbursementRows.map(
+        (r) => r.money_sum_id,
+      );
+
+      // 3. Delete extra_info rows for resumes submitted by this recruiter
+      await conn.query(
+        "DELETE ei FROM extra_info ei INNER JOIN resumes_data rd ON ei.res_id = rd.res_id WHERE rd.rid = ?",
+        [rid],
+      );
+
+      // 4. Delete job_resume_selection rows for resumes submitted by this recruiter
+      await conn.query(
+        "DELETE jrs FROM job_resume_selection jrs INNER JOIN resumes_data rd ON jrs.res_id = rd.res_id WHERE rd.rid = ?",
+        [rid],
+      );
+
+      // 5. Delete resumes submitted by this recruiter
+      await conn.query("DELETE FROM resumes_data WHERE rid = ?", [rid]);
+
+      // 6. Delete reimbursements (must come before money_sum cleanup)
+      await conn.query("DELETE FROM reimbursements WHERE rid = ?", [rid]);
+
+      // 7. Delete attendance rows (must come before money_sum cleanup)
+      await conn.query(
+        "DELETE FROM recruiter_attendance WHERE recruiter_rid = ?",
+        [rid],
+      );
+
+      // 8. Delete orphaned money_sum entries from attendance & reimbursements
+      const allMoneySumIds = [
+        ...new Set([...attendanceMoneySumIds, ...reimbursementMoneySumIds]),
+      ];
+      if (allMoneySumIds.length > 0) {
+        await conn.query("DELETE FROM money_sum WHERE id IN (?)", [
+          allMoneySumIds,
+        ]);
+      }
+
+      // 9. Delete job_recruiter_access rows for this recruiter
+      await conn.query(
+        "DELETE FROM job_recruiter_access WHERE recruiter_rid = ?",
+        [rid],
+      );
+
+      // 10. If team leader, nullify granted_by references before deleting jobs
+      await conn.query(
+        "DELETE FROM job_recruiter_access WHERE granted_by = ?",
+        [rid],
+      );
+
+      // 11. Delete recruiter_candidate_clicks
+      await conn.query(
+        "DELETE FROM recruiter_candidate_clicks WHERE recruiter_rid = ?",
+        [rid],
+      );
+
+      // 12. Delete status row
+      await conn.query("DELETE FROM status WHERE recruiter_rid = ?", [rid]);
+
+      // 13. If team leader, handle jobs they created:
+      //     - Delete extra_info & selections for resumes linked to their jobs
+      //     - Delete resumes linked to their jobs
+      //     - Delete jobs (CASCADE will also clean applications)
+      const isTeamLeader =
+        String(recruiter.role || "").toLowerCase() === "team leader" ||
+        String(recruiter.role || "").toLowerCase() === "job creator";
+
+      if (isTeamLeader) {
+        const [jobRows] = await conn.query(
+          "SELECT jid FROM jobs WHERE recruiter_rid = ?",
+          [rid],
+        );
+        const jobIds = jobRows.map((j) => j.jid);
+
+        if (jobIds.length > 0) {
+          // Extra info for resumes linked to those jobs
+          await conn.query(
+            "DELETE ei FROM extra_info ei INNER JOIN resumes_data rd ON ei.res_id = rd.res_id WHERE rd.job_jid IN (?)",
+            [jobIds],
+          );
+          // Selections for resumes linked to those jobs
+          await conn.query(
+            "DELETE FROM job_resume_selection WHERE job_jid IN (?)",
+            [jobIds],
+          );
+          // Resumes linked to those jobs
+          await conn.query("DELETE FROM resumes_data WHERE job_jid IN (?)", [
+            jobIds,
+          ]);
+        }
+
+        // Delete all jobs created by this team leader (CASCADE handles applications)
+        await conn.query("DELETE FROM jobs WHERE recruiter_rid = ?", [rid]);
+      }
+
+      // 14. Delete the recruiter row itself
+      await conn.query("DELETE FROM recruiter WHERE rid = ?", [rid]);
+
+      await conn.commit();
+      conn.release();
+
+      return res.status(200).json({
+        success: true,
+        message: `Recruiter ${rid} and all associated data deleted.`,
+      });
+    } catch (error) {
+      if (conn) {
+        try {
+          await conn.rollback();
+        } catch (_rollbackErr) {
+          /* ignore */
+        }
+        conn.release();
+      }
+      console.error("DELETE /api/admin/recruiters/:rid error:", error);
+
+      if (error.code === "ER_ROW_IS_REFERENCED_2") {
+        return res.status(409).json({
+          message:
+            "Cannot delete recruiter: a foreign key constraint prevents deletion. Please remove dependent records first.",
+          error: error.message,
+        });
+      }
+      return res.status(500).json({
+        message: "Failed to delete recruiter.",
+        error: error.message,
+      });
+    }
+  },
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DELETE /api/admin/candidates/:resId — Cascade-delete candidate resume
+// ═══════════════════════════════════════════════════════════════════════════
+router.delete(
+  "/api/admin/candidates/:resId",
+  requireAuth,
+  requireRoles("admin"),
+  async (req, res) => {
+    const resId = String(req.params.resId || "").trim();
+    if (!resId) {
+      return res
+        .status(400)
+        .json({ message: "Resume ID (resId) is required." });
+    }
+
+    let conn;
+    try {
+      conn = await pool.getConnection();
+      await conn.beginTransaction();
+
+      // Verify resume exists
+      const [[resume]] = await conn.query(
+        "SELECT res_id FROM resumes_data WHERE res_id = ?",
+        [resId],
+      );
+      if (!resume) {
+        conn.release();
+        return res
+          .status(404)
+          .json({ message: `Candidate resume ${resId} not found.` });
+      }
+
+      // 1. Delete job_resume_selection rows for this resume
+      await conn.query("DELETE FROM job_resume_selection WHERE res_id = ?", [
+        resId,
+      ]);
+
+      // 2. Delete extra_info (ATS scores, phone, email, extra data)
+      await conn.query("DELETE FROM extra_info WHERE res_id = ?", [resId]);
+
+      // 3. Delete the resume record itself (LONGBLOB file data is stored inline)
+      await conn.query("DELETE FROM resumes_data WHERE res_id = ?", [resId]);
+
+      await conn.commit();
+      conn.release();
+
+      return res.status(200).json({
+        success: true,
+        message: `Candidate resume ${resId} and all associated data deleted.`,
+      });
+    } catch (error) {
+      if (conn) {
+        try {
+          await conn.rollback();
+        } catch (_rollbackErr) {
+          /* ignore */
+        }
+        conn.release();
+      }
+      console.error("DELETE /api/admin/candidates/:resId error:", error);
+
+      if (error.code === "ER_ROW_IS_REFERENCED_2") {
+        return res.status(409).json({
+          message:
+            "Cannot delete candidate resume: a foreign key constraint prevents deletion. Please remove dependent records first.",
+          error: error.message,
+        });
+      }
+      return res.status(500).json({
+        message: "Failed to delete candidate resume.",
+        error: error.message,
+      });
+    }
+  },
+);
+
 module.exports = router;
