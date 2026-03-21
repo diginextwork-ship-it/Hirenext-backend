@@ -24,6 +24,11 @@ const normalizeJobJid = (value) => {
   return normalized || null;
 };
 
+const toTrimmedString = (value) => {
+  if (value === undefined || value === null) return "";
+  return String(value).trim();
+};
+
 const normalizeAccessMode = (value) => {
   const normalized = String(value || "")
     .trim()
@@ -179,6 +184,7 @@ module.exports = {
   toMoneyNumber,
   toMoneyOrNull,
   normalizeJobJid,
+  toTrimmedString,
   normalizeAccessMode,
   normalizePhoneForStorage,
   safeJsonOrNull,

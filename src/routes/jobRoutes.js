@@ -24,6 +24,7 @@ const {
 const {
   toNumberOrNull,
   normalizeJobJid,
+  toTrimmedString,
   normalizeAccessMode,
   normalizePhoneForStorage,
   safeJsonOrNull,
@@ -468,27 +469,27 @@ router.post(
       }
       if (hasSkillsColumn) {
         insertColumns.push("skills");
-        insertValues.push(skills?.trim() || null);
+        insertValues.push(toTrimmedString(skills) || null);
       }
       if (hasJobDescriptionColumn) {
         insertColumns.push("job_description");
-        insertValues.push(job_description?.trim() || null);
+        insertValues.push(toTrimmedString(job_description) || null);
       }
       if (hasExperienceColumn) {
         insertColumns.push("experience");
-        insertValues.push(experience?.trim() || null);
+        insertValues.push(toTrimmedString(experience) || null);
       }
       if (hasSalaryColumn) {
         insertColumns.push("salary");
-        insertValues.push(salary?.trim() || null);
+        insertValues.push(toTrimmedString(salary) || null);
       }
       if (hasQualificationColumn) {
         insertColumns.push("qualification");
-        insertValues.push(qualification?.trim() || null);
+        insertValues.push(toTrimmedString(qualification) || null);
       }
       if (hasBenefitsColumn) {
         insertColumns.push("benefits");
-        insertValues.push(benefits?.trim() || null);
+        insertValues.push(toTrimmedString(benefits) || null);
       }
       if (hasAccessModeColumn) {
         insertColumns.push("access_mode");
