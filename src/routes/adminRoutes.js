@@ -1974,6 +1974,163 @@ router.put("/api/admin/resumes/:resId/verified-reason", async (req, res) => {
   }
 });
 
+// ─── Advance Resume Workflow Status ─────────────────────────────────────────────
+
+const VALID_STATUS_TRANSITIONS = {
+  walk_in: new Set(["selected", "rejected"]),
+  selected: new Set(["joined", "dropout"]),
+  joined: new Set(["billed", "left"]),
+};
+
+const STATUS_REASON_COLUMN = {
+  selected: "select_reason",
+  rejected: "reject_reason",
+  joined: "joined_reason",
+  dropout: "dropout_reason",
+  billed: "billed_reason",
+  left: "left_reason",
+};
+
+router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
+  if (!ensureAdminAuthorized(req, res)) return;
+
+  const normalizedResId = String(req.params.resId || "").trim();
+  if (!normalizedResId) {
+    return res.status(400).json({ message: "resId is required." });
+  }
+
+  const newStatus = String(req.body?.status || "")
+    .trim()
+    .toLowerCase();
+  const reason =
+    req.body?.reason === undefined || req.body?.reason === null
+      ? ""
+      : String(req.body.reason).trim();
+  const joiningDate = String(req.body?.joining_date || "").trim();
+  const joiningNote =
+    req.body?.joining_note === undefined || req.body?.joining_note === null
+      ? null
+      : String(req.body.joining_note).trim();
+
+  const allowedNewStatuses = new Set([
+    "selected",
+    "rejected",
+    "joined",
+    "dropout",
+    "billed",
+    "left",
+  ]);
+  if (!allowedNewStatuses.has(newStatus)) {
+    return res.status(400).json({ message: "Invalid target status." });
+  }
+
+  // Reason is required for all statuses except joined
+  if (newStatus !== "joined" && !reason) {
+    return res
+      .status(400)
+      .json({ message: "reason is required for this status transition." });
+  }
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    // Fetch the resume and its current workflow status
+    const [resumeRows] = await connection.query(
+      `SELECT
+        rd.res_id AS resId,
+        rd.rid,
+        rd.job_jid AS jobJid,
+        COALESCE(jrs.selection_status, '') AS currentStatus
+      FROM resumes_data rd
+      LEFT JOIN job_resume_selection jrs
+        ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
+      WHERE rd.res_id = ?
+      LIMIT 1
+      FOR UPDATE`,
+      [normalizedResId],
+    );
+
+    if (resumeRows.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ message: "Resume not found." });
+    }
+
+    const resume = resumeRows[0];
+    const currentStatus = String(resume.currentStatus || "")
+      .trim()
+      .toLowerCase();
+
+    // Validate transition
+    const allowedTransitions = VALID_STATUS_TRANSITIONS[currentStatus];
+    if (!allowedTransitions || !allowedTransitions.has(newStatus)) {
+      await connection.rollback();
+      return res.status(400).json({
+        message: `Invalid status transition from '${currentStatus}' to '${newStatus}'.`,
+      });
+    }
+
+    // Update selection_status in job_resume_selection
+    const joiningDateValue =
+      newStatus === "joined" && /^\d{4}-\d{2}-\d{2}$/.test(joiningDate)
+        ? joiningDate
+        : null;
+    const joiningNoteValue = newStatus === "joined" ? joiningNote : null;
+
+    if (resume.jobJid) {
+      await connection.query(
+        `INSERT INTO job_resume_selection
+          (job_jid, res_id, selected_by_admin, selection_status, selection_note, joining_date, joining_note)
+        VALUES (?, ?, 'admin-panel', ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          selection_status = VALUES(selection_status),
+          selection_note = VALUES(selection_note),
+          joining_date = COALESCE(VALUES(joining_date), joining_date),
+          joining_note = COALESCE(VALUES(joining_note), joining_note),
+          selected_at = CURRENT_TIMESTAMP`,
+        [
+          resume.jobJid,
+          normalizedResId,
+          newStatus,
+          reason || null,
+          joiningDateValue,
+          joiningNoteValue,
+        ],
+      );
+    }
+
+    // Update reason column in extra_info
+    const reasonColumn = STATUS_REASON_COLUMN[newStatus];
+    if (reasonColumn) {
+      const hasExtraInfoTable = await tableExists("extra_info");
+      if (hasExtraInfoTable) {
+        const hasReasonColumn = await columnExists("extra_info", reasonColumn);
+        if (hasReasonColumn) {
+          await connection.query(
+            `INSERT INTO extra_info (res_id, ${reasonColumn}, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON DUPLICATE KEY UPDATE
+              ${reasonColumn} = VALUES(${reasonColumn}),
+              updated_at = CURRENT_TIMESTAMP`,
+            [normalizedResId, reason || null],
+          );
+        }
+      }
+    }
+
+    await connection.commit();
+    return res.status(200).json({ message: "Status updated successfully." });
+  } catch (error) {
+    await connection.rollback();
+    return res.status(500).json({
+      message: "Failed to advance resume status.",
+      error: error.message,
+    });
+  } finally {
+    connection.release();
+  }
+});
+
 // ─── Admin Performance Dashboard ───────────────────────────────────────────────
 router.get("/api/admin/resumes/:resId/file", async (req, res) => {
   if (!ensureAdminAuthorized(req, res)) return;
@@ -2139,8 +2296,7 @@ router.get("/api/admin/performance", async (_req, res) => {
           selected > 0 ? Number(((dropout / selected) * 100).toFixed(1)) : 0,
         billingRate:
           joined > 0 ? Number(((billed / joined) * 100).toFixed(1)) : 0,
-        leftRate:
-          billed > 0 ? Number(((left / billed) * 100).toFixed(1)) : 0,
+        leftRate: billed > 0 ? Number(((left / billed) * 100).toFixed(1)) : 0,
       };
     });
 
@@ -2155,16 +2311,19 @@ router.get("/api/admin/performance", async (_req, res) => {
         recruiter.name AS recruiterName,
         recruiter.email AS recruiterEmail,
         teamLeader.rid AS teamLeaderRid,
-        teamLeader.name AS teamLeaderName
+        teamLeader.name AS teamLeaderName,
+        COALESCE(ei.candidate_name, ei.applicant_name, rd.applicant_name) AS candidateName
       FROM resumes_data rd
       INNER JOIN recruiter recruiter ON recruiter.rid = rd.rid
       LEFT JOIN job_resume_selection jrs
         ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
       LEFT JOIN jobs j ON j.jid = rd.job_jid
       LEFT JOIN recruiter teamLeader ON teamLeader.rid = j.recruiter_rid
+      LEFT JOIN extra_info ei ON ei.res_id = rd.res_id
       WHERE COALESCE(rd.submitted_by_role, 'recruiter') = 'recruiter'
         AND COALESCE(jrs.selection_status, '') IN (
           'verified',
+          'walk_in',
           'selected',
           'joined',
           'dropout',
@@ -2177,6 +2336,7 @@ router.get("/api/admin/performance", async (_req, res) => {
 
     const statusDrilldown = {
       verified: [],
+      walk_in: [],
       selected: [],
       joined: [],
       dropout: [],
@@ -2186,7 +2346,9 @@ router.get("/api/admin/performance", async (_req, res) => {
     };
 
     for (const row of statusDrilldownRows) {
-      const statusKey = String(row.workflowStatus || "").trim().toLowerCase();
+      const statusKey = String(row.workflowStatus || "")
+        .trim()
+        .toLowerCase();
       if (!Object.prototype.hasOwnProperty.call(statusDrilldown, statusKey)) {
         continue;
       }
@@ -2199,12 +2361,10 @@ router.get("/api/admin/performance", async (_req, res) => {
             : Number(row.jobJid),
         recruiterRid: row.recruiterRid || null,
         recruiterName: row.recruiterName || null,
-        recruiterEmail: row.recruiterEmail || null,
-        teamLeaderRid: row.teamLeaderRid || null,
         teamLeaderName: row.teamLeaderName || null,
         resumeFilename: row.resumeFilename || null,
         status: statusKey,
-        statusUpdatedAt: row.statusUpdatedAt || null,
+        candidateName: row.candidateName || null,
       });
     }
 
@@ -2216,6 +2376,7 @@ router.get("/api/admin/performance", async (_req, res) => {
       totalPositions: teamLeaders.reduce((s, tl) => s + tl.totalPositions, 0),
       totalSubmitted: recruiters.reduce((s, r) => s + r.submitted, 0),
       totalVerified: recruiters.reduce((s, r) => s + r.verified, 0),
+      totalWalkIn: recruiters.reduce((s, r) => s + r.walk_in, 0),
       totalSelected: recruiters.reduce((s, r) => s + r.selected, 0),
       totalJoined: recruiters.reduce((s, r) => s + r.joined, 0),
       totalDropout: recruiters.reduce((s, r) => s + r.dropout, 0),
