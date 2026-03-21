@@ -422,22 +422,11 @@ router.get("/api/admin/dashboard", async (_req, res) => {
     let totalResumeCount = 0;
     let candidateResumeCount = 0;
     let recruiterResumeUploads = [];
-    let topResumesByJob = [];
-
     if (await tableExists("resumes_data")) {
       const hasJobJidColumn = await columnExists("resumes_data", "job_jid");
       const hasSubmittedByRoleColumn = await columnExists(
         "resumes_data",
         "submitted_by_role",
-      );
-      const hasApplicantNameColumn = await columnExists(
-        "resumes_data",
-        "applicant_name",
-      );
-      const hasAtsScoreColumn = await columnExists("resumes_data", "ats_score");
-      const hasAtsMatchColumn = await columnExists(
-        "resumes_data",
-        "ats_match_percentage",
       );
       const hasAcceptedColumn = await columnExists(
         "resumes_data",
@@ -500,128 +489,12 @@ router.get("/api/admin/dashboard", async (_req, res) => {
       );
 
       recruiterResumeUploads = rows;
-
-      if (hasJobJidColumn && (await tableExists("jobs"))) {
-        const applicantNameSelect = hasApplicantNameColumn
-          ? "ranked.applicant_name AS applicantName,"
-          : "NULL AS applicantName,";
-        const atsScoreSelect = hasAtsScoreColumn
-          ? "ranked.ats_score AS atsScore,"
-          : "NULL AS atsScore,";
-        const atsMatchSelect = hasAtsMatchColumn
-          ? "ranked.ats_match_percentage AS atsMatchPercentage,"
-          : "NULL AS atsMatchPercentage,";
-
-        const rankingFilter = hasAtsMatchColumn
-          ? `rd2.ats_match_percentage > rd.ats_match_percentage
-                OR (
-                  rd2.ats_match_percentage = rd.ats_match_percentage
-                  AND rd2.uploaded_at > rd.uploaded_at
-                )
-                OR (
-                  rd2.ats_match_percentage = rd.ats_match_percentage
-                  AND rd2.uploaded_at = rd.uploaded_at
-                  AND rd2.res_id < rd.res_id
-                )`
-          : `rd2.uploaded_at > rd.uploaded_at
-                OR (
-                  rd2.uploaded_at = rd.uploaded_at
-                  AND rd2.res_id < rd.res_id
-                )`;
-
-        const scoreNotNullFilter = hasAtsMatchColumn
-          ? "AND rd.ats_match_percentage IS NOT NULL"
-          : "";
-        const scoreNotNullFilterInner = hasAtsMatchColumn
-          ? "AND rd2.ats_match_percentage IS NOT NULL"
-          : "";
-
-        const [topRows] = await pool.query(
-          `SELECT
-            j.jid AS jobJid,
-            j.role_name AS roleName,
-            j.company_name AS companyName,
-            ranked.res_id AS resId,
-            ranked.rid AS rid,
-            ${applicantNameSelect}
-            ranked.resume_filename AS resumeFilename,
-            ${atsScoreSelect}
-            ${atsMatchSelect}
-            ranked.uploaded_at AS uploadedAt
-          FROM jobs j
-          LEFT JOIN (
-            SELECT rd.*
-            FROM resumes_data rd
-            WHERE rd.job_jid IS NOT NULL
-              ${scoreNotNullFilter}
-              AND (
-                SELECT COUNT(*)
-                FROM resumes_data rd2
-                WHERE rd2.job_jid = rd.job_jid
-                  ${scoreNotNullFilterInner}
-                  AND (${rankingFilter})
-              ) < 2
-          ) ranked ON ranked.job_jid = j.jid
-          ORDER BY j.jid DESC, ranked.job_jid IS NULL, ranked.uploaded_at DESC`,
-        );
-
-        const groupedByJob = new Map();
-        for (const row of topRows) {
-          const key = Number(row.jobJid);
-          if (!groupedByJob.has(key)) {
-            groupedByJob.set(key, {
-              jobJid: key,
-              roleName: row.roleName || null,
-              companyName: row.companyName || null,
-              topResumes: [],
-            });
-          }
-
-          if (row.resId) {
-            groupedByJob.get(key).topResumes.push({
-              resId: row.resId,
-              rid: row.rid,
-              applicantName: row.applicantName || null,
-              resumeFilename: row.resumeFilename || null,
-              atsScore:
-                row.atsScore === null || row.atsScore === undefined
-                  ? null
-                  : Number(row.atsScore),
-              atsMatchPercentage:
-                row.atsMatchPercentage === null ||
-                row.atsMatchPercentage === undefined
-                  ? null
-                  : Number(row.atsMatchPercentage),
-              uploadedAt: row.uploadedAt || null,
-            });
-          }
-        }
-
-        topResumesByJob = Array.from(groupedByJob.values()).map((job) => {
-          const sorted = [...job.topResumes].sort((a, b) => {
-            const matchA =
-              a.atsMatchPercentage === null ? -1 : Number(a.atsMatchPercentage);
-            const matchB =
-              b.atsMatchPercentage === null ? -1 : Number(b.atsMatchPercentage);
-            if (matchB !== matchA) return matchB - matchA;
-
-            const timeA = a.uploadedAt ? new Date(a.uploadedAt).getTime() : 0;
-            const timeB = b.uploadedAt ? new Date(b.uploadedAt).getTime() : 0;
-            if (timeB !== timeA) return timeB - timeA;
-
-            return String(a.resId || "").localeCompare(String(b.resId || ""));
-          });
-
-          return { ...job, topResumes: sorted.slice(0, 2) };
-        });
-      }
     }
 
     return res.status(200).json({
       totalResumeCount,
       candidateResumeCount,
       recruiterResumeUploads,
-      topResumesByJob,
     });
   } catch (error) {
     return res.status(500).json({
@@ -2102,6 +1975,54 @@ router.put("/api/admin/resumes/:resId/verified-reason", async (req, res) => {
 });
 
 // ─── Admin Performance Dashboard ───────────────────────────────────────────────
+router.get("/api/admin/resumes/:resId/file", async (req, res) => {
+  if (!ensureAdminAuthorized(req, res)) return;
+
+  const resId = String(req.params.resId || "").trim();
+  if (!resId) {
+    return res.status(400).json({ message: "resId is required." });
+  }
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT
+        resume,
+        resume_filename AS resumeFilename,
+        resume_type AS resumeType
+      FROM resumes_data
+      WHERE res_id = ?
+      LIMIT 1`,
+      [resId],
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "Resume not found." });
+    }
+
+    const row = rows[0];
+    const mimeTypeByResumeType = {
+      pdf: "application/pdf",
+      doc: "application/msword",
+      docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    };
+    const mimeType =
+      mimeTypeByResumeType[String(row.resumeType || "").toLowerCase()] ||
+      "application/octet-stream";
+
+    res.setHeader("Content-Type", mimeType);
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${String(row.resumeFilename || "resume").replace(/"/g, "")}"`,
+    );
+    return res.send(row.resume);
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to fetch resume file.",
+      error: error.message,
+    });
+  }
+});
+
 router.get("/api/admin/performance", async (_req, res) => {
   try {
     // ── Team Leaders: jobs created ──────────────────────────────────────────
@@ -2155,6 +2076,8 @@ router.get("/api/admin/performance", async (_req, res) => {
         COALESCE(rs.rejected, 0) AS reject,
         COALESCE(rs.joined, 0) AS joined,
         COALESCE(rs.dropout, 0) AS dropout,
+        COALESCE(rs.billed, 0) AS billed,
+        COALESCE(rs.left_count, 0) AS left_count,
         COALESCE(rs.on_hold, 0) AS on_hold,
         rs.last_updated
       FROM recruiter r
@@ -2168,6 +2091,8 @@ router.get("/api/admin/performance", async (_req, res) => {
           SUM(CASE WHEN jrs.selection_status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
           SUM(CASE WHEN jrs.selection_status = 'joined' THEN 1 ELSE 0 END) AS joined,
           SUM(CASE WHEN jrs.selection_status = 'dropout' THEN 1 ELSE 0 END) AS dropout,
+          SUM(CASE WHEN jrs.selection_status = 'billed' THEN 1 ELSE 0 END) AS billed,
+          SUM(CASE WHEN jrs.selection_status = 'left' THEN 1 ELSE 0 END) AS left_count,
           SUM(CASE WHEN jrs.selection_status = 'on_hold' THEN 1 ELSE 0 END) AS on_hold,
           MAX(COALESCE(jrs.selected_at, rd.uploaded_at)) AS last_updated
         FROM resumes_data rd
@@ -2186,6 +2111,8 @@ router.get("/api/admin/performance", async (_req, res) => {
       const selected = Number(row.select) || 0;
       const joined = Number(row.joined) || 0;
       const dropout = Number(row.dropout) || 0;
+      const billed = Number(row.billed) || 0;
+      const left = Number(row.left_count) || 0;
       return {
         rid: row.rid,
         name: row.name,
@@ -2198,6 +2125,8 @@ router.get("/api/admin/performance", async (_req, res) => {
         rejected: Number(row.reject) || 0,
         joined,
         dropout,
+        billed,
+        left,
         on_hold: Number(row.on_hold) || 0,
         lastUpdated: row.last_updated || null,
         verificationRate:
@@ -2208,8 +2137,76 @@ router.get("/api/admin/performance", async (_req, res) => {
           selected > 0 ? Number(((joined / selected) * 100).toFixed(1)) : 0,
         dropoutRate:
           selected > 0 ? Number(((dropout / selected) * 100).toFixed(1)) : 0,
+        billingRate:
+          joined > 0 ? Number(((billed / joined) * 100).toFixed(1)) : 0,
+        leftRate:
+          billed > 0 ? Number(((left / billed) * 100).toFixed(1)) : 0,
       };
     });
+
+    const [statusDrilldownRows] = await pool.query(
+      `SELECT
+        rd.res_id AS resId,
+        rd.job_jid AS jobJid,
+        rd.resume_filename AS resumeFilename,
+        COALESCE(jrs.selection_status, 'pending') AS workflowStatus,
+        jrs.selected_at AS statusUpdatedAt,
+        recruiter.rid AS recruiterRid,
+        recruiter.name AS recruiterName,
+        recruiter.email AS recruiterEmail,
+        teamLeader.rid AS teamLeaderRid,
+        teamLeader.name AS teamLeaderName
+      FROM resumes_data rd
+      INNER JOIN recruiter recruiter ON recruiter.rid = rd.rid
+      LEFT JOIN job_resume_selection jrs
+        ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
+      LEFT JOIN jobs j ON j.jid = rd.job_jid
+      LEFT JOIN recruiter teamLeader ON teamLeader.rid = j.recruiter_rid
+      WHERE COALESCE(rd.submitted_by_role, 'recruiter') = 'recruiter'
+        AND COALESCE(jrs.selection_status, '') IN (
+          'verified',
+          'selected',
+          'joined',
+          'dropout',
+          'rejected',
+          'billed',
+          'left'
+        )
+      ORDER BY jrs.selected_at DESC, rd.uploaded_at DESC, rd.res_id DESC`,
+    );
+
+    const statusDrilldown = {
+      verified: [],
+      selected: [],
+      joined: [],
+      dropout: [],
+      rejected: [],
+      billed: [],
+      left: [],
+    };
+
+    for (const row of statusDrilldownRows) {
+      const statusKey = String(row.workflowStatus || "").trim().toLowerCase();
+      if (!Object.prototype.hasOwnProperty.call(statusDrilldown, statusKey)) {
+        continue;
+      }
+
+      statusDrilldown[statusKey].push({
+        resId: row.resId,
+        jobJid:
+          row.jobJid === null || row.jobJid === undefined
+            ? null
+            : Number(row.jobJid),
+        recruiterRid: row.recruiterRid || null,
+        recruiterName: row.recruiterName || null,
+        recruiterEmail: row.recruiterEmail || null,
+        teamLeaderRid: row.teamLeaderRid || null,
+        teamLeaderName: row.teamLeaderName || null,
+        resumeFilename: row.resumeFilename || null,
+        status: statusKey,
+        statusUpdatedAt: row.statusUpdatedAt || null,
+      });
+    }
 
     // ── Summary totals ──────────────────────────────────────────────────────
     const summary = {
@@ -2223,9 +2220,16 @@ router.get("/api/admin/performance", async (_req, res) => {
       totalJoined: recruiters.reduce((s, r) => s + r.joined, 0),
       totalDropout: recruiters.reduce((s, r) => s + r.dropout, 0),
       totalRejected: recruiters.reduce((s, r) => s + r.rejected, 0),
+      totalBilled: recruiters.reduce((s, r) => s + r.billed, 0),
+      totalLeft: recruiters.reduce((s, r) => s + r.left, 0),
     };
 
-    return res.status(200).json({ teamLeaders, recruiters, summary });
+    return res.status(200).json({
+      teamLeaders,
+      recruiters,
+      summary,
+      statusDrilldown,
+    });
   } catch (error) {
     return res.status(500).json({
       message: "Failed to fetch performance data.",
