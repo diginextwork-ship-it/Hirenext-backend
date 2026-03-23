@@ -411,6 +411,8 @@ const ensureResumesDataTable = async () => {
       res_id VARCHAR(30) PRIMARY KEY,
       rid VARCHAR(20) NOT NULL,
       applicant_name VARCHAR(255) NULL,
+      walk_in DATE NULL,
+      joining_date DATE NULL,
       job_jid ${jobJidColumnSql} NULL,
       resume LONGBLOB NOT NULL,
       resume_filename VARCHAR(255) NOT NULL,
@@ -454,6 +456,18 @@ const ensureResumesDataTable = async () => {
   if (!(await columnExists("resumes_data", "applicant_email"))) {
     await pool.query(
       "ALTER TABLE resumes_data ADD COLUMN applicant_email VARCHAR(190) NULL",
+    );
+  }
+
+  if (!(await columnExists("resumes_data", "walk_in"))) {
+    await pool.query(
+      "ALTER TABLE resumes_data ADD COLUMN walk_in DATE NULL",
+    );
+  }
+
+  if (!(await columnExists("resumes_data", "joining_date"))) {
+    await pool.query(
+      "ALTER TABLE resumes_data ADD COLUMN joining_date DATE NULL",
     );
   }
 

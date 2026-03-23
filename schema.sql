@@ -128,6 +128,8 @@ CREATE TABLE IF NOT EXISTS resumes_data (
   submitted_by_role VARCHAR(30) NULL DEFAULT 'recruiter',
   applicant_name VARCHAR(255) NULL,
   applicant_email VARCHAR(190) NULL,
+  walk_in DATE NULL,
+  joining_date DATE NULL,
   is_accepted BOOLEAN NOT NULL DEFAULT FALSE,
   accepted_at TIMESTAMP NULL DEFAULT NULL,
   accepted_by_admin VARCHAR(50) NULL,
@@ -194,6 +196,10 @@ ALTER TABLE resumes_data
   ADD COLUMN IF NOT EXISTS applicant_name VARCHAR(255) NULL;
 ALTER TABLE resumes_data
   ADD COLUMN IF NOT EXISTS applicant_email VARCHAR(190) NULL;
+ALTER TABLE resumes_data
+  ADD COLUMN IF NOT EXISTS walk_in DATE NULL;
+ALTER TABLE resumes_data
+  ADD COLUMN IF NOT EXISTS joining_date DATE NULL;
 ALTER TABLE resumes_data
   ADD COLUMN IF NOT EXISTS is_accepted BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE resumes_data

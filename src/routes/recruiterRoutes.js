@@ -1258,6 +1258,7 @@ router.get(
         "resumes_data",
         "applicant_name",
       );
+      const hasWalkInColumn = await columnExists("resumes_data", "walk_in");
       const hasAtsScoreColumn = await columnExists("resumes_data", "ats_score");
       const hasAtsMatchColumn = await columnExists(
         "resumes_data",
@@ -1269,6 +1270,9 @@ router.get(
       const candidateNameSelection = hasApplicantNameColumn
         ? "rd.applicant_name AS candidateName,"
         : "NULL AS candidateName,";
+      const walkInSelection = hasWalkInColumn
+        ? "rd.walk_in AS walkInDate,"
+        : "NULL AS walkInDate,";
       const atsScoreSelection = hasAtsScoreColumn
         ? "ats_score AS atsScore,"
         : "NULL AS atsScore,";
@@ -1281,6 +1285,7 @@ router.get(
         rd.res_id AS resId,
         ${jobJidSelection}
         ${candidateNameSelection}
+        ${walkInSelection}
         rd.resume_filename AS resumeFilename,
         rd.resume_type AS resumeType,
         ${atsScoreSelection}
@@ -1312,6 +1317,7 @@ router.get(
             row.atsMatchPercentage === null
               ? null
               : Number(row.atsMatchPercentage),
+          walkInDate: row.walkInDate || null,
           workflowStatus: row.workflowStatus || "pending",
           workflowUpdatedAt: row.workflowUpdatedAt || null,
           joiningDate: row.joiningDate || null,
@@ -1752,6 +1758,18 @@ router.post(
             targetStatus === "joined" ? joiningNote : null,
           ],
         );
+
+        if (
+          targetStatus === "walk_in" &&
+          (await columnExists("resumes_data", "walk_in"))
+        ) {
+          await connection.query(
+            `UPDATE resumes_data
+             SET walk_in = CURDATE()
+             WHERE res_id = ?`,
+            [resId],
+          );
+        }
 
         const reasonColumn = statusReasonColumnMap[targetStatus];
         if (reasonColumn && reason && (await tableExists("extra_info"))) {

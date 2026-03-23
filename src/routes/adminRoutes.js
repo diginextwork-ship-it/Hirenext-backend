@@ -539,6 +539,11 @@ router.get("/api/admin/candidate-resumes", async (req, res) => {
       "resumes_data",
       "ats_match_percentage",
     );
+    const hasWalkInColumn = await columnExists("resumes_data", "walk_in");
+    const hasResumeJoiningDateColumn = await columnExists(
+      "resumes_data",
+      "joining_date",
+    );
     const hasJobDescriptionColumn = await columnExists(
       "jobs",
       "job_description",
@@ -670,6 +675,12 @@ router.get("/api/admin/candidate-resumes", async (req, res) => {
     const atsMatchSelect = hasAtsMatchColumn
       ? "rd.ats_match_percentage AS atsMatchPercentage,"
       : "NULL AS atsMatchPercentage,";
+    const walkInDateSelect = hasWalkInColumn
+      ? "rd.walk_in AS walkInDate,"
+      : "NULL AS walkInDate,";
+    const resumeJoiningDateSelect = hasResumeJoiningDateColumn
+      ? "rd.joining_date AS resumeJoiningDate,"
+      : "NULL AS resumeJoiningDate,";
     const jobDescriptionSelect = hasJobDescriptionColumn
       ? "j.job_description AS jobDescription,"
       : "NULL AS jobDescription,";
@@ -678,12 +689,16 @@ router.get("/api/admin/candidate-resumes", async (req, res) => {
         jrs.selection_note AS selectionNote,
         jrs.selected_by_admin AS selectedByAdmin,
         jrs.selected_at AS selectedAt,
-        jrs.joining_date AS joiningDate,
+        ${walkInDateSelect}
+        ${resumeJoiningDateSelect}
+        COALESCE(rd.joining_date, jrs.joining_date) AS joiningDate,
         jrs.joining_note AS joiningNote`
       : `NULL AS selectionStatus,
         NULL AS selectionNote,
         NULL AS selectedByAdmin,
         NULL AS selectedAt,
+        ${walkInDateSelect}
+        ${resumeJoiningDateSelect}
         NULL AS joiningDate,
         NULL AS joiningNote`;
     const selectionJoin = hasSelectionTable
@@ -792,6 +807,8 @@ router.get("/api/admin/candidate-resumes", async (req, res) => {
               note: row.selectionNote || null,
               selectedByAdmin: row.selectedByAdmin || null,
               selectedAt: row.selectedAt || null,
+              walkInDate: row.walkInDate || null,
+              resumeJoiningDate: row.resumeJoiningDate || null,
               joiningDate: row.joiningDate || null,
               joiningNote: row.joiningNote || null,
             }
@@ -982,6 +999,11 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
       "resumes_data",
       "ats_match_percentage",
     );
+    const hasWalkInColumn = await columnExists("resumes_data", "walk_in");
+    const hasResumeJoiningDateColumn = await columnExists(
+      "resumes_data",
+      "joining_date",
+    );
     const hasExtraInfoTable = await tableExists("extra_info");
     const hasSubmittedReasonColumn =
       hasExtraInfoTable &&
@@ -996,6 +1018,12 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
     const atsMatchSelect = hasAtsMatchColumn
       ? "rd.ats_match_percentage AS atsMatchPercentage,"
       : "NULL AS atsMatchPercentage,";
+    const walkInDateSelect = hasWalkInColumn
+      ? "rd.walk_in AS walkInDate,"
+      : "NULL AS walkInDate,";
+    const resumeJoiningDateSelect = hasResumeJoiningDateColumn
+      ? "rd.joining_date AS resumeJoiningDate,"
+      : "NULL AS resumeJoiningDate,";
     const submittedReasonSelect = hasSubmittedReasonColumn
       ? "ei.submitted_reason AS submittedReason,"
       : "NULL AS submittedReason,";
@@ -1025,7 +1053,9 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
         jrs.selection_note AS selectionNote,
         jrs.selected_by_admin AS selectedByAdmin,
         jrs.selected_at AS selectedAt,
-        jrs.joining_date AS joiningDate,
+        ${walkInDateSelect}
+        ${resumeJoiningDateSelect}
+        COALESCE(rd.joining_date, jrs.joining_date) AS joiningDate,
         jrs.joining_note AS joiningNote
       FROM resumes_data rd
       INNER JOIN recruiter r ON r.rid = rd.rid
@@ -1066,6 +1096,8 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
               note: row.selectionNote || null,
               selectedByAdmin: row.selectedByAdmin || null,
               selectedAt: row.selectedAt || null,
+              walkInDate: row.walkInDate || null,
+              resumeJoiningDate: row.resumeJoiningDate || null,
               joiningDate: row.joiningDate || null,
               joiningNote: row.joiningNote || null,
             }
@@ -1978,7 +2010,8 @@ router.put("/api/admin/resumes/:resId/verified-reason", async (req, res) => {
 
 const VALID_STATUS_TRANSITIONS = {
   walk_in: new Set(["selected", "rejected"]),
-  selected: new Set(["joined", "dropout"]),
+  selected: new Set(["pending_joining", "dropout"]),
+  pending_joining: new Set(["joined", "dropout"]),
   joined: new Set(["billed", "left"]),
 };
 
@@ -2014,6 +2047,7 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
 
   const allowedNewStatuses = new Set([
     "selected",
+    "pending_joining",
     "rejected",
     "joined",
     "dropout",
@@ -2024,8 +2058,22 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
     return res.status(400).json({ message: "Invalid target status." });
   }
 
-  // Reason is required for all statuses except joined
-  if (newStatus !== "joined" && !reason) {
+  const joiningDateRequiredStatuses = new Set(["pending_joining"]);
+
+  if (joiningDateRequiredStatuses.has(newStatus)) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(joiningDate)) {
+      return res.status(400).json({
+        message: "joining_date is required in YYYY-MM-DD format.",
+      });
+    }
+  } else if (joiningDate && !/^\d{4}-\d{2}-\d{2}$/.test(joiningDate)) {
+    return res.status(400).json({
+      message: "joining_date must be in YYYY-MM-DD format.",
+    });
+  }
+
+  // Reason is required for all statuses except pending_joining and joined
+  if (!["pending_joining", "joined"].includes(newStatus) && !reason) {
     return res
       .status(400)
       .json({ message: "reason is required for this status transition." });
@@ -2041,6 +2089,7 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
         rd.res_id AS resId,
         rd.rid,
         rd.job_jid AS jobJid,
+        rd.joining_date AS currentJoiningDate,
         COALESCE(jrs.selection_status, '') AS currentStatus
       FROM resumes_data rd
       LEFT JOIN job_resume_selection jrs
@@ -2060,21 +2109,28 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
     const currentStatus = String(resume.currentStatus || "")
       .trim()
       .toLowerCase();
+    const currentDerivedStatus =
+      currentStatus === "selected" && resume.currentJoiningDate
+        ? "pending_joining"
+        : currentStatus;
 
     // Validate transition
-    const allowedTransitions = VALID_STATUS_TRANSITIONS[currentStatus];
+    const allowedTransitions = VALID_STATUS_TRANSITIONS[currentDerivedStatus];
     if (!allowedTransitions || !allowedTransitions.has(newStatus)) {
       await connection.rollback();
       return res.status(400).json({
-        message: `Invalid status transition from '${currentStatus}' to '${newStatus}'.`,
+        message: `Invalid status transition from '${currentDerivedStatus}' to '${newStatus}'.`,
       });
     }
 
-    // Update selection_status in job_resume_selection
-    const joiningDateValue =
-      newStatus === "joined" && /^\d{4}-\d{2}-\d{2}$/.test(joiningDate)
+    const persistedStatus =
+      newStatus === "pending_joining" ? "selected" : newStatus;
+    const effectiveJoiningDate =
+      /^\d{4}-\d{2}-\d{2}$/.test(joiningDate)
         ? joiningDate
-        : null;
+        : resume.currentJoiningDate || null;
+    const joiningDateValue =
+      newStatus === "joined" ? effectiveJoiningDate : null;
     const joiningNoteValue = newStatus === "joined" ? joiningNote : null;
 
     if (resume.jobJid) {
@@ -2091,11 +2147,29 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
         [
           resume.jobJid,
           normalizedResId,
-          newStatus,
+          persistedStatus,
           reason || null,
           joiningDateValue,
           joiningNoteValue,
         ],
+      );
+    }
+
+    if (await columnExists("resumes_data", "joining_date")) {
+      let resumeJoiningDateValue = resume.currentJoiningDate || null;
+      if (newStatus === "selected") {
+        resumeJoiningDateValue = null;
+      } else if (newStatus === "pending_joining") {
+        resumeJoiningDateValue = joiningDate;
+      } else if (newStatus === "joined" && effectiveJoiningDate) {
+        resumeJoiningDateValue = effectiveJoiningDate;
+      }
+
+      await connection.query(
+        `UPDATE resumes_data
+         SET joining_date = ?
+         WHERE res_id = ?`,
+        [resumeJoiningDateValue, normalizedResId],
       );
     }
 
@@ -2230,6 +2304,7 @@ router.get("/api/admin/performance", async (_req, res) => {
         COALESCE(rs.verified, 0) AS verified,
         COALESCE(rs.walk_in, 0) AS walk_in,
         COALESCE(rs.selected, 0) AS \`select\`,
+        COALESCE(rs.pending_joining, 0) AS pending_joining,
         COALESCE(rs.rejected, 0) AS reject,
         COALESCE(rs.joined, 0) AS joined,
         COALESCE(rs.dropout, 0) AS dropout,
@@ -2244,7 +2319,8 @@ router.get("/api/admin/performance", async (_req, res) => {
           COUNT(*) AS submitted,
           SUM(CASE WHEN jrs.selection_status = 'verified' THEN 1 ELSE 0 END) AS verified,
           SUM(CASE WHEN jrs.selection_status = 'walk_in' THEN 1 ELSE 0 END) AS walk_in,
-          SUM(CASE WHEN jrs.selection_status = 'selected' THEN 1 ELSE 0 END) AS selected,
+          SUM(CASE WHEN jrs.selection_status = 'selected' AND rd.joining_date IS NULL THEN 1 ELSE 0 END) AS selected,
+          SUM(CASE WHEN jrs.selection_status = 'selected' AND rd.joining_date IS NOT NULL THEN 1 ELSE 0 END) AS pending_joining,
           SUM(CASE WHEN jrs.selection_status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
           SUM(CASE WHEN jrs.selection_status = 'joined' THEN 1 ELSE 0 END) AS joined,
           SUM(CASE WHEN jrs.selection_status = 'dropout' THEN 1 ELSE 0 END) AS dropout,
@@ -2266,6 +2342,7 @@ router.get("/api/admin/performance", async (_req, res) => {
       const submitted = Number(row.submitted) || 0;
       const verified = Number(row.verified) || 0;
       const selected = Number(row.select) || 0;
+      const pendingJoining = Number(row.pending_joining) || 0;
       const joined = Number(row.joined) || 0;
       const dropout = Number(row.dropout) || 0;
       const billed = Number(row.billed) || 0;
@@ -2279,6 +2356,7 @@ router.get("/api/admin/performance", async (_req, res) => {
         verified,
         walk_in: Number(row.walk_in) || 0,
         selected,
+        pending_joining: pendingJoining,
         rejected: Number(row.reject) || 0,
         joined,
         dropout,
@@ -2289,16 +2367,34 @@ router.get("/api/admin/performance", async (_req, res) => {
         verificationRate:
           submitted > 0 ? Number(((verified / submitted) * 100).toFixed(1)) : 0,
         selectionRate:
-          verified > 0 ? Number(((selected / verified) * 100).toFixed(1)) : 0,
+          verified > 0
+            ? Number((((selected + pendingJoining) / verified) * 100).toFixed(1))
+            : 0,
         joiningRate:
-          selected > 0 ? Number(((joined / selected) * 100).toFixed(1)) : 0,
+          pendingJoining > 0
+            ? Number(((joined / pendingJoining) * 100).toFixed(1))
+            : 0,
         dropoutRate:
-          selected > 0 ? Number(((dropout / selected) * 100).toFixed(1)) : 0,
+          pendingJoining > 0
+            ? Number(((dropout / pendingJoining) * 100).toFixed(1))
+            : 0,
         billingRate:
           joined > 0 ? Number(((billed / joined) * 100).toFixed(1)) : 0,
         leftRate: billed > 0 ? Number(((left / billed) * 100).toFixed(1)) : 0,
       };
     });
+
+    const hasWalkInColumn = await columnExists("resumes_data", "walk_in");
+    const walkInDateSelect = hasWalkInColumn
+      ? "rd.walk_in AS walkInDate,"
+      : "NULL AS walkInDate,";
+    const hasResumeJoiningDateColumn = await columnExists(
+      "resumes_data",
+      "joining_date",
+    );
+    const resumeJoiningDateSelect = hasResumeJoiningDateColumn
+      ? "rd.joining_date AS joiningDate,"
+      : "NULL AS joiningDate,";
 
     const [statusDrilldownRows] = await pool.query(
       `SELECT
@@ -2307,6 +2403,8 @@ router.get("/api/admin/performance", async (_req, res) => {
         rd.resume_filename AS resumeFilename,
         COALESCE(jrs.selection_status, 'pending') AS workflowStatus,
         jrs.selected_at AS statusUpdatedAt,
+        ${walkInDateSelect}
+        ${resumeJoiningDateSelect}
         recruiter.rid AS recruiterRid,
         recruiter.name AS recruiterName,
         recruiter.email AS recruiterEmail,
@@ -2338,6 +2436,7 @@ router.get("/api/admin/performance", async (_req, res) => {
       verified: [],
       walk_in: [],
       selected: [],
+      pending_joining: [],
       joined: [],
       dropout: [],
       rejected: [],
@@ -2346,9 +2445,12 @@ router.get("/api/admin/performance", async (_req, res) => {
     };
 
     for (const row of statusDrilldownRows) {
-      const statusKey = String(row.workflowStatus || "")
+      let statusKey = String(row.workflowStatus || "")
         .trim()
         .toLowerCase();
+      if (statusKey === "selected" && row.joiningDate) {
+        statusKey = "pending_joining";
+      }
       if (!Object.prototype.hasOwnProperty.call(statusDrilldown, statusKey)) {
         continue;
       }
@@ -2365,6 +2467,8 @@ router.get("/api/admin/performance", async (_req, res) => {
         resumeFilename: row.resumeFilename || null,
         status: statusKey,
         candidateName: row.candidateName || null,
+        walkInDate: row.walkInDate || null,
+        joiningDate: row.joiningDate || null,
       });
     }
 
@@ -2378,6 +2482,7 @@ router.get("/api/admin/performance", async (_req, res) => {
       totalVerified: recruiters.reduce((s, r) => s + r.verified, 0),
       totalWalkIn: recruiters.reduce((s, r) => s + r.walk_in, 0),
       totalSelected: recruiters.reduce((s, r) => s + r.selected, 0),
+      totalPendingJoining: recruiters.reduce((s, r) => s + r.pending_joining, 0),
       totalJoined: recruiters.reduce((s, r) => s + r.joined, 0),
       totalDropout: recruiters.reduce((s, r) => s + r.dropout, 0),
       totalRejected: recruiters.reduce((s, r) => s + r.rejected, 0),

@@ -725,6 +725,7 @@ router.get(
         "resumes_data",
         "ats_match_percentage",
       );
+      const hasWalkInColumn = await columnExists("resumes_data", "walk_in");
 
       const atsScoreSelection = hasAtsScoreColumn
         ? "rd.ats_score AS atsScore,"
@@ -732,6 +733,9 @@ router.get(
       const atsMatchSelection = hasAtsMatchColumn
         ? "rd.ats_match_percentage AS atsMatchPercentage,"
         : "NULL AS atsMatchPercentage,";
+      const walkInSelection = hasWalkInColumn
+        ? "rd.walk_in AS walkInDate,"
+        : "NULL AS walkInDate,";
 
       const [rows] = await pool.query(
         `SELECT
@@ -743,6 +747,7 @@ router.get(
           rd.resume_type AS resumeType,
           ${atsScoreSelection}
           ${atsMatchSelection}
+          ${walkInSelection}
           rd.uploaded_at AS uploadedAt,
           jrs.selection_status AS workflowStatus,
           jrs.selection_note AS workflowNote,
@@ -783,6 +788,7 @@ router.get(
           note: row.workflowNote || null,
           updatedBy: row.updatedBy || null,
           updatedAt: row.updatedAt || null,
+          walkInDate: row.walkInDate || null,
         })),
       });
     } catch (error) {
@@ -931,6 +937,18 @@ router.post(
             email: toTrimmedString(resumeRows[0].email) || undefined,
             [reasonField]: statusReasonValue,
           });
+        }
+
+        if (
+          normalizedStatus === "walk_in" &&
+          (await columnExists("resumes_data", "walk_in"))
+        ) {
+          await connection.query(
+            `UPDATE resumes_data
+             SET walk_in = CURDATE()
+             WHERE res_id = ?`,
+            [normalizedResId],
+          );
         }
 
         if (recruiterRid && previousStatus !== normalizedStatus) {
