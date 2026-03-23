@@ -130,6 +130,7 @@ CREATE TABLE IF NOT EXISTS resumes_data (
   applicant_email VARCHAR(190) NULL,
   walk_in DATE NULL,
   joining_date DATE NULL,
+  revenue DECIMAL(12,2) NULL,
   is_accepted BOOLEAN NOT NULL DEFAULT FALSE,
   accepted_at TIMESTAMP NULL DEFAULT NULL,
   accepted_by_admin VARCHAR(50) NULL,
@@ -200,6 +201,8 @@ ALTER TABLE resumes_data
   ADD COLUMN IF NOT EXISTS walk_in DATE NULL;
 ALTER TABLE resumes_data
   ADD COLUMN IF NOT EXISTS joining_date DATE NULL;
+ALTER TABLE resumes_data
+  ADD COLUMN IF NOT EXISTS revenue DECIMAL(12,2) NULL;
 ALTER TABLE resumes_data
   ADD COLUMN IF NOT EXISTS is_accepted BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE resumes_data

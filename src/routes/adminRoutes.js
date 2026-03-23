@@ -2044,6 +2044,10 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
     req.body?.joining_note === undefined || req.body?.joining_note === null
       ? null
       : String(req.body.joining_note).trim();
+  const rawRevenue =
+    req.body?.revenue === undefined || req.body?.revenue === null
+      ? ""
+      : String(req.body.revenue).trim();
 
   const allowedNewStatuses = new Set([
     "selected",
@@ -2072,11 +2076,29 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
     });
   }
 
-  // Reason is required for all statuses except pending_joining and joined
-  if (!["pending_joining", "joined"].includes(newStatus) && !reason) {
+  // Reason is required for all statuses except pending_joining, joined, and billed
+  if (!["pending_joining", "joined", "billed"].includes(newStatus) && !reason) {
     return res
       .status(400)
       .json({ message: "reason is required for this status transition." });
+  }
+
+  const parsedRevenue =
+    rawRevenue === "" ? null : Number.parseFloat(rawRevenue);
+  if (rawRevenue !== "" && !Number.isFinite(parsedRevenue)) {
+    return res.status(400).json({
+      message: "revenue must be a valid non-negative number.",
+    });
+  }
+  if (parsedRevenue !== null && parsedRevenue < 0) {
+    return res.status(400).json({
+      message: "revenue must be a valid non-negative number.",
+    });
+  }
+  if (newStatus === "billed" && parsedRevenue === null) {
+    return res.status(400).json({
+      message: "revenue is required for billed status.",
+    });
   }
 
   const connection = await pool.getConnection();
@@ -2170,6 +2192,15 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
          SET joining_date = ?
          WHERE res_id = ?`,
         [resumeJoiningDateValue, normalizedResId],
+      );
+    }
+
+    if (newStatus === "billed" && (await columnExists("resumes_data", "revenue"))) {
+      await connection.query(
+        `UPDATE resumes_data
+         SET revenue = ?
+         WHERE res_id = ?`,
+        [parsedRevenue, normalizedResId],
       );
     }
 
