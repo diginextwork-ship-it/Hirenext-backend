@@ -1962,6 +1962,9 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
     return res.status(400).json({ message: "Invalid target status." });
   }
 
+  const shouldCaptureReason = newStatus !== "pending_joining";
+  const effectiveReason = shouldCaptureReason ? reason : "";
+
   const joiningDateRequiredStatuses = new Set(["pending_joining"]);
 
   if (joiningDateRequiredStatuses.has(newStatus)) {
@@ -2083,7 +2086,7 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
           resume.jobJid,
           normalizedResId,
           persistedStatus,
-          reason || null,
+          effectiveReason || null,
           joiningNoteValue,
         ],
       );
@@ -2121,7 +2124,7 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
             ON DUPLICATE KEY UPDATE
               ${reasonColumn} = VALUES(${reasonColumn}),
               updated_at = CURRENT_TIMESTAMP`,
-            [normalizedResId, reason || null],
+            [normalizedResId, effectiveReason || null],
           );
         }
       }
