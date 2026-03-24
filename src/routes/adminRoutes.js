@@ -1935,10 +1935,17 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
     req.body?.joining_note === undefined || req.body?.joining_note === null
       ? null
       : String(req.body.joining_note).trim();
+  const rawRevenueSource =
+    req.body?.revenue ??
+    req.body?.revenue_amount ??
+    req.body?.revenueAmount ??
+    req.body?.pending_revenue ??
+    req.body?.pendingRevenue ??
+    null;
   const rawRevenue =
-    req.body?.revenue === undefined || req.body?.revenue === null
+    rawRevenueSource === undefined || rawRevenueSource === null
       ? ""
-      : String(req.body.revenue).trim();
+      : String(rawRevenueSource).trim();
 
   const allowedNewStatuses = new Set([
     "walk_in",
