@@ -194,13 +194,6 @@ const upsertExtraInfoFields = async (connection, payload) => {
   addColumnValue("job_jid", payload.jobJid);
   addColumnValue("recruiter_rid", payload.recruiterRid);
   addColumnValue("rid", payload.recruiterRid);
-  addColumnValue("candidate_name", payload.candidateName);
-  addColumnValue("applicant_name", payload.candidateName);
-  addColumnValue("candidate_email", payload.email);
-  addColumnValue("applicant_email", payload.email);
-  addColumnValue("email", payload.email);
-  addColumnValue("phone", payload.phone);
-
   if (
     payload.submittedReason !== undefined &&
     columns.has("submitted_reason")
@@ -290,6 +283,82 @@ const upsertExtraInfoFields = async (connection, payload) => {
   }
 };
 
+const upsertCandidateFields = async (connection, payload) => {
+  if (!(await tableExists("candidate"))) return;
+
+  const columns = await getTableColumns("candidate", connection);
+  if (!columns.has("cid") || !columns.has("res_id")) return;
+
+  const updates = [];
+  const insertColumns = [];
+  const insertValues = [];
+  const placeholders = [];
+  const updateAssignments = [];
+  const updateValues = [];
+
+  const addColumnValue = (columnName, value, { update = true } = {}) => {
+    if (!columns.has(columnName) || value === undefined) return;
+    insertColumns.push(columnName);
+    insertValues.push(value);
+    placeholders.push("?");
+    if (update) {
+      updates.push(`\`${columnName}\` = VALUES(\`${columnName}\`)`);
+      updateAssignments.push(`\`${columnName}\` = ?`);
+      updateValues.push(value);
+    }
+  };
+
+  addColumnValue("cid", payload.cid, { update: false });
+  addColumnValue("res_id", payload.resId, { update: false });
+  addColumnValue("job_jid", payload.jobJid);
+  addColumnValue("recruiter_rid", payload.recruiterRid);
+  addColumnValue("rid", payload.recruiterRid);
+  addColumnValue("name", payload.name);
+  addColumnValue("phone", payload.phone);
+  addColumnValue("email", payload.email);
+  addColumnValue("level_of_edu", payload.levelOfEdu);
+  addColumnValue("board_uni", payload.boardUni);
+  addColumnValue("institution_name", payload.institutionName);
+  addColumnValue("marks", payload.marks);
+  addColumnValue("age", payload.age);
+  addColumnValue("industry", payload.industry);
+  addColumnValue("expected_sal", payload.expectedSal);
+  addColumnValue("prev_sal", payload.prevSal);
+  addColumnValue("notice_period", payload.noticePeriod);
+  addColumnValue("experience", payload.experience);
+  addColumnValue("years_of_exp", payload.yearsOfExp);
+  addColumnValue("joining_date", payload.joiningDate);
+  addColumnValue("walk_in", payload.walkIn);
+  addColumnValue("revenue", payload.revenue);
+
+  if (columns.has("updated_at")) {
+    updates.push("updated_at = CURRENT_TIMESTAMP");
+    updateAssignments.push("updated_at = CURRENT_TIMESTAMP");
+  }
+
+  if (insertColumns.length === 0 || (updates.length === 0 && updateAssignments.length === 0)) {
+    return;
+  }
+
+  if (payload.cid === undefined || payload.cid === null) {
+    if (!payload.resId || updateAssignments.length === 0) return;
+    await connection.query(
+      `UPDATE candidate
+       SET ${updateAssignments.join(", ")}
+       WHERE res_id = ?`,
+      [...updateValues, payload.resId],
+    );
+    return;
+  }
+
+  await connection.query(
+    `INSERT INTO candidate (${insertColumns.map((column) => `\`${column}\``).join(", ")})
+     VALUES (${placeholders.join(", ")})
+     ON DUPLICATE KEY UPDATE ${updates.join(", ")}`,
+    insertValues,
+  );
+};
+
 module.exports = {
   tableExists,
   columnExists,
@@ -299,4 +368,5 @@ module.exports = {
   getColumnMaxLength,
   fetchExtraInfoByResumeIds,
   upsertExtraInfoFields,
+  upsertCandidateFields,
 };

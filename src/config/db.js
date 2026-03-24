@@ -410,10 +410,6 @@ const ensureResumesDataTable = async () => {
     `CREATE TABLE IF NOT EXISTS resumes_data (
       res_id VARCHAR(30) PRIMARY KEY,
       rid VARCHAR(20) NOT NULL,
-      applicant_name VARCHAR(255) NULL,
-      walk_in DATE NULL,
-      joining_date DATE NULL,
-      revenue DECIMAL(12,2) NULL,
       job_jid ${jobJidColumnSql} NULL,
       resume LONGBLOB NOT NULL,
       resume_filename VARCHAR(255) NOT NULL,
@@ -447,36 +443,6 @@ const ensureResumesDataTable = async () => {
     onDelete: "SET NULL",
     onUpdate: "CASCADE",
   });
-
-  if (!(await columnExists("resumes_data", "applicant_name"))) {
-    await pool.query(
-      "ALTER TABLE resumes_data ADD COLUMN applicant_name VARCHAR(255) NULL",
-    );
-  }
-
-  if (!(await columnExists("resumes_data", "applicant_email"))) {
-    await pool.query(
-      "ALTER TABLE resumes_data ADD COLUMN applicant_email VARCHAR(190) NULL",
-    );
-  }
-
-  if (!(await columnExists("resumes_data", "walk_in"))) {
-    await pool.query(
-      "ALTER TABLE resumes_data ADD COLUMN walk_in DATE NULL",
-    );
-  }
-
-  if (!(await columnExists("resumes_data", "joining_date"))) {
-    await pool.query(
-      "ALTER TABLE resumes_data ADD COLUMN joining_date DATE NULL",
-    );
-  }
-
-  if (!(await columnExists("resumes_data", "revenue"))) {
-    await pool.query(
-      "ALTER TABLE resumes_data ADD COLUMN revenue DECIMAL(12,2) NULL",
-    );
-  }
 
   if (!(await columnExists("resumes_data", "ats_score"))) {
     await pool.query(
@@ -533,6 +499,286 @@ const ensureResumesDataTable = async () => {
   }
 };
 
+const ensureCandidateTable = async () => {
+  const jobJidMetadata = await getColumnMetadata("jobs", "jid");
+  const recruiterRidMetadata = await getColumnMetadata("recruiter", "rid");
+  const resumeIdMetadata = await getColumnMetadata("resumes_data", "res_id");
+  const jobJidColumnSql = buildColumnSql(jobJidMetadata, "VARCHAR(30)");
+  const recruiterRidColumnSql = buildColumnSql(recruiterRidMetadata, "VARCHAR(20)");
+  const resumeIdColumnSql = buildColumnSql(resumeIdMetadata, "VARCHAR(30)");
+
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS candidate (
+      cid VARCHAR(20) PRIMARY KEY,
+      res_id ${resumeIdColumnSql} NOT NULL,
+      job_jid ${jobJidColumnSql} NULL,
+      recruiter_rid ${recruiterRidColumnSql} NULL,
+      rid ${recruiterRidColumnSql} NULL,
+      name VARCHAR(100) NOT NULL,
+      phone VARCHAR(15) NULL,
+      email VARCHAR(100) NULL,
+      level_of_edu VARCHAR(50) NULL,
+      board_uni VARCHAR(100) NULL,
+      institution_name VARCHAR(190) NULL,
+      marks DECIMAL(5,2) NULL,
+      age INT NULL,
+      industry VARCHAR(50) NULL,
+      expected_sal INT NULL,
+      prev_sal INT NULL,
+      notice_period INT NULL,
+      experience TINYINT(1) NULL,
+      years_of_exp VARCHAR(20) NULL,
+      joining_date DATE NULL,
+      walk_in DATE NULL,
+      revenue DECIMAL(12,2) NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_candidate_res_id (res_id),
+      INDEX idx_candidate_job_jid (job_jid),
+      INDEX idx_candidate_recruiter_rid (recruiter_rid),
+      CONSTRAINT fk_candidate_resume
+        FOREIGN KEY (res_id) REFERENCES resumes_data(res_id)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE,
+      CONSTRAINT fk_candidate_job
+        FOREIGN KEY (job_jid) REFERENCES jobs(jid)
+        ON DELETE SET NULL
+        ON UPDATE CASCADE,
+      CONSTRAINT fk_candidate_recruiter
+        FOREIGN KEY (recruiter_rid) REFERENCES recruiter(rid)
+        ON DELETE SET NULL
+        ON UPDATE CASCADE
+    )`,
+  );
+
+  const hasApplicationsTable = await tableExists("applications");
+  const hasExtraInfoTable = await tableExists("extra_info");
+  const hasSelectionTable = await tableExists("job_resume_selection");
+  const hasResumeApplicantName = await columnExists("resumes_data", "applicant_name");
+  const hasResumeApplicantEmail = await columnExists("resumes_data", "applicant_email");
+  const hasResumeWalkIn = await columnExists("resumes_data", "walk_in");
+  const hasResumeJoiningDate = await columnExists("resumes_data", "joining_date");
+  const hasResumeRevenue = await columnExists("resumes_data", "revenue");
+  const hasAppCandidateName =
+    hasApplicationsTable && (await columnExists("applications", "candidate_name"));
+  const hasAppPhone =
+    hasApplicationsTable && (await columnExists("applications", "phone"));
+  const hasAppEmail =
+    hasApplicationsTable && (await columnExists("applications", "email"));
+  const hasAppEducation =
+    hasApplicationsTable &&
+    (await columnExists("applications", "latest_education_level"));
+  const hasAppBoard =
+    hasApplicationsTable && (await columnExists("applications", "board_university"));
+  const hasAppInstitution =
+    hasApplicationsTable && (await columnExists("applications", "institution_name"));
+  const hasAppAge =
+    hasApplicationsTable && (await columnExists("applications", "age"));
+  const hasAppExperience =
+    hasApplicationsTable &&
+    (await columnExists("applications", "has_prior_experience"));
+  const hasAppIndustry =
+    hasApplicationsTable &&
+    (await columnExists("applications", "experience_industry"));
+  const hasAppExpectedSalary =
+    hasApplicationsTable && (await columnExists("applications", "expected_salary"));
+  const hasAppPrevSalary =
+    hasApplicationsTable && (await columnExists("applications", "current_salary"));
+  const hasAppNoticePeriod =
+    hasApplicationsTable && (await columnExists("applications", "notice_period"));
+  const hasAppYearsOfExp =
+    hasApplicationsTable &&
+    (await columnExists("applications", "years_of_experience"));
+  const hasExtraCandidateName =
+    hasExtraInfoTable && (await columnExists("extra_info", "candidate_name"));
+  const hasExtraApplicantName =
+    hasExtraInfoTable && (await columnExists("extra_info", "applicant_name"));
+  const hasExtraCandidateEmail =
+    hasExtraInfoTable && (await columnExists("extra_info", "candidate_email"));
+  const hasExtraApplicantEmail =
+    hasExtraInfoTable && (await columnExists("extra_info", "applicant_email"));
+  const hasExtraEmail =
+    hasExtraInfoTable && (await columnExists("extra_info", "email"));
+  const hasExtraPhone =
+    hasExtraInfoTable && (await columnExists("extra_info", "phone"));
+  const hasSelectionJoiningDate =
+    hasSelectionTable && (await columnExists("job_resume_selection", "joining_date"));
+
+  const applicationMatchSql = hasApplicationsTable
+    ? `a.job_jid = rd.job_jid
+        AND (
+          a.resume_filename = rd.resume_filename
+          ${hasResumeApplicantName && hasAppCandidateName ? "OR a.candidate_name = rd.applicant_name" : ""}
+          ${hasResumeApplicantEmail && hasAppEmail ? "OR a.email = rd.applicant_email" : ""}
+        )`
+    : "1 = 0";
+  const latestApplicationValue = (columnName) =>
+    hasApplicationsTable
+      ? `(
+          SELECT a.${columnName}
+          FROM applications a
+          WHERE ${applicationMatchSql}
+          ORDER BY a.created_at DESC, a.id DESC
+          LIMIT 1
+        )`
+      : "NULL";
+
+  const legacyNameExpr = [
+    hasResumeApplicantName ? "rd.applicant_name" : null,
+    hasAppCandidateName ? latestApplicationValue("candidate_name") : null,
+    hasExtraCandidateName ? "ei.candidate_name" : null,
+    hasExtraApplicantName ? "ei.applicant_name" : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  const legacyPhoneExpr = [
+    hasAppPhone ? latestApplicationValue("phone") : null,
+    hasExtraPhone ? "ei.phone" : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  const legacyEmailExpr = [
+    hasResumeApplicantEmail ? "rd.applicant_email" : null,
+    hasAppEmail ? latestApplicationValue("email") : null,
+    hasExtraCandidateEmail ? "ei.candidate_email" : null,
+    hasExtraApplicantEmail ? "ei.applicant_email" : null,
+    hasExtraEmail ? "ei.email" : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+
+  await pool.query(
+    `INSERT INTO candidate (
+      cid,
+      res_id,
+      job_jid,
+      recruiter_rid,
+      rid,
+      name,
+      phone,
+      email,
+      level_of_edu,
+      board_uni,
+      institution_name,
+      age,
+      industry,
+      expected_sal,
+      prev_sal,
+      notice_period,
+      experience,
+      years_of_exp,
+      joining_date,
+      walk_in,
+      revenue
+    )
+    SELECT
+      CASE
+        WHEN rd.res_id LIKE 'res_%' THEN LEFT(CONCAT('c_', SUBSTRING(rd.res_id, 5)), 20)
+        ELSE LEFT(CONCAT('c_', rd.res_id), 20)
+      END AS cid,
+      rd.res_id,
+      rd.job_jid,
+      rd.rid,
+      rd.rid,
+      COALESCE(${legacyNameExpr || "NULL"}, 'Unknown Candidate') AS name,
+      ${legacyPhoneExpr ? `COALESCE(${legacyPhoneExpr})` : "NULL"} AS phone,
+      ${legacyEmailExpr ? `COALESCE(${legacyEmailExpr})` : "NULL"} AS email,
+      ${hasAppEducation ? latestApplicationValue("latest_education_level") : "NULL"} AS level_of_edu,
+      ${hasAppBoard ? latestApplicationValue("board_university") : "NULL"} AS board_uni,
+      ${hasAppInstitution ? latestApplicationValue("institution_name") : "NULL"} AS institution_name,
+      ${hasAppAge ? latestApplicationValue("age") : "NULL"} AS age,
+      ${hasAppIndustry ? latestApplicationValue("experience_industry") : "NULL"} AS industry,
+      ${hasAppExpectedSalary ? `CAST(${latestApplicationValue("expected_salary")} AS SIGNED)` : "NULL"} AS expected_sal,
+      ${hasAppPrevSalary ? `CAST(${latestApplicationValue("current_salary")} AS SIGNED)` : "NULL"} AS prev_sal,
+      ${hasAppNoticePeriod ? `CASE WHEN ${latestApplicationValue("notice_period")} REGEXP '^[0-9]+$' THEN CAST(${latestApplicationValue("notice_period")} AS SIGNED) ELSE NULL END` : "NULL"} AS notice_period,
+      ${hasAppExperience ? latestApplicationValue("has_prior_experience") : "NULL"} AS experience,
+      ${hasAppYearsOfExp ? latestApplicationValue("years_of_experience") : "NULL"} AS years_of_exp,
+      COALESCE(${hasResumeJoiningDate ? "rd.joining_date" : "NULL"}${hasSelectionJoiningDate ? ", jrs.joining_date" : ""}) AS joining_date,
+      ${hasResumeWalkIn ? "rd.walk_in" : "NULL"} AS walk_in,
+      ${hasResumeRevenue ? "rd.revenue" : "NULL"} AS revenue
+    FROM resumes_data rd
+    ${hasExtraInfoTable ? "LEFT JOIN extra_info ei ON ei.res_id = rd.res_id OR (ei.resume_id = rd.res_id AND ei.res_id IS NULL)" : ""}
+    ${hasSelectionTable ? "LEFT JOIN job_resume_selection jrs ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id" : ""}
+    WHERE NOT EXISTS (
+      SELECT 1 FROM candidate c WHERE c.res_id = rd.res_id
+    )`,
+  );
+
+  if (await columnExists("resumes_data", "applicant_name")) {
+    await pool.query("ALTER TABLE resumes_data DROP COLUMN applicant_name");
+  }
+  if (await columnExists("resumes_data", "applicant_email")) {
+    await pool.query("ALTER TABLE resumes_data DROP COLUMN applicant_email");
+  }
+  if (await columnExists("resumes_data", "walk_in")) {
+    await pool.query("ALTER TABLE resumes_data DROP COLUMN walk_in");
+  }
+  if (await columnExists("resumes_data", "joining_date")) {
+    await pool.query("ALTER TABLE resumes_data DROP COLUMN joining_date");
+  }
+  if (await columnExists("resumes_data", "revenue")) {
+    await pool.query("ALTER TABLE resumes_data DROP COLUMN revenue");
+  }
+
+  if (hasApplicationsTable) {
+    if (!(await columnExists("applications", "res_id"))) {
+      await pool.query("ALTER TABLE applications ADD COLUMN res_id VARCHAR(30) NULL");
+    }
+    await pool.query(
+      `UPDATE applications a
+       INNER JOIN resumes_data rd
+         ON rd.job_jid = a.job_jid
+        AND rd.resume_filename = a.resume_filename
+       SET a.res_id = rd.res_id
+       WHERE a.res_id IS NULL`,
+    );
+    if (!(await indexExists("applications", "idx_applications_res_id"))) {
+      await pool.query(
+        "CREATE INDEX idx_applications_res_id ON applications (res_id)",
+      );
+    }
+    for (const columnName of [
+      "candidate_name",
+      "phone",
+      "email",
+      "latest_education_level",
+      "board_university",
+      "institution_name",
+      "age",
+      "has_prior_experience",
+      "experience_industry",
+      "experience_industry_other",
+      "current_salary",
+      "expected_salary",
+      "notice_period",
+      "years_of_experience",
+    ]) {
+      if (await columnExists("applications", columnName)) {
+        await pool.query(`ALTER TABLE applications DROP COLUMN ${columnName}`);
+      }
+    }
+  }
+
+  if (hasExtraInfoTable) {
+    for (const columnName of [
+      "candidate_name",
+      "applicant_name",
+      "candidate_email",
+      "applicant_email",
+      "email",
+      "phone",
+    ]) {
+      if (await columnExists("extra_info", columnName)) {
+        await pool.query(`ALTER TABLE extra_info DROP COLUMN ${columnName}`);
+      }
+    }
+  }
+
+  if (hasSelectionTable && (await columnExists("job_resume_selection", "joining_date"))) {
+    await pool.query("ALTER TABLE job_resume_selection DROP COLUMN joining_date");
+  }
+};
+
 const ensureExtraInfoTable = async () => {
   const jobJidMetadata = await getColumnMetadata("jobs", "jid");
   const jobJidColumnSql = buildColumnSql(jobJidMetadata, "VARCHAR(30)");
@@ -544,12 +790,6 @@ const ensureExtraInfoTable = async () => {
       job_jid ${jobJidColumnSql} NULL,
       recruiter_rid VARCHAR(50) NULL,
       rid VARCHAR(50) NULL,
-      candidate_name VARCHAR(255) NULL,
-      applicant_name VARCHAR(255) NULL,
-      candidate_email VARCHAR(190) NULL,
-      applicant_email VARCHAR(190) NULL,
-      email VARCHAR(190) NULL,
-      phone VARCHAR(20) NULL,
       submitted_reason TEXT NULL,
       verified_reason TEXT NULL,
       updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -583,36 +823,6 @@ const ensureExtraInfoTable = async () => {
   }
   if (!(await columnExists("extra_info", "rid"))) {
     await pool.query("ALTER TABLE extra_info ADD COLUMN rid VARCHAR(50) NULL");
-  }
-  if (!(await columnExists("extra_info", "candidate_name"))) {
-    await pool.query(
-      "ALTER TABLE extra_info ADD COLUMN candidate_name VARCHAR(255) NULL",
-    );
-  }
-  if (!(await columnExists("extra_info", "applicant_name"))) {
-    await pool.query(
-      "ALTER TABLE extra_info ADD COLUMN applicant_name VARCHAR(255) NULL",
-    );
-  }
-  if (!(await columnExists("extra_info", "candidate_email"))) {
-    await pool.query(
-      "ALTER TABLE extra_info ADD COLUMN candidate_email VARCHAR(190) NULL",
-    );
-  }
-  if (!(await columnExists("extra_info", "applicant_email"))) {
-    await pool.query(
-      "ALTER TABLE extra_info ADD COLUMN applicant_email VARCHAR(190) NULL",
-    );
-  }
-  if (!(await columnExists("extra_info", "email"))) {
-    await pool.query(
-      "ALTER TABLE extra_info ADD COLUMN email VARCHAR(190) NULL",
-    );
-  }
-  if (!(await columnExists("extra_info", "phone"))) {
-    await pool.query(
-      "ALTER TABLE extra_info ADD COLUMN phone VARCHAR(20) NULL",
-    );
   }
   if (!(await columnExists("extra_info", "submitted_reason"))) {
     await pool.query(
@@ -756,46 +966,8 @@ const ensureApplicationColumns = async () => {
     );
   }
 
-  if (!(await columnExists("applications", "has_prior_experience"))) {
-    await pool.query(
-      "ALTER TABLE applications ADD COLUMN has_prior_experience BOOLEAN NOT NULL DEFAULT FALSE",
-    );
-  }
-
-  if (!(await columnExists("applications", "experience_industry"))) {
-    await pool.query(
-      "ALTER TABLE applications ADD COLUMN experience_industry VARCHAR(100) NULL",
-    );
-  }
-
-  if (!(await columnExists("applications", "experience_industry_other"))) {
-    await pool.query(
-      "ALTER TABLE applications ADD COLUMN experience_industry_other VARCHAR(190) NULL",
-    );
-  }
-
-  if (!(await columnExists("applications", "current_salary"))) {
-    await pool.query(
-      "ALTER TABLE applications ADD COLUMN current_salary DECIMAL(12,2) NULL",
-    );
-  }
-
-  if (!(await columnExists("applications", "expected_salary"))) {
-    await pool.query(
-      "ALTER TABLE applications ADD COLUMN expected_salary DECIMAL(12,2) NULL",
-    );
-  }
-
-  if (!(await columnExists("applications", "notice_period"))) {
-    await pool.query(
-      "ALTER TABLE applications ADD COLUMN notice_period VARCHAR(100) NULL",
-    );
-  }
-
-  if (!(await columnExists("applications", "years_of_experience"))) {
-    await pool.query(
-      "ALTER TABLE applications ADD COLUMN years_of_experience DECIMAL(4,1) NULL",
-    );
+  if (!(await columnExists("applications", "res_id"))) {
+    await pool.query("ALTER TABLE applications ADD COLUMN res_id VARCHAR(30) NULL");
   }
 
   if (!(await columnExists("applications", "resume_parsed_data"))) {
@@ -892,6 +1064,10 @@ const ensureJobResumeSelectionTable = async () => {
        ENUM('verified','walk_in','selected','rejected','joined','dropout','on_hold','billed','left')
        NOT NULL DEFAULT 'selected'`,
     );
+  }
+
+  if (await columnExists("job_resume_selection", "joining_date")) {
+    await pool.query("ALTER TABLE job_resume_selection DROP COLUMN joining_date");
   }
 };
 
@@ -1159,6 +1335,7 @@ const initDatabase = async () => {
   await ensureMoneySumTable();
   await ensureReimbursementsTable();
   await ensureApplicationColumns();
+  await ensureCandidateTable();
   await ensureJobResumeSelectionTable();
   await ensureRecruiterAttendanceTable();
   await ensureJobAccessControlSchema();

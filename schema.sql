@@ -66,20 +66,7 @@ ALTER TABLE recruiter
 CREATE TABLE IF NOT EXISTS applications (
   id INT AUTO_INCREMENT PRIMARY KEY,
   job_jid INT NOT NULL,
-  candidate_name VARCHAR(190) NOT NULL,
-  phone VARCHAR(20) NOT NULL,
-  email VARCHAR(190) NOT NULL,
-  has_prior_experience BOOLEAN NOT NULL DEFAULT FALSE,
-  experience_industry VARCHAR(100) NULL,
-  experience_industry_other VARCHAR(190) NULL,
-  current_salary DECIMAL(12,2) NULL,
-  expected_salary DECIMAL(12,2) NULL,
-  notice_period VARCHAR(100) NULL,
-  years_of_experience DECIMAL(4,1) NULL,
-  latest_education_level VARCHAR(100) NOT NULL,
-  board_university VARCHAR(190) NOT NULL,
-  institution_name VARCHAR(190) NOT NULL,
-  age INT NOT NULL,
+  res_id VARCHAR(30) NULL,
   resume_filename VARCHAR(255) NULL,
   resume_parsed_data JSON NULL,
   ats_score DECIMAL(5,2) NULL,
@@ -96,19 +83,36 @@ ALTER TABLE applications
 ALTER TABLE applications
   DROP COLUMN IF EXISTS score;
 ALTER TABLE applications
-  ADD COLUMN IF NOT EXISTS has_prior_experience BOOLEAN NOT NULL DEFAULT FALSE;
+  ADD COLUMN IF NOT EXISTS res_id VARCHAR(30) NULL;
 ALTER TABLE applications
-  ADD COLUMN IF NOT EXISTS experience_industry VARCHAR(100) NULL;
+  DROP COLUMN IF EXISTS candidate_name;
 ALTER TABLE applications
-  ADD COLUMN IF NOT EXISTS experience_industry_other VARCHAR(190) NULL;
+  DROP COLUMN IF EXISTS phone;
 ALTER TABLE applications
-  ADD COLUMN IF NOT EXISTS current_salary DECIMAL(12,2) NULL;
+  DROP COLUMN IF EXISTS email;
 ALTER TABLE applications
-  ADD COLUMN IF NOT EXISTS expected_salary DECIMAL(12,2) NULL;
+  DROP COLUMN IF EXISTS has_prior_experience;
 ALTER TABLE applications
-  ADD COLUMN IF NOT EXISTS notice_period VARCHAR(100) NULL;
+  DROP COLUMN IF EXISTS experience_industry;
 ALTER TABLE applications
-  ADD COLUMN IF NOT EXISTS years_of_experience DECIMAL(4,1) NULL;
+  DROP COLUMN IF EXISTS experience_industry_other;
+ALTER TABLE applications
+  DROP COLUMN IF EXISTS current_salary;
+ALTER TABLE applications
+  DROP COLUMN IF EXISTS expected_salary;
+ALTER TABLE applications
+  DROP COLUMN IF EXISTS notice_period;
+ALTER TABLE applications
+  DROP COLUMN IF EXISTS years_of_experience;
+ALTER TABLE applications
+  DROP COLUMN IF EXISTS latest_education_level;
+ALTER TABLE applications
+  DROP COLUMN IF EXISTS board_university;
+ALTER TABLE applications
+  DROP COLUMN IF EXISTS institution_name;
+ALTER TABLE applications
+  DROP COLUMN IF EXISTS age;
+CREATE INDEX IF NOT EXISTS idx_applications_res_id ON applications (res_id);
 
 CREATE TABLE IF NOT EXISTS recruiter_candidate_clicks (
   id INT AUTO_INCREMENT PRIMARY KEY,
@@ -126,11 +130,6 @@ CREATE TABLE IF NOT EXISTS resumes_data (
   rid VARCHAR(20) NOT NULL,
   job_jid INT NULL,
   submitted_by_role VARCHAR(30) NULL DEFAULT 'recruiter',
-  applicant_name VARCHAR(255) NULL,
-  applicant_email VARCHAR(190) NULL,
-  walk_in DATE NULL,
-  joining_date DATE NULL,
-  revenue DECIMAL(12,2) NULL,
   is_accepted BOOLEAN NOT NULL DEFAULT FALSE,
   accepted_at TIMESTAMP NULL DEFAULT NULL,
   accepted_by_admin VARCHAR(50) NULL,
@@ -160,12 +159,6 @@ CREATE TABLE IF NOT EXISTS extra_info (
   job_jid INT NULL,
   recruiter_rid VARCHAR(50) NULL,
   rid VARCHAR(50) NULL,
-  candidate_name VARCHAR(255) NULL,
-  applicant_name VARCHAR(255) NULL,
-  candidate_email VARCHAR(190) NULL,
-  applicant_email VARCHAR(190) NULL,
-  email VARCHAR(190) NULL,
-  phone VARCHAR(20) NULL,
   submitted_reason TEXT NULL,
   verified_reason TEXT NULL,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -178,6 +171,18 @@ CREATE TABLE IF NOT EXISTS extra_info (
 
 ALTER TABLE extra_info
   ADD COLUMN IF NOT EXISTS walk_in_reason TEXT NULL;
+ALTER TABLE extra_info
+  DROP COLUMN IF EXISTS candidate_name;
+ALTER TABLE extra_info
+  DROP COLUMN IF EXISTS applicant_name;
+ALTER TABLE extra_info
+  DROP COLUMN IF EXISTS candidate_email;
+ALTER TABLE extra_info
+  DROP COLUMN IF EXISTS applicant_email;
+ALTER TABLE extra_info
+  DROP COLUMN IF EXISTS email;
+ALTER TABLE extra_info
+  DROP COLUMN IF EXISTS phone;
 ALTER TABLE extra_info
   ADD COLUMN IF NOT EXISTS select_reason TEXT NULL;
 ALTER TABLE extra_info
@@ -194,15 +199,15 @@ ALTER TABLE extra_info
 ALTER TABLE resumes_data
   ADD COLUMN IF NOT EXISTS submitted_by_role VARCHAR(30) NULL DEFAULT 'recruiter';
 ALTER TABLE resumes_data
-  ADD COLUMN IF NOT EXISTS applicant_name VARCHAR(255) NULL;
+  DROP COLUMN IF EXISTS applicant_name;
 ALTER TABLE resumes_data
-  ADD COLUMN IF NOT EXISTS applicant_email VARCHAR(190) NULL;
+  DROP COLUMN IF EXISTS applicant_email;
 ALTER TABLE resumes_data
-  ADD COLUMN IF NOT EXISTS walk_in DATE NULL;
+  DROP COLUMN IF EXISTS walk_in;
 ALTER TABLE resumes_data
-  ADD COLUMN IF NOT EXISTS joining_date DATE NULL;
+  DROP COLUMN IF EXISTS joining_date;
 ALTER TABLE resumes_data
-  ADD COLUMN IF NOT EXISTS revenue DECIMAL(12,2) NULL;
+  DROP COLUMN IF EXISTS revenue;
 ALTER TABLE resumes_data
   ADD COLUMN IF NOT EXISTS is_accepted BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE resumes_data
@@ -212,6 +217,45 @@ ALTER TABLE resumes_data
 ALTER TABLE resumes_data
   ADD COLUMN IF NOT EXISTS file_hash VARCHAR(64) NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_resumes_data_file_hash ON resumes_data (file_hash);
+
+CREATE TABLE IF NOT EXISTS candidate (
+  cid VARCHAR(20) PRIMARY KEY,
+  res_id VARCHAR(30) NOT NULL,
+  job_jid INT NULL,
+  recruiter_rid VARCHAR(20) NULL,
+  rid VARCHAR(20) NULL,
+  name VARCHAR(100) NOT NULL,
+  phone VARCHAR(15) NULL,
+  email VARCHAR(100) NULL,
+  level_of_edu VARCHAR(50) NULL,
+  board_uni VARCHAR(100) NULL,
+  institution_name VARCHAR(190) NULL,
+  marks DECIMAL(5,2) NULL,
+  age INT NULL,
+  industry VARCHAR(50) NULL,
+  expected_sal INT NULL,
+  prev_sal INT NULL,
+  notice_period INT NULL,
+  experience TINYINT(1) NULL,
+  years_of_exp VARCHAR(20) NULL,
+  joining_date DATE NULL,
+  walk_in DATE NULL,
+  revenue DECIMAL(12,2) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_candidate_res_id (res_id),
+  INDEX idx_candidate_job_jid (job_jid),
+  INDEX idx_candidate_recruiter_rid (recruiter_rid),
+  CONSTRAINT fk_candidate_resume
+    FOREIGN KEY (res_id) REFERENCES resumes_data(res_id)
+    ON UPDATE CASCADE ON DELETE CASCADE,
+  CONSTRAINT fk_candidate_job
+    FOREIGN KEY (job_jid) REFERENCES jobs(jid)
+    ON UPDATE CASCADE ON DELETE SET NULL,
+  CONSTRAINT fk_candidate_recruiter
+    FOREIGN KEY (recruiter_rid) REFERENCES recruiter(rid)
+    ON UPDATE CASCADE ON DELETE SET NULL
+);
 
 CREATE TABLE IF NOT EXISTS resume_id_sequence (
   seq_id BIGINT AUTO_INCREMENT PRIMARY KEY
@@ -239,9 +283,9 @@ ALTER TABLE job_resume_selection
   MODIFY COLUMN selection_status ENUM('selected', 'rejected', 'on_hold', 'verified', 'walk_in', 'joined', 'dropout', 'pending', 'billed', 'left') NOT NULL DEFAULT 'selected';
 
 ALTER TABLE job_resume_selection
-  ADD COLUMN IF NOT EXISTS joining_date DATE NULL;
-ALTER TABLE job_resume_selection
   ADD COLUMN IF NOT EXISTS joining_note TEXT NULL;
+ALTER TABLE job_resume_selection
+  DROP COLUMN IF EXISTS joining_date;
 
 CREATE TABLE IF NOT EXISTS money_sum (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,

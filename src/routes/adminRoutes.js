@@ -11,6 +11,7 @@ const {
   columnExists,
   getColumnMetadata,
   constraintExists,
+  upsertCandidateFields,
 } = require("../utils/dbHelpers");
 const { toMoneyNumber, normalizeJobJid } = require("../utils/formatters");
 
@@ -539,16 +540,10 @@ router.get("/api/admin/candidate-resumes", async (req, res) => {
       "resumes_data",
       "ats_match_percentage",
     );
-    const hasWalkInColumn = await columnExists("resumes_data", "walk_in");
-    const hasResumeJoiningDateColumn = await columnExists(
-      "resumes_data",
-      "joining_date",
-    );
     const hasJobDescriptionColumn = await columnExists(
       "jobs",
       "job_description",
     );
-    const hasApplicationsTable = await tableExists("applications");
     const hasSelectionTable = await tableExists("job_resume_selection");
     const hasExtraInfoTable = await tableExists("extra_info");
     const hasSubmittedReasonColumn =
@@ -557,130 +552,23 @@ router.get("/api/admin/candidate-resumes", async (req, res) => {
     const hasVerifiedReasonColumn =
       hasExtraInfoTable &&
       (await columnExists("extra_info", "verified_reason"));
-    const hasPriorExperienceColumn =
-      hasApplicationsTable &&
-      (await columnExists("applications", "has_prior_experience"));
-    const hasExperienceIndustryColumn =
-      hasApplicationsTable &&
-      (await columnExists("applications", "experience_industry"));
-    const hasExperienceIndustryOtherColumn =
-      hasApplicationsTable &&
-      (await columnExists("applications", "experience_industry_other"));
-    const hasCurrentSalaryColumn =
-      hasApplicationsTable &&
-      (await columnExists("applications", "current_salary"));
-    const hasExpectedSalaryColumn =
-      hasApplicationsTable &&
-      (await columnExists("applications", "expected_salary"));
-    const hasNoticePeriodColumn =
-      hasApplicationsTable &&
-      (await columnExists("applications", "notice_period"));
-    const hasYearsOfExperienceColumn =
-      hasApplicationsTable &&
-      (await columnExists("applications", "years_of_experience"));
-
-    const applicantNameSelect = hasApplicantNameColumn
-      ? "rd.applicant_name AS applicantName,"
-      : "NULL AS applicantName,";
-    const applicantEmailLookupSql = hasApplicationsTable
-      ? `(
-          SELECT a.email
-          FROM applications a
-          WHERE a.job_jid = rd.job_jid
-            AND (
-              a.resume_filename = rd.resume_filename
-              ${hasApplicantNameColumn ? "OR a.candidate_name = rd.applicant_name" : ""}
-            )
-          ORDER BY a.created_at DESC, a.id DESC
-          LIMIT 1
-        )`
-      : "NULL";
-    const applicationMatchSql = hasApplicationsTable
-      ? `a.job_jid = rd.job_jid
-          AND (
-            ${hasApplicantEmailColumn ? "a.email = rd.applicant_email OR" : ""}
-            a.resume_filename = rd.resume_filename
-            ${hasApplicantNameColumn ? "OR a.candidate_name = rd.applicant_name" : ""}
-          )`
-      : "1 = 0";
-    const priorExperienceSelect = hasPriorExperienceColumn
-      ? `(
-            SELECT a.has_prior_experience
-            FROM applications a
-            WHERE ${applicationMatchSql}
-            ORDER BY a.created_at DESC, a.id DESC
-            LIMIT 1
-          ) AS hasPriorExperience,`
-      : "NULL AS hasPriorExperience,";
-    const experienceIndustrySelect = hasExperienceIndustryColumn
-      ? `(
-            SELECT a.experience_industry
-            FROM applications a
-            WHERE ${applicationMatchSql}
-            ORDER BY a.created_at DESC, a.id DESC
-            LIMIT 1
-          ) AS experienceIndustry,`
-      : "NULL AS experienceIndustry,";
-    const experienceIndustryOtherSelect = hasExperienceIndustryOtherColumn
-      ? `(
-            SELECT a.experience_industry_other
-            FROM applications a
-            WHERE ${applicationMatchSql}
-            ORDER BY a.created_at DESC, a.id DESC
-            LIMIT 1
-          ) AS experienceIndustryOther,`
-      : "NULL AS experienceIndustryOther,";
-    const currentSalarySelect = hasCurrentSalaryColumn
-      ? `(
-            SELECT a.current_salary
-            FROM applications a
-            WHERE ${applicationMatchSql}
-            ORDER BY a.created_at DESC, a.id DESC
-            LIMIT 1
-          ) AS currentSalary,`
-      : "NULL AS currentSalary,";
-    const expectedSalarySelect = hasExpectedSalaryColumn
-      ? `(
-            SELECT a.expected_salary
-            FROM applications a
-            WHERE ${applicationMatchSql}
-            ORDER BY a.created_at DESC, a.id DESC
-            LIMIT 1
-          ) AS expectedSalary,`
-      : "NULL AS expectedSalary,";
-    const noticePeriodSelect = hasNoticePeriodColumn
-      ? `(
-            SELECT a.notice_period
-            FROM applications a
-            WHERE ${applicationMatchSql}
-            ORDER BY a.created_at DESC, a.id DESC
-            LIMIT 1
-          ) AS noticePeriod,`
-      : "NULL AS noticePeriod,";
-    const yearsOfExperienceSelect = hasYearsOfExperienceColumn
-      ? `(
-            SELECT a.years_of_experience
-            FROM applications a
-            WHERE ${applicationMatchSql}
-            ORDER BY a.created_at DESC, a.id DESC
-            LIMIT 1
-          ) AS yearsOfExperience,`
-      : "NULL AS yearsOfExperience,";
-    const applicantEmailSelect = hasApplicantEmailColumn
-      ? `COALESCE(rd.applicant_email, ${applicantEmailLookupSql}) AS applicantEmail,`
-      : `${applicantEmailLookupSql} AS applicantEmail,`;
+    const applicantNameSelect = "c.name AS applicantName,";
+    const priorExperienceSelect = "c.experience AS hasPriorExperience,";
+    const experienceIndustrySelect = "c.industry AS experienceIndustry,";
+    const experienceIndustryOtherSelect = "NULL AS experienceIndustryOther,";
+    const currentSalarySelect = "c.prev_sal AS currentSalary,";
+    const expectedSalarySelect = "c.expected_sal AS expectedSalary,";
+    const noticePeriodSelect = "c.notice_period AS noticePeriod,";
+    const yearsOfExperienceSelect = "c.years_of_exp AS yearsOfExperience,";
+    const applicantEmailSelect = "c.email AS applicantEmail,";
     const atsScoreSelect = hasAtsScoreColumn
       ? "rd.ats_score AS atsScore,"
       : "NULL AS atsScore,";
     const atsMatchSelect = hasAtsMatchColumn
       ? "rd.ats_match_percentage AS atsMatchPercentage,"
       : "NULL AS atsMatchPercentage,";
-    const walkInDateSelect = hasWalkInColumn
-      ? "rd.walk_in AS walkInDate,"
-      : "NULL AS walkInDate,";
-    const resumeJoiningDateSelect = hasResumeJoiningDateColumn
-      ? "rd.joining_date AS resumeJoiningDate,"
-      : "NULL AS resumeJoiningDate,";
+    const walkInDateSelect = "c.walk_in AS walkInDate,";
+    const resumeJoiningDateSelect = "c.joining_date AS resumeJoiningDate,";
     const jobDescriptionSelect = hasJobDescriptionColumn
       ? "j.job_description AS jobDescription,"
       : "NULL AS jobDescription,";
@@ -691,7 +579,7 @@ router.get("/api/admin/candidate-resumes", async (req, res) => {
         jrs.selected_at AS selectedAt,
         ${walkInDateSelect}
         ${resumeJoiningDateSelect}
-        COALESCE(rd.joining_date, jrs.joining_date) AS joiningDate,
+        c.joining_date AS joiningDate,
         jrs.joining_note AS joiningNote`
       : `NULL AS selectionStatus,
         NULL AS selectionNote,
@@ -744,6 +632,7 @@ router.get("/api/admin/candidate-resumes", async (req, res) => {
         ${verifiedReasonSelect}
         ${selectionSelect}
       FROM resumes_data rd
+      LEFT JOIN candidate c ON c.res_id = rd.res_id
       LEFT JOIN jobs j ON j.jid = rd.job_jid
       ${extraInfoJoin}
       ${selectionJoin}
@@ -999,11 +888,6 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
       "resumes_data",
       "ats_match_percentage",
     );
-    const hasWalkInColumn = await columnExists("resumes_data", "walk_in");
-    const hasResumeJoiningDateColumn = await columnExists(
-      "resumes_data",
-      "joining_date",
-    );
     const hasExtraInfoTable = await tableExists("extra_info");
     const hasSubmittedReasonColumn =
       hasExtraInfoTable &&
@@ -1018,12 +902,8 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
     const atsMatchSelect = hasAtsMatchColumn
       ? "rd.ats_match_percentage AS atsMatchPercentage,"
       : "NULL AS atsMatchPercentage,";
-    const walkInDateSelect = hasWalkInColumn
-      ? "rd.walk_in AS walkInDate,"
-      : "NULL AS walkInDate,";
-    const resumeJoiningDateSelect = hasResumeJoiningDateColumn
-      ? "rd.joining_date AS resumeJoiningDate,"
-      : "NULL AS resumeJoiningDate,";
+    const walkInDateSelect = "c.walk_in AS walkInDate,";
+    const resumeJoiningDateSelect = "c.joining_date AS resumeJoiningDate,";
     const submittedReasonSelect = hasSubmittedReasonColumn
       ? "ei.submitted_reason AS submittedReason,"
       : "NULL AS submittedReason,";
@@ -1055,10 +935,11 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
         jrs.selected_at AS selectedAt,
         ${walkInDateSelect}
         ${resumeJoiningDateSelect}
-        COALESCE(rd.joining_date, jrs.joining_date) AS joiningDate,
+        c.joining_date AS joiningDate,
         jrs.joining_note AS joiningNote
       FROM resumes_data rd
       INNER JOIN recruiter r ON r.rid = rd.rid
+      LEFT JOIN candidate c ON c.res_id = rd.res_id
       ${extraInfoJoin}
       LEFT JOIN job_resume_selection jrs
         ON jrs.job_jid = rd.job_jid
@@ -2111,9 +1992,10 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
         rd.res_id AS resId,
         rd.rid,
         rd.job_jid AS jobJid,
-        rd.joining_date AS currentJoiningDate,
+        c.joining_date AS currentJoiningDate,
         COALESCE(jrs.selection_status, '') AS currentStatus
       FROM resumes_data rd
+      LEFT JOIN candidate c ON c.res_id = rd.res_id
       LEFT JOIN job_resume_selection jrs
         ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
       WHERE rd.res_id = ?
@@ -2158,12 +2040,11 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
     if (resume.jobJid) {
       await connection.query(
         `INSERT INTO job_resume_selection
-          (job_jid, res_id, selected_by_admin, selection_status, selection_note, joining_date, joining_note)
-        VALUES (?, ?, 'admin-panel', ?, ?, ?, ?)
+          (job_jid, res_id, selected_by_admin, selection_status, selection_note, joining_note)
+        VALUES (?, ?, 'admin-panel', ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           selection_status = VALUES(selection_status),
           selection_note = VALUES(selection_note),
-          joining_date = COALESCE(VALUES(joining_date), joining_date),
           joining_note = COALESCE(VALUES(joining_note), joining_note),
           selected_at = CURRENT_TIMESTAMP`,
         [
@@ -2171,38 +2052,26 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
           normalizedResId,
           persistedStatus,
           reason || null,
-          joiningDateValue,
           joiningNoteValue,
         ],
       );
     }
 
-    if (await columnExists("resumes_data", "joining_date")) {
-      let resumeJoiningDateValue = resume.currentJoiningDate || null;
-      if (newStatus === "selected") {
-        resumeJoiningDateValue = null;
-      } else if (newStatus === "pending_joining") {
-        resumeJoiningDateValue = joiningDate;
-      } else if (newStatus === "joined" && effectiveJoiningDate) {
-        resumeJoiningDateValue = effectiveJoiningDate;
-      }
-
-      await connection.query(
-        `UPDATE resumes_data
-         SET joining_date = ?
-         WHERE res_id = ?`,
-        [resumeJoiningDateValue, normalizedResId],
-      );
+    let candidateJoiningDateValue = resume.currentJoiningDate || null;
+    if (newStatus === "selected") {
+      candidateJoiningDateValue = null;
+    } else if (newStatus === "pending_joining") {
+      candidateJoiningDateValue = joiningDate;
+    } else if (newStatus === "joined" && effectiveJoiningDate) {
+      candidateJoiningDateValue = effectiveJoiningDate;
     }
 
-    if (newStatus === "billed" && (await columnExists("resumes_data", "revenue"))) {
-      await connection.query(
-        `UPDATE resumes_data
-         SET revenue = ?
-         WHERE res_id = ?`,
-        [parsedRevenue, normalizedResId],
-      );
-    }
+    await upsertCandidateFields(connection, {
+      resId: normalizedResId,
+      cid: undefined,
+      joiningDate: candidateJoiningDateValue,
+      revenue: newStatus === "billed" ? parsedRevenue : undefined,
+    });
 
     // Update reason column in extra_info
     const reasonColumn = STATUS_REASON_COLUMN[newStatus];
@@ -2350,8 +2219,8 @@ router.get("/api/admin/performance", async (_req, res) => {
           COUNT(*) AS submitted,
           SUM(CASE WHEN jrs.selection_status = 'verified' THEN 1 ELSE 0 END) AS verified,
           SUM(CASE WHEN jrs.selection_status = 'walk_in' THEN 1 ELSE 0 END) AS walk_in,
-          SUM(CASE WHEN jrs.selection_status = 'selected' AND rd.joining_date IS NULL THEN 1 ELSE 0 END) AS selected,
-          SUM(CASE WHEN jrs.selection_status = 'selected' AND rd.joining_date IS NOT NULL THEN 1 ELSE 0 END) AS pending_joining,
+          SUM(CASE WHEN jrs.selection_status = 'selected' AND c.joining_date IS NULL THEN 1 ELSE 0 END) AS selected,
+          SUM(CASE WHEN jrs.selection_status = 'selected' AND c.joining_date IS NOT NULL THEN 1 ELSE 0 END) AS pending_joining,
           SUM(CASE WHEN jrs.selection_status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
           SUM(CASE WHEN jrs.selection_status = 'joined' THEN 1 ELSE 0 END) AS joined,
           SUM(CASE WHEN jrs.selection_status = 'dropout' THEN 1 ELSE 0 END) AS dropout,
@@ -2360,6 +2229,7 @@ router.get("/api/admin/performance", async (_req, res) => {
           SUM(CASE WHEN jrs.selection_status = 'on_hold' THEN 1 ELSE 0 END) AS on_hold,
           MAX(COALESCE(jrs.selected_at, rd.uploaded_at)) AS last_updated
         FROM resumes_data rd
+        LEFT JOIN candidate c ON c.res_id = rd.res_id
         LEFT JOIN job_resume_selection jrs
           ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
         WHERE COALESCE(rd.submitted_by_role, 'recruiter') = 'recruiter'
@@ -2415,17 +2285,8 @@ router.get("/api/admin/performance", async (_req, res) => {
       };
     });
 
-    const hasWalkInColumn = await columnExists("resumes_data", "walk_in");
-    const walkInDateSelect = hasWalkInColumn
-      ? "rd.walk_in AS walkInDate,"
-      : "NULL AS walkInDate,";
-    const hasResumeJoiningDateColumn = await columnExists(
-      "resumes_data",
-      "joining_date",
-    );
-    const resumeJoiningDateSelect = hasResumeJoiningDateColumn
-      ? "rd.joining_date AS joiningDate,"
-      : "NULL AS joiningDate,";
+    const walkInDateSelect = "c.walk_in AS walkInDate,";
+    const resumeJoiningDateSelect = "c.joining_date AS joiningDate,";
 
     const [statusDrilldownRows] = await pool.query(
       `SELECT
@@ -2441,14 +2302,14 @@ router.get("/api/admin/performance", async (_req, res) => {
         recruiter.email AS recruiterEmail,
         teamLeader.rid AS teamLeaderRid,
         teamLeader.name AS teamLeaderName,
-        COALESCE(ei.candidate_name, ei.applicant_name, rd.applicant_name) AS candidateName
+        c.name AS candidateName
       FROM resumes_data rd
+      LEFT JOIN candidate c ON c.res_id = rd.res_id
       INNER JOIN recruiter recruiter ON recruiter.rid = rd.rid
       LEFT JOIN job_resume_selection jrs
         ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
       LEFT JOIN jobs j ON j.jid = rd.job_jid
       LEFT JOIN recruiter teamLeader ON teamLeader.rid = j.recruiter_rid
-      LEFT JOIN extra_info ei ON ei.res_id = rd.res_id
       WHERE COALESCE(rd.submitted_by_role, 'recruiter') = 'recruiter'
         AND COALESCE(jrs.selection_status, '') IN (
           'verified',

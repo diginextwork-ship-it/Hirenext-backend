@@ -20,6 +20,7 @@ const {
   getTableColumns,
   fetchExtraInfoByResumeIds,
   upsertExtraInfoFields,
+  upsertCandidateFields,
 } = require("../utils/dbHelpers");
 const {
   toNumberOrNull,
@@ -37,6 +38,7 @@ const {
 } = require("../utils/formatters");
 
 const router = express.Router();
+const buildCandidateId = (sequenceValue) => `c_${sequenceValue}`;
 const uploadResume = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
@@ -859,34 +861,23 @@ router.post(
         );
         const sequenceValue = Number(sequenceResult.insertId);
         const resId = `res_${sequenceValue}`;
+        const cid = buildCandidateId(sequenceValue);
 
         await connection.query(
           `INSERT INTO applications
           (
             job_jid,
-            candidate_name,
-            phone,
-            email,
-            latest_education_level,
-            board_university,
-            institution_name,
-            age,
+            res_id,
             resume_filename,
             resume_parsed_data,
             ats_score,
             ats_match_percentage,
             ats_raw_json
           )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
           [
             safeJobId,
-            candidateName,
-            phone,
-            email,
-            latestEducationLevel,
-            boardUniversity,
-            institutionName,
-            age,
+            resId,
             originalName,
             safeJsonOrNull(parsed.parsedData),
             parsed.atsScore,
@@ -903,17 +894,15 @@ router.post(
         const resumeInsertColumns = [
           "res_id",
           "rid",
-          "applicant_name",
           "job_jid",
           "resume",
           "resume_filename",
           "resume_type",
         ];
-        const resumeInsertValuesSql = ["?", "?", "?", "?", "?", "?", "?"];
+        const resumeInsertValuesSql = ["?", "?", "?", "?", "?", "?"];
         const resumeInsertValues = [
           resId,
           recruiterRid,
-          candidateName,
           safeJobId,
           resumeFile.buffer,
           originalName,
@@ -948,6 +937,20 @@ router.post(
           `INSERT INTO resumes_data (${resumeInsertColumns.join(", ")}) VALUES (${resumeInsertValuesSql.join(", ")})`,
           resumeInsertValues,
         );
+
+        await upsertCandidateFields(connection, {
+          cid,
+          resId,
+          jobJid: safeJobId,
+          recruiterRid,
+          name: candidateName,
+          phone,
+          email,
+          levelOfEdu: latestEducationLevel,
+          boardUni: boardUniversity,
+          institutionName,
+          age,
+        });
 
         await connection.query(
           `INSERT INTO status (recruiter_rid, submitted, last_updated)
@@ -1214,6 +1217,14 @@ router.post(
           insertValues,
         );
 
+        await upsertCandidateFields(connection, {
+          cid,
+          resId,
+          jobJid: safeJobId,
+          recruiterRid: rid,
+          name: resumeAts.applicantName || "Unknown Candidate",
+        });
+
         await connection.commit();
         return res.status(201).json({
           message: "Resume added successfully.",
@@ -1253,26 +1264,11 @@ router.get(
     const { rid } = req.params;
 
     try {
-      const hasJobJidColumn = await columnExists("resumes_data", "job_jid");
-      const hasApplicantNameColumn = await columnExists(
-        "resumes_data",
-        "applicant_name",
-      );
-      const hasWalkInColumn = await columnExists("resumes_data", "walk_in");
       const hasAtsScoreColumn = await columnExists("resumes_data", "ats_score");
       const hasAtsMatchColumn = await columnExists(
         "resumes_data",
         "ats_match_percentage",
       );
-      const jobJidSelection = hasJobJidColumn
-        ? "rd.job_jid AS jobJid,"
-        : "NULL AS jobJid,";
-      const candidateNameSelection = hasApplicantNameColumn
-        ? "rd.applicant_name AS candidateName,"
-        : "NULL AS candidateName,";
-      const walkInSelection = hasWalkInColumn
-        ? "rd.walk_in AS walkInDate,"
-        : "NULL AS walkInDate,";
       const atsScoreSelection = hasAtsScoreColumn
         ? "ats_score AS atsScore,"
         : "NULL AS atsScore,";
@@ -1283,9 +1279,9 @@ router.get(
       const [rows] = await pool.query(
         `SELECT
         rd.res_id AS resId,
-        ${jobJidSelection}
-        ${candidateNameSelection}
-        ${walkInSelection}
+        rd.job_jid AS jobJid,
+        c.name AS candidateName,
+        c.walk_in AS walkInDate,
         rd.resume_filename AS resumeFilename,
         rd.resume_type AS resumeType,
         ${atsScoreSelection}
@@ -1293,9 +1289,10 @@ router.get(
         rd.uploaded_at AS uploadedAt,
         COALESCE(jrs.selection_status, 'pending') AS workflowStatus,
         jrs.selected_at AS workflowUpdatedAt,
-        jrs.joining_date AS joiningDate,
+        c.joining_date AS joiningDate,
         jrs.joining_note AS joiningNote
       FROM resumes_data rd
+      LEFT JOIN candidate c ON c.res_id = rd.res_id
       LEFT JOIN job_resume_selection jrs
         ON jrs.job_jid = rd.job_jid
        AND jrs.res_id = rd.res_id
@@ -1605,9 +1602,10 @@ router.get(
       const [rows] = await pool.query(
         `SELECT
         a.id,
+        a.res_id AS resId,
         a.job_jid AS jobJid,
-        a.candidate_name AS candidateName,
-        a.email,
+        c.name AS candidateName,
+        c.email,
         a.ats_score AS atsScore,
         a.ats_match_percentage AS atsMatchPercentage,
         a.resume_filename AS resumeFilename,
@@ -1615,6 +1613,7 @@ router.get(
         j.role_name AS roleName,
         j.company_name AS companyName
       FROM applications a
+      LEFT JOIN candidate c ON c.res_id = a.res_id
       INNER JOIN jobs j ON j.jid = a.job_jid
       WHERE j.${jobsRecruiterIdColumn} = ?
       ORDER BY a.created_at DESC`,
@@ -1702,14 +1701,15 @@ router.post(
 
     try {
       const [resumeRows] = await pool.query(
-        `SELECT
+          `SELECT
           rd.res_id AS resId,
           rd.job_jid AS jobJid,
           rd.rid AS recruiterRid,
-          rd.applicant_name AS candidateName,
-          rd.applicant_email AS email,
+          c.name AS candidateName,
+          c.email AS email,
           COALESCE(jrs.selection_status, 'pending') AS currentStatus
         FROM resumes_data rd
+        LEFT JOIN candidate c ON c.res_id = rd.res_id
         LEFT JOIN job_resume_selection jrs
           ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
         WHERE rd.res_id = ? AND rd.rid = ?
@@ -1739,13 +1739,12 @@ router.post(
 
         await connection.query(
           `INSERT INTO job_resume_selection
-            (job_jid, res_id, selected_by_admin, selection_status, selection_note, joining_date, joining_note)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
+            (job_jid, res_id, selected_by_admin, selection_status, selection_note, joining_note)
+           VALUES (?, ?, ?, ?, ?, ?)
            ON DUPLICATE KEY UPDATE
              selected_by_admin = VALUES(selected_by_admin),
              selection_status = VALUES(selection_status),
              selection_note = VALUES(selection_note),
-             joining_date = CASE WHEN VALUES(selection_status) = 'joined' THEN VALUES(joining_date) ELSE joining_date END,
              joining_note = CASE WHEN VALUES(selection_status) = 'joined' THEN VALUES(joining_note) ELSE joining_note END,
              selected_at = CURRENT_TIMESTAMP`,
           [
@@ -1754,21 +1753,24 @@ router.post(
             rid,
             targetStatus,
             reason,
-            targetStatus === "joined" ? joiningDate : null,
             targetStatus === "joined" ? joiningNote : null,
           ],
         );
 
-        if (
-          targetStatus === "walk_in" &&
-          (await columnExists("resumes_data", "walk_in"))
-        ) {
-          await connection.query(
-            `UPDATE resumes_data
-             SET walk_in = CURDATE()
-             WHERE res_id = ?`,
-            [resId],
-          );
+        if (targetStatus === "walk_in") {
+          await upsertCandidateFields(connection, {
+            resId,
+            cid: undefined,
+            walkIn: new Date().toISOString().slice(0, 10),
+          });
+        }
+
+        if (targetStatus === "joined" && joiningDate) {
+          await upsertCandidateFields(connection, {
+            resId,
+            cid: undefined,
+            joiningDate,
+          });
         }
 
         const reasonColumn = statusReasonColumnMap[targetStatus];

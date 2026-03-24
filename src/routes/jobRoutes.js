@@ -20,6 +20,7 @@ const {
   getColumnMaxLength,
   fetchExtraInfoByResumeIds,
   upsertExtraInfoFields,
+  upsertCandidateFields,
 } = require("../utils/dbHelpers");
 const {
   toNumberOrNull,
@@ -35,6 +36,7 @@ const {
 } = require("../utils/formatters");
 
 const router = express.Router();
+const buildCandidateId = (sequenceValue) => `c_${sequenceValue}`;
 
 const toPositiveIntOrNull = (value) => {
   if (value === undefined || value === null || value === "") return null;
@@ -725,17 +727,13 @@ router.get(
         "resumes_data",
         "ats_match_percentage",
       );
-      const hasWalkInColumn = await columnExists("resumes_data", "walk_in");
-
       const atsScoreSelection = hasAtsScoreColumn
         ? "rd.ats_score AS atsScore,"
         : "NULL AS atsScore,";
       const atsMatchSelection = hasAtsMatchColumn
         ? "rd.ats_match_percentage AS atsMatchPercentage,"
         : "NULL AS atsMatchPercentage,";
-      const walkInSelection = hasWalkInColumn
-        ? "rd.walk_in AS walkInDate,"
-        : "NULL AS walkInDate,";
+      const walkInSelection = "c.walk_in AS walkInDate,";
 
       const [rows] = await pool.query(
         `SELECT
@@ -755,6 +753,7 @@ router.get(
           jrs.selected_at AS updatedAt
         FROM resumes_data rd
         INNER JOIN recruiter r ON r.rid = rd.rid
+        LEFT JOIN candidate c ON c.res_id = rd.res_id
         LEFT JOIN job_resume_selection jrs
           ON jrs.job_jid = rd.job_jid
          AND jrs.res_id = rd.res_id
@@ -843,9 +842,10 @@ router.post(
             rd.res_id AS resId,
             rd.job_jid AS jobJid,
             rd.rid AS recruiterRid,
-            rd.applicant_name AS candidateName,
-            rd.applicant_email AS email
+            c.name AS candidateName,
+            c.email AS email
            FROM resumes_data rd
+           LEFT JOIN candidate c ON c.res_id = rd.res_id
            WHERE rd.res_id = ?
            LIMIT 1`,
           [normalizedResId],
@@ -939,16 +939,12 @@ router.post(
           });
         }
 
-        if (
-          normalizedStatus === "walk_in" &&
-          (await columnExists("resumes_data", "walk_in"))
-        ) {
-          await connection.query(
-            `UPDATE resumes_data
-             SET walk_in = CURDATE()
-             WHERE res_id = ?`,
-            [normalizedResId],
-          );
+        if (normalizedStatus === "walk_in") {
+          await upsertCandidateFields(connection, {
+            resId: normalizedResId,
+            cid: undefined,
+            walkIn: new Date().toISOString().slice(0, 10),
+          });
         }
 
         if (recruiterRid && previousStatus !== normalizedStatus) {
@@ -1064,9 +1060,10 @@ router.post(
             rd.res_id AS resId,
             rd.job_jid AS jobJid,
             rd.rid AS recruiterRid,
-            rd.applicant_name AS candidateName,
-            rd.applicant_email AS email
+            c.name AS candidateName,
+            c.email AS email
            FROM resumes_data rd
+           LEFT JOIN candidate c ON c.res_id = rd.res_id
            WHERE rd.res_id = ? AND rd.job_jid = ?
            LIMIT 1`,
           [normalizedResId, jobJid],
@@ -1615,66 +1612,39 @@ router.post("/api/applications", async (req, res) => {
       parsed_data: parsed.parsedData,
     };
 
-    const connection = await pool.getConnection();
-    try {
-      await connection.beginTransaction();
+      const connection = await pool.getConnection();
+      try {
+        await connection.beginTransaction();
 
-      const [applicationResult] = await connection.query(
-        `INSERT INTO applications
-          (
-            job_jid,
-            candidate_name,
-            phone,
-            email,
-            has_prior_experience,
-            experience_industry,
-            experience_industry_other,
-            current_salary,
-            expected_salary,
-            notice_period,
-            years_of_experience,
-            latest_education_level,
-            board_university,
-            institution_name,
-            age,
-            resume_filename,
-            resume_parsed_data,
-            ats_score,
-            ats_match_percentage,
-            ats_raw_json
-          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          safeJobId,
-          finalName,
-          finalPhone,
-          finalEmail,
-          finalHasPriorExperience,
-          finalHasPriorExperience ? finalExperienceIndustry : null,
-          finalHasPriorExperience && finalExperienceIndustry === "others"
-            ? finalExperienceIndustryOther
-            : null,
-          finalHasPriorExperience ? finalCurrentSalary : null,
-          finalHasPriorExperience ? finalExpectedSalary : null,
-          finalHasPriorExperience ? finalNoticePeriod : null,
-          finalHasPriorExperience ? finalYearsOfExperience : null,
-          finalLatestEducationLevel,
-          finalBoardUniversity,
-          finalInstitutionName,
-          finalAge,
-          normalizedFilename,
-          safeJsonOrNull(parsed.parsedData),
-          parsed.atsScore,
-          parsed.atsMatchPercentage,
-          safeJsonOrNull(atsPayload),
-        ],
-      );
+        const [sequenceResult] = await connection.query(
+          "INSERT INTO resume_id_sequence VALUES ()",
+        );
+        const sequenceValue = Number(sequenceResult.insertId);
+        const resId = `res_${sequenceValue}`;
+        const cid = buildCandidateId(sequenceValue);
 
-      const [sequenceResult] = await connection.query(
-        "INSERT INTO resume_id_sequence VALUES ()",
-      );
-      const sequenceValue = Number(sequenceResult.insertId);
-      const resId = `res_${sequenceValue}`;
+        const [applicationResult] = await connection.query(
+          `INSERT INTO applications
+            (
+              job_jid,
+              res_id,
+              resume_filename,
+              resume_parsed_data,
+              ats_score,
+              ats_match_percentage,
+              ats_raw_json
+            )
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [
+            safeJobId,
+            resId,
+            normalizedFilename,
+            safeJsonOrNull(parsed.parsedData),
+            parsed.atsScore,
+            parsed.atsMatchPercentage,
+            safeJsonOrNull(atsPayload),
+          ],
+        );
 
       const hasFileHashColumn = await columnExists("resumes_data", "file_hash");
       const fileHash = hasFileHashColumn ? sha256Hex(resumeBuffer) : null;
@@ -1739,28 +1709,48 @@ router.post("/api/applications", async (req, res) => {
       }
 
       const placeholders = insertColumns.map(() => "?").join(", ");
-      await connection.query(
-        `INSERT INTO resumes_data (${insertColumns.join(", ")}) VALUES (${placeholders})`,
-        insertValues,
-      );
+        await connection.query(
+          `INSERT INTO resumes_data (${insertColumns.join(", ")}) VALUES (${placeholders})`,
+          insertValues,
+        );
 
-      await connection.commit();
-      return res.status(201).json({
-        message: "Application submitted successfully.",
-        application: {
-          id: applicationResult.insertId,
-          job_jid: safeJobId,
-          candidate_name: finalName,
-          resume_id: resId,
-          resume_filename: normalizedFilename,
-          resume_type: extension,
-          resume_mime_type: normalizedMimeType || null,
-        },
-        parser_meta: parsed.parserMeta || null,
-      });
-    } catch (error) {
-      await connection.rollback();
-      throw error;
+        await upsertCandidateFields(connection, {
+          cid,
+          resId,
+          jobJid: safeJobId,
+          recruiterRid: selectedJob.recruiter_rid,
+          name: finalName,
+          phone: finalPhone,
+          email: finalEmail,
+          levelOfEdu: finalLatestEducationLevel,
+          boardUni: finalBoardUniversity,
+          institutionName: finalInstitutionName,
+          age: finalAge,
+          industry: finalHasPriorExperience ? finalExperienceIndustry : null,
+          expectedSal: finalHasPriorExperience ? finalExpectedSalary : null,
+          prevSal: finalHasPriorExperience ? finalCurrentSalary : null,
+          noticePeriod: finalHasPriorExperience ? finalNoticePeriod : null,
+          experience: finalHasPriorExperience,
+          yearsOfExp: finalHasPriorExperience ? finalYearsOfExperience : null,
+        });
+
+        await connection.commit();
+        return res.status(201).json({
+          message: "Application submitted successfully.",
+          application: {
+            id: applicationResult.insertId,
+            job_jid: safeJobId,
+            candidate_name: finalName,
+            resume_id: resId,
+            resume_filename: normalizedFilename,
+            resume_type: extension,
+            resume_mime_type: normalizedMimeType || null,
+          },
+          parser_meta: parsed.parserMeta || null,
+        });
+      } catch (error) {
+        await connection.rollback();
+        throw error;
     } finally {
       connection.release();
     }
