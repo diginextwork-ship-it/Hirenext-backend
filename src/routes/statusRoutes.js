@@ -2,6 +2,7 @@ const express = require("express");
 const pool = require("../config/db");
 const { requireAuth, requireRoles } = require("../middleware/auth");
 const { escapeLike } = require("../utils/formatters");
+const { tableExists } = require("../utils/dbHelpers");
 
 const router = express.Router();
 
@@ -574,6 +575,154 @@ router.get(
     } catch (error) {
       return res.status(500).json({
         error: "Failed to fetch recruiter dashboard data.",
+        details: error.message,
+      });
+    }
+  },
+);
+
+// ─── Performance Points Dashboard ───────────────────────────────────────────────
+
+router.get(
+  "/api/status/recruiter/:rid/points",
+  requireAuth,
+  requireRoles("recruiter", "team leader", "team_leader"),
+  async (req, res) => {
+    if (!assertOwnRidOrTeamLeader(req, res)) return;
+
+    const rid = toRid(req.params.rid);
+    if (!rid) return res.status(400).json({ error: "rid is required." });
+
+    try {
+      const hasLogTable = await tableExists("recruiter_points_log");
+
+      // Fetch recruiter total points
+      const [[recruiterRow]] = await pool.query(
+        `SELECT rid, name, email, COALESCE(points, 0) AS points
+         FROM recruiter WHERE rid = ? LIMIT 1`,
+        [rid],
+      );
+
+      if (!recruiterRow) {
+        return res.status(404).json({ error: "Recruiter not found." });
+      }
+
+      let pointsLog = [];
+      let totalBilledPoints = 0;
+
+      if (hasLogTable) {
+        const [logRows] = await pool.query(
+          `SELECT
+            pl.id,
+            pl.job_jid AS jobJid,
+            pl.res_id AS resId,
+            pl.points,
+            pl.reason,
+            pl.created_at AS creditedAt,
+            j.company_name AS companyName,
+            j.role_name AS roleName,
+            j.points_per_joining AS pointsPerJoining,
+            c.name AS candidateName
+          FROM recruiter_points_log pl
+          LEFT JOIN jobs j ON j.jid = pl.job_jid
+          LEFT JOIN candidate c ON c.res_id = pl.res_id
+          WHERE pl.recruiter_rid = ?
+          ORDER BY pl.created_at DESC`,
+          [rid],
+        );
+
+        pointsLog = logRows.map((row) => ({
+          id: row.id,
+          jobJid: row.jobJid,
+          resId: row.resId,
+          points: Number(row.points) || 0,
+          reason: row.reason || "billed",
+          creditedAt: row.creditedAt,
+          companyName: row.companyName || null,
+          roleName: row.roleName || null,
+          candidateName: row.candidateName || null,
+        }));
+
+        totalBilledPoints = pointsLog.reduce(
+          (sum, entry) => sum + entry.points,
+          0,
+        );
+      }
+
+      return res.status(200).json({
+        recruiter: {
+          rid: recruiterRow.rid,
+          name: recruiterRow.name,
+          email: recruiterRow.email,
+          totalPoints: Number(recruiterRow.points) || 0,
+        },
+        totalBilledPoints,
+        pointsLog,
+      });
+    } catch (error) {
+      return res.status(500).json({
+        error: "Failed to fetch performance points.",
+        details: error.message,
+      });
+    }
+  },
+);
+
+router.get(
+  "/api/status/points/all",
+  requireAuth,
+  requireRoles("team leader", "team_leader"),
+  async (_req, res) => {
+    try {
+      const hasLogTable = await tableExists("recruiter_points_log");
+
+      const [rows] = await pool.query(
+        `SELECT
+          r.rid,
+          r.name,
+          r.email,
+          COALESCE(r.points, 0) AS totalPoints,
+          COALESCE(bl.billed_points, 0) AS billedPoints,
+          COALESCE(bl.billed_count, 0) AS billedCount
+        FROM recruiter r
+        LEFT JOIN (
+          SELECT
+            recruiter_rid,
+            SUM(points) AS billed_points,
+            COUNT(*) AS billed_count
+          FROM recruiter_points_log
+          GROUP BY recruiter_rid
+        ) bl ON bl.recruiter_rid = r.rid
+        WHERE LOWER(TRIM(COALESCE(r.role, 'recruiter'))) = 'recruiter'
+        ORDER BY COALESCE(r.points, 0) DESC, r.name ASC`,
+      );
+
+      const recruiters = rows.map((row) => ({
+        rid: row.rid,
+        name: row.name,
+        email: row.email,
+        totalPoints: Number(row.totalPoints) || 0,
+        billedPoints: Number(row.billedPoints) || 0,
+        billedCount: Number(row.billedCount) || 0,
+      }));
+
+      const totalPoints = recruiters.reduce((s, r) => s + r.totalPoints, 0);
+      const totalBilledPoints = recruiters.reduce(
+        (s, r) => s + r.billedPoints,
+        0,
+      );
+
+      return res.status(200).json({
+        recruiters,
+        total: recruiters.length,
+        summary: {
+          totalPoints,
+          totalBilledPoints,
+        },
+      });
+    } catch (error) {
+      return res.status(500).json({
+        error: "Failed to fetch performance points dashboard.",
         details: error.message,
       });
     }

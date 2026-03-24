@@ -2105,6 +2105,26 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
       }
     }
 
+    // Credit points_per_joining to the recruiter when candidate reaches billed status
+    if (newStatus === "billed" && resume.rid && resume.jobJid) {
+      const [jobPtsRows] = await connection.query(
+        "SELECT COALESCE(points_per_joining, 0) AS pts FROM jobs WHERE jid = ? LIMIT 1",
+        [resume.jobJid],
+      );
+      const pts = Number(jobPtsRows?.[0]?.pts) || 0;
+      if (pts > 0) {
+        await connection.query(
+          "UPDATE recruiter SET points = COALESCE(points, 0) + ? WHERE rid = ?",
+          [pts, resume.rid],
+        );
+        await connection.query(
+          `INSERT INTO recruiter_points_log (recruiter_rid, job_jid, res_id, points, reason)
+           VALUES (?, ?, ?, ?, 'billed')`,
+          [resume.rid, resume.jobJid, normalizedResId, pts],
+        );
+      }
+    }
+
     await connection.commit();
     return res.status(200).json({ message: "Status updated successfully." });
   } catch (error) {

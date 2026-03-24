@@ -1369,6 +1369,26 @@ const ensureStatusTable = async () => {
   }
 };
 
+const ensurePointsLogTable = async () => {
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS recruiter_points_log (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      recruiter_rid VARCHAR(20) NOT NULL,
+      job_jid INT NULL,
+      res_id VARCHAR(30) NULL,
+      points INT NOT NULL DEFAULT 0,
+      reason VARCHAR(100) NOT NULL DEFAULT 'billed',
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_points_log_rid (recruiter_rid),
+      INDEX idx_points_log_rid_created (recruiter_rid, created_at),
+      INDEX idx_points_log_job_jid (job_jid),
+      CONSTRAINT fk_points_log_recruiter
+        FOREIGN KEY (recruiter_rid) REFERENCES recruiter(rid)
+        ON UPDATE CASCADE ON DELETE CASCADE
+    )`,
+  );
+};
+
 const initDatabase = async () => {
   await ensureResumeIdSequenceTable();
   await ensureRecruiterTableColumns();
@@ -1383,6 +1403,7 @@ const initDatabase = async () => {
   await ensureRecruiterAttendanceTable();
   await ensureJobAccessControlSchema();
   await ensureStatusTable();
+  await ensurePointsLogTable();
 };
 
 pool.initDatabase = initDatabase;

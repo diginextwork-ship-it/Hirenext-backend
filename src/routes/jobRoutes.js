@@ -38,6 +38,60 @@ const {
 const router = express.Router();
 const buildCandidateId = (sequenceValue) => `c_${sequenceValue}`;
 
+// ─── Top Performing Recruiters Leaderboard ─────────────────────────────
+// Returns top 10 recruiters by total points (and billed points)
+router.get(
+  "/api/recruiters/top-performers",
+  requireAuth,
+  requireRoles("recruiter", "team leader", "team_leader", "admin"),
+  async (_req, res) => {
+    try {
+      // Get top 10 recruiters by points
+      const [rows] = await pool.query(
+        `SELECT
+          r.rid,
+          r.name,
+          r.email,
+          COALESCE(r.points, 0) AS totalPoints,
+          COALESCE(bl.billed_points, 0) AS billedPoints,
+          COALESCE(bl.billed_count, 0) AS billedCount
+        FROM recruiter r
+        LEFT JOIN (
+          SELECT
+            recruiter_rid,
+            SUM(points) AS billed_points,
+            COUNT(*) AS billed_count
+          FROM recruiter_points_log
+          GROUP BY recruiter_rid
+        ) bl ON bl.recruiter_rid = r.rid
+        WHERE LOWER(TRIM(COALESCE(r.role, 'recruiter'))) = 'recruiter'
+        ORDER BY COALESCE(r.points, 0) DESC, r.name ASC
+        LIMIT 10`,
+      );
+
+      const leaderboard = rows.map((row, idx) => ({
+        rank: idx + 1,
+        rid: row.rid,
+        name: row.name,
+        email: row.email,
+        totalPoints: Number(row.totalPoints) || 0,
+        billedPoints: Number(row.billedPoints) || 0,
+        billedCount: Number(row.billedCount) || 0,
+      }));
+
+      return res.status(200).json({
+        leaderboard,
+        count: leaderboard.length,
+      });
+    } catch (error) {
+      return res.status(500).json({
+        error: "Failed to fetch top recruiters leaderboard.",
+        details: error.message,
+      });
+    }
+  },
+);
+
 const toPositiveIntOrNull = (value) => {
   if (value === undefined || value === null || value === "") return null;
   const parsed = Number(value);
@@ -1612,19 +1666,19 @@ router.post("/api/applications", async (req, res) => {
       parsed_data: parsed.parsedData,
     };
 
-      const connection = await pool.getConnection();
-      try {
-        await connection.beginTransaction();
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
 
-        const [sequenceResult] = await connection.query(
-          "INSERT INTO resume_id_sequence VALUES ()",
-        );
-        const sequenceValue = Number(sequenceResult.insertId);
-        const resId = `res_${sequenceValue}`;
-        const cid = buildCandidateId(sequenceValue);
+      const [sequenceResult] = await connection.query(
+        "INSERT INTO resume_id_sequence VALUES ()",
+      );
+      const sequenceValue = Number(sequenceResult.insertId);
+      const resId = `res_${sequenceValue}`;
+      const cid = buildCandidateId(sequenceValue);
 
-        const [applicationResult] = await connection.query(
-          `INSERT INTO applications
+      const [applicationResult] = await connection.query(
+        `INSERT INTO applications
             (
               job_jid,
               res_id,
@@ -1635,16 +1689,16 @@ router.post("/api/applications", async (req, res) => {
               ats_raw_json
             )
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [
-            safeJobId,
-            resId,
-            normalizedFilename,
-            safeJsonOrNull(parsed.parsedData),
-            parsed.atsScore,
-            parsed.atsMatchPercentage,
-            safeJsonOrNull(atsPayload),
-          ],
-        );
+        [
+          safeJobId,
+          resId,
+          normalizedFilename,
+          safeJsonOrNull(parsed.parsedData),
+          parsed.atsScore,
+          parsed.atsMatchPercentage,
+          safeJsonOrNull(atsPayload),
+        ],
+      );
 
       const hasFileHashColumn = await columnExists("resumes_data", "file_hash");
       const fileHash = hasFileHashColumn ? sha256Hex(resumeBuffer) : null;
@@ -1709,48 +1763,48 @@ router.post("/api/applications", async (req, res) => {
       }
 
       const placeholders = insertColumns.map(() => "?").join(", ");
-        await connection.query(
-          `INSERT INTO resumes_data (${insertColumns.join(", ")}) VALUES (${placeholders})`,
-          insertValues,
-        );
+      await connection.query(
+        `INSERT INTO resumes_data (${insertColumns.join(", ")}) VALUES (${placeholders})`,
+        insertValues,
+      );
 
-        await upsertCandidateFields(connection, {
-          cid,
-          resId,
-          jobJid: safeJobId,
-          recruiterRid: selectedJob.recruiter_rid,
-          name: finalName,
-          phone: finalPhone,
-          email: finalEmail,
-          levelOfEdu: finalLatestEducationLevel,
-          boardUni: finalBoardUniversity,
-          institutionName: finalInstitutionName,
-          age: finalAge,
-          industry: finalHasPriorExperience ? finalExperienceIndustry : null,
-          expectedSal: finalHasPriorExperience ? finalExpectedSalary : null,
-          prevSal: finalHasPriorExperience ? finalCurrentSalary : null,
-          noticePeriod: finalHasPriorExperience ? finalNoticePeriod : null,
-          experience: finalHasPriorExperience,
-          yearsOfExp: finalHasPriorExperience ? finalYearsOfExperience : null,
-        });
+      await upsertCandidateFields(connection, {
+        cid,
+        resId,
+        jobJid: safeJobId,
+        recruiterRid: selectedJob.recruiter_rid,
+        name: finalName,
+        phone: finalPhone,
+        email: finalEmail,
+        levelOfEdu: finalLatestEducationLevel,
+        boardUni: finalBoardUniversity,
+        institutionName: finalInstitutionName,
+        age: finalAge,
+        industry: finalHasPriorExperience ? finalExperienceIndustry : null,
+        expectedSal: finalHasPriorExperience ? finalExpectedSalary : null,
+        prevSal: finalHasPriorExperience ? finalCurrentSalary : null,
+        noticePeriod: finalHasPriorExperience ? finalNoticePeriod : null,
+        experience: finalHasPriorExperience,
+        yearsOfExp: finalHasPriorExperience ? finalYearsOfExperience : null,
+      });
 
-        await connection.commit();
-        return res.status(201).json({
-          message: "Application submitted successfully.",
-          application: {
-            id: applicationResult.insertId,
-            job_jid: safeJobId,
-            candidate_name: finalName,
-            resume_id: resId,
-            resume_filename: normalizedFilename,
-            resume_type: extension,
-            resume_mime_type: normalizedMimeType || null,
-          },
-          parser_meta: parsed.parserMeta || null,
-        });
-      } catch (error) {
-        await connection.rollback();
-        throw error;
+      await connection.commit();
+      return res.status(201).json({
+        message: "Application submitted successfully.",
+        application: {
+          id: applicationResult.insertId,
+          job_jid: safeJobId,
+          candidate_name: finalName,
+          resume_id: resId,
+          resume_filename: normalizedFilename,
+          resume_type: extension,
+          resume_mime_type: normalizedMimeType || null,
+        },
+        parser_meta: parsed.parserMeta || null,
+      });
+    } catch (error) {
+      await connection.rollback();
+      throw error;
     } finally {
       connection.release();
     }
@@ -1778,9 +1832,11 @@ const processBillingTransitions = async () => {
 
     // Find all "joined" candidates whose selected_at is older than the billing period
     const [joinedRows] = await pool.query(
-      `SELECT jrs.id, jrs.job_jid, jrs.res_id, rd.rid AS recruiterRid
+      `SELECT jrs.id, jrs.job_jid, jrs.res_id, rd.rid AS recruiterRid,
+              COALESCE(j.points_per_joining, 0) AS pointsPerJoining
        FROM job_resume_selection jrs
        INNER JOIN resumes_data rd ON rd.res_id = jrs.res_id AND rd.job_jid = jrs.job_jid
+       LEFT JOIN jobs j ON j.jid = jrs.job_jid
        WHERE jrs.selection_status = 'joined'
          AND jrs.selected_at <= DATE_SUB(NOW(), INTERVAL ? DAY)`,
       [BILLING_PERIOD_DAYS],
@@ -1813,6 +1869,20 @@ const processBillingTransitions = async () => {
                last_updated = CURRENT_TIMESTAMP`,
             [row.recruiterRid],
           );
+
+          // Credit points_per_joining to the recruiter on billed status
+          const pts = Number(row.pointsPerJoining) || 0;
+          if (pts > 0) {
+            await connection.query(
+              "UPDATE recruiter SET points = COALESCE(points, 0) + ? WHERE rid = ?",
+              [pts, row.recruiterRid],
+            );
+            await connection.query(
+              `INSERT INTO recruiter_points_log (recruiter_rid, job_jid, res_id, points, reason)
+               VALUES (?, ?, ?, ?, 'billed')`,
+              [row.recruiterRid, row.job_jid, row.res_id, pts],
+            );
+          }
         }
 
         await connection.commit();
