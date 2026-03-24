@@ -1290,9 +1290,13 @@ router.get(
         COALESCE(jrs.selection_status, 'pending') AS workflowStatus,
         jrs.selected_at AS workflowUpdatedAt,
         c.joining_date AS joiningDate,
-        jrs.joining_note AS joiningNote
+        jrs.joining_note AS joiningNote,
+        j.company_name AS companyName,
+        j.role_name AS roleName,
+        j.city AS city
       FROM resumes_data rd
       LEFT JOIN candidate c ON c.res_id = rd.res_id
+      LEFT JOIN jobs j ON j.jid = rd.job_jid
       LEFT JOIN job_resume_selection jrs
         ON jrs.job_jid = rd.job_jid
        AND jrs.res_id = rd.res_id
@@ -1319,6 +1323,12 @@ router.get(
           workflowUpdatedAt: row.workflowUpdatedAt || null,
           joiningDate: row.joiningDate || null,
           joiningNote: row.joiningNote || null,
+          job: {
+            jobJid: row.jobJid ? String(row.jobJid).trim() : null,
+            companyName: row.companyName || null,
+            roleName: row.roleName || null,
+            city: row.city || null,
+          },
           ...(extraInfoByResumeId.get(String(row.resId || "").trim()) || {}),
         })),
       });
@@ -1611,7 +1621,8 @@ router.get(
         a.resume_filename AS resumeFilename,
         a.created_at AS createdAt,
         j.role_name AS roleName,
-        j.company_name AS companyName
+        j.company_name AS companyName,
+        j.city AS city
       FROM applications a
       LEFT JOIN candidate c ON c.res_id = a.res_id
       INNER JOIN jobs j ON j.jid = a.job_jid
@@ -1636,6 +1647,7 @@ router.get(
           job: {
             roleName: row.roleName,
             companyName: row.companyName,
+            city: row.city || null,
           },
         })),
       });

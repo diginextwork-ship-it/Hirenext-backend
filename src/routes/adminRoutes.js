@@ -475,6 +475,8 @@ router.get("/api/admin/dashboard", async (_req, res) => {
           r.name AS recruiterName,
           r.email AS recruiterEmail,
           ${jobJidSelect}
+          j.company_name AS companyName,
+          j.city AS city,
           j.points_per_joining AS pointsPerJoining,
           j.revenue AS revenue,
           rd.resume_filename AS resumeFilename,
@@ -873,6 +875,7 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
       `SELECT
         jid AS jobJid,
         company_name AS companyName,
+        city AS city,
         role_name AS roleName,
         positions_open AS positionsOpen
       FROM jobs
@@ -1960,6 +1963,10 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
         message: "joining_date is required in YYYY-MM-DD format.",
       });
     }
+  } else if (newStatus === "selected" && joiningDate) {
+    return res.status(400).json({
+      message: "joining_date should only be provided for pending_joining.",
+    });
   } else if (joiningDate && !/^\d{4}-\d{2}-\d{2}$/.test(joiningDate)) {
     return res.status(400).json({
       message: "joining_date must be in YYYY-MM-DD format.",
@@ -1988,6 +1995,11 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
   if (parsedRevenue !== null && parsedRevenue < 0) {
     return res.status(400).json({
       message: "revenue must be a valid non-negative number.",
+    });
+  }
+  if (newStatus === "pending_joining" && parsedRevenue === null) {
+    return res.status(400).json({
+      message: "revenue is required for pending_joining status.",
     });
   }
   if (newStatus === "billed" && parsedRevenue === null) {
@@ -2083,7 +2095,10 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
       resId: normalizedResId,
       cid: undefined,
       joiningDate: candidateJoiningDateValue,
-      revenue: newStatus === "billed" ? parsedRevenue : undefined,
+      revenue:
+        newStatus === "pending_joining" || newStatus === "billed"
+          ? parsedRevenue
+          : undefined,
     });
 
     // Update reason column in extra_info

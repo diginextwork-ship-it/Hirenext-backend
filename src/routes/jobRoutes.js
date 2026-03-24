@@ -344,6 +344,11 @@ router.post(
       accessNotes,
     } = req.body || {};
 
+    const normalizedCompanyName = toTrimmedString(
+      company_name ?? req.body?.companyName,
+    );
+    const normalizedCity = toTrimmedString(city ?? req.body?.city);
+
     const safePositionsOpen = toPositiveIntOrNull(positions_open);
     const safeRevenue = toNonNegativeNumberOrNull(revenue);
     const safePointsPerJoining = toNonNegativeIntOrNull(points_per_joining);
@@ -372,7 +377,7 @@ router.post(
     );
     const hasAccessModeColumn = await columnExists("jobs", "access_mode");
 
-    if (!recruiter_rid || !company_name || !role_name) {
+    if (!recruiter_rid || !normalizedCompanyName || !role_name) {
       return res.status(400).json({
         message: "recruiter_rid, company_name, and role_name are required.",
       });
@@ -493,13 +498,13 @@ router.post(
       const insertValues = [
         null,
         recruiter_rid.trim(),
-        company_name.trim(),
+        normalizedCompanyName.trim(),
         role_name.trim(),
       ];
 
       if (hasCityColumn) {
         insertColumns.push("city");
-        insertValues.push(String(city || "N/A").trim() || "N/A");
+        insertValues.push(String(normalizedCity || "N/A").trim() || "N/A");
       }
       if (hasStateColumn) {
         insertColumns.push("state");
@@ -585,7 +590,7 @@ router.post(
 
         await connection.commit();
 
-        const safeCity = String(city || "").trim();
+        const safeCity = String(normalizedCity || "").trim();
         const safeState = String(state || "").trim();
         const safePincode = String(pincode || "").trim();
         const warning =
@@ -603,7 +608,7 @@ router.post(
             city: safeCity,
             state: safeState,
             pincode: safePincode,
-            company_name: company_name.trim(),
+            company_name: normalizedCompanyName.trim(),
             role_name: role_name.trim(),
             positions_open: safePositionsOpen,
             revenue: safeRevenue,
@@ -776,6 +781,17 @@ router.get(
   requireOwnedJob,
   async (req, res) => {
     try {
+      const [jobRows] = await pool.query(
+        `SELECT
+          company_name AS companyName,
+          role_name AS roleName,
+          city AS city
+        FROM jobs
+        WHERE jid = ?
+        LIMIT 1`,
+        [req.ownedJob.jid],
+      );
+
       const hasAtsScoreColumn = await columnExists("resumes_data", "ats_score");
       const hasAtsMatchColumn = await columnExists(
         "resumes_data",
@@ -823,6 +839,12 @@ router.get(
 
       return res.status(200).json({
         jobId: req.ownedJob.jid,
+        job: {
+          jobJid: req.ownedJob.jid,
+          companyName: jobRows[0]?.companyName || null,
+          roleName: jobRows[0]?.roleName || null,
+          city: jobRows[0]?.city || null,
+        },
         resumes: rows.map((row) => ({
           ...(extraInfoByResumeId.get(String(row.resId || "").trim()) || {}),
           resId: row.resId,
@@ -842,6 +864,12 @@ router.get(
           updatedBy: row.updatedBy || null,
           updatedAt: row.updatedAt || null,
           walkInDate: row.walkInDate || null,
+          job: {
+            jobJid: req.ownedJob.jid,
+            companyName: jobRows[0]?.companyName || null,
+            roleName: jobRows[0]?.roleName || null,
+            city: jobRows[0]?.city || null,
+          },
         })),
       });
     } catch (error) {
