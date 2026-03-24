@@ -240,7 +240,7 @@ CREATE TABLE IF NOT EXISTS candidate (
   years_of_exp VARCHAR(20) NULL,
   joining_date DATE NULL,
   walk_in DATE NULL,
-  revenue DECIMAL(12,2) NULL,
+  revenue INT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uniq_candidate_res_id (res_id),

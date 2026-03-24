@@ -626,6 +626,7 @@ router.get("/api/admin/candidate-resumes", async (req, res) => {
         rd.uploaded_at AS uploadedAt,
         j.role_name AS roleName,
         j.company_name AS companyName,
+        j.city AS city,
         ${jobDescriptionSelect}
         j.skills AS skills,
         ${submittedReasonSelect}
@@ -687,6 +688,7 @@ router.get("/api/admin/candidate-resumes", async (req, res) => {
         job: {
           roleName: row.roleName || null,
           companyName: row.companyName || null,
+          city: row.city || null,
           jobDescription: row.jobDescription || null,
           skills: row.skills || null,
         },
@@ -953,6 +955,7 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
       job: {
         jobJid: String(jobs[0].jobJid || "").trim(),
         companyName: jobs[0].companyName,
+        city: jobs[0].city || null,
         roleName: jobs[0].roleName,
         positionsOpen: Number(jobs[0].positionsOpen) || 1,
       },
@@ -1976,7 +1979,7 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
   }
 
   const parsedRevenue =
-    rawRevenue === "" ? null : Number.parseFloat(rawRevenue);
+    rawRevenue === "" ? null : Number.parseInt(rawRevenue, 10);
   if (rawRevenue !== "" && !Number.isFinite(parsedRevenue)) {
     return res.status(400).json({
       message: "revenue must be a valid non-negative number.",

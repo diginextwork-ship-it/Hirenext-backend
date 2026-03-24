@@ -533,7 +533,7 @@ const ensureCandidateTable = async () => {
       years_of_exp VARCHAR(20) NULL,
       joining_date DATE NULL,
       walk_in DATE NULL,
-      revenue DECIMAL(12,2) NULL,
+      revenue INT NULL,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       UNIQUE KEY uniq_candidate_res_id (res_id),
@@ -553,6 +553,13 @@ const ensureCandidateTable = async () => {
         ON UPDATE CASCADE
     )`,
   );
+
+  // Migrate candidate.revenue from DECIMAL to INT if needed
+  const revenueMetadata = await getColumnMetadata("candidate", "revenue");
+  const revenueDataType = String(revenueMetadata?.dataType || "").toLowerCase();
+  if (revenueDataType && revenueDataType !== "int") {
+    await pool.query("ALTER TABLE candidate MODIFY COLUMN revenue INT NULL");
+  }
 
   const hasApplicationsTable = await tableExists("applications");
   const hasExtraInfoTable = await tableExists("extra_info");
