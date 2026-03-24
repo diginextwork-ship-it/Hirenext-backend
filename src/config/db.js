@@ -504,7 +504,10 @@ const ensureCandidateTable = async () => {
   const recruiterRidMetadata = await getColumnMetadata("recruiter", "rid");
   const resumeIdMetadata = await getColumnMetadata("resumes_data", "res_id");
   const jobJidColumnSql = buildColumnSql(jobJidMetadata, "VARCHAR(30)");
-  const recruiterRidColumnSql = buildColumnSql(recruiterRidMetadata, "VARCHAR(20)");
+  const recruiterRidColumnSql = buildColumnSql(
+    recruiterRidMetadata,
+    "VARCHAR(20)",
+  );
   const resumeIdColumnSql = buildColumnSql(resumeIdMetadata, "VARCHAR(30)");
 
   await pool.query(
@@ -554,13 +557,23 @@ const ensureCandidateTable = async () => {
   const hasApplicationsTable = await tableExists("applications");
   const hasExtraInfoTable = await tableExists("extra_info");
   const hasSelectionTable = await tableExists("job_resume_selection");
-  const hasResumeApplicantName = await columnExists("resumes_data", "applicant_name");
-  const hasResumeApplicantEmail = await columnExists("resumes_data", "applicant_email");
+  const hasResumeApplicantName = await columnExists(
+    "resumes_data",
+    "applicant_name",
+  );
+  const hasResumeApplicantEmail = await columnExists(
+    "resumes_data",
+    "applicant_email",
+  );
   const hasResumeWalkIn = await columnExists("resumes_data", "walk_in");
-  const hasResumeJoiningDate = await columnExists("resumes_data", "joining_date");
+  const hasResumeJoiningDate = await columnExists(
+    "resumes_data",
+    "joining_date",
+  );
   const hasResumeRevenue = await columnExists("resumes_data", "revenue");
   const hasAppCandidateName =
-    hasApplicationsTable && (await columnExists("applications", "candidate_name"));
+    hasApplicationsTable &&
+    (await columnExists("applications", "candidate_name"));
   const hasAppPhone =
     hasApplicationsTable && (await columnExists("applications", "phone"));
   const hasAppEmail =
@@ -569,9 +582,11 @@ const ensureCandidateTable = async () => {
     hasApplicationsTable &&
     (await columnExists("applications", "latest_education_level"));
   const hasAppBoard =
-    hasApplicationsTable && (await columnExists("applications", "board_university"));
+    hasApplicationsTable &&
+    (await columnExists("applications", "board_university"));
   const hasAppInstitution =
-    hasApplicationsTable && (await columnExists("applications", "institution_name"));
+    hasApplicationsTable &&
+    (await columnExists("applications", "institution_name"));
   const hasAppAge =
     hasApplicationsTable && (await columnExists("applications", "age"));
   const hasAppExperience =
@@ -581,11 +596,14 @@ const ensureCandidateTable = async () => {
     hasApplicationsTable &&
     (await columnExists("applications", "experience_industry"));
   const hasAppExpectedSalary =
-    hasApplicationsTable && (await columnExists("applications", "expected_salary"));
+    hasApplicationsTable &&
+    (await columnExists("applications", "expected_salary"));
   const hasAppPrevSalary =
-    hasApplicationsTable && (await columnExists("applications", "current_salary"));
+    hasApplicationsTable &&
+    (await columnExists("applications", "current_salary"));
   const hasAppNoticePeriod =
-    hasApplicationsTable && (await columnExists("applications", "notice_period"));
+    hasApplicationsTable &&
+    (await columnExists("applications", "notice_period"));
   const hasAppYearsOfExp =
     hasApplicationsTable &&
     (await columnExists("applications", "years_of_experience"));
@@ -602,7 +620,8 @@ const ensureCandidateTable = async () => {
   const hasExtraPhone =
     hasExtraInfoTable && (await columnExists("extra_info", "phone"));
   const hasSelectionJoiningDate =
-    hasSelectionTable && (await columnExists("job_resume_selection", "joining_date"));
+    hasSelectionTable &&
+    (await columnExists("job_resume_selection", "joining_date"));
 
   const applicationMatchSql = hasApplicationsTable
     ? `a.job_jid = rd.job_jid
@@ -722,7 +741,9 @@ const ensureCandidateTable = async () => {
 
   if (hasApplicationsTable) {
     if (!(await columnExists("applications", "res_id"))) {
-      await pool.query("ALTER TABLE applications ADD COLUMN res_id VARCHAR(30) NULL");
+      await pool.query(
+        "ALTER TABLE applications ADD COLUMN res_id VARCHAR(30) NULL",
+      );
     }
     await pool.query(
       `UPDATE applications a
@@ -774,8 +795,13 @@ const ensureCandidateTable = async () => {
     }
   }
 
-  if (hasSelectionTable && (await columnExists("job_resume_selection", "joining_date"))) {
-    await pool.query("ALTER TABLE job_resume_selection DROP COLUMN joining_date");
+  if (
+    hasSelectionTable &&
+    (await columnExists("job_resume_selection", "joining_date"))
+  ) {
+    await pool.query(
+      "ALTER TABLE job_resume_selection DROP COLUMN joining_date",
+    );
   }
 };
 
@@ -840,6 +866,11 @@ const ensureExtraInfoTable = async () => {
   if (!(await columnExists("extra_info", "billed_reason"))) {
     await pool.query(
       "ALTER TABLE extra_info ADD COLUMN billed_reason TEXT NULL",
+    );
+  }
+  if (!(await columnExists("extra_info", "further_reason"))) {
+    await pool.query(
+      "ALTER TABLE extra_info ADD COLUMN further_reason TEXT NULL",
     );
   }
   if (!(await columnExists("extra_info", "updated_at"))) {
@@ -967,7 +998,9 @@ const ensureApplicationColumns = async () => {
   }
 
   if (!(await columnExists("applications", "res_id"))) {
-    await pool.query("ALTER TABLE applications ADD COLUMN res_id VARCHAR(30) NULL");
+    await pool.query(
+      "ALTER TABLE applications ADD COLUMN res_id VARCHAR(30) NULL",
+    );
   }
 
   if (!(await columnExists("applications", "resume_parsed_data"))) {
@@ -1045,6 +1078,7 @@ const ensureJobResumeSelectionTable = async () => {
   const requiredStatuses = [
     "verified",
     "walk_in",
+    "further",
     "selected",
     "rejected",
     "joined",
@@ -1061,13 +1095,15 @@ const ensureJobResumeSelectionTable = async () => {
     await pool.query(
       `ALTER TABLE job_resume_selection
        MODIFY COLUMN selection_status
-       ENUM('verified','walk_in','selected','rejected','joined','dropout','on_hold','billed','left')
+       ENUM('verified','walk_in','further','selected','rejected','joined','dropout','on_hold','billed','left')
        NOT NULL DEFAULT 'selected'`,
     );
   }
 
   if (await columnExists("job_resume_selection", "joining_date")) {
-    await pool.query("ALTER TABLE job_resume_selection DROP COLUMN joining_date");
+    await pool.query(
+      "ALTER TABLE job_resume_selection DROP COLUMN joining_date",
+    );
   }
 };
 

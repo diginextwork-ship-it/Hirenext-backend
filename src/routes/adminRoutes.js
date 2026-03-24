@@ -1890,13 +1890,15 @@ router.put("/api/admin/resumes/:resId/verified-reason", async (req, res) => {
 // ─── Advance Resume Workflow Status ─────────────────────────────────────────────
 
 const VALID_STATUS_TRANSITIONS = {
-  walk_in: new Set(["selected", "rejected"]),
+  walk_in: new Set(["further", "selected", "rejected"]),
+  further: new Set(["selected", "rejected"]),
   selected: new Set(["pending_joining", "dropout"]),
   pending_joining: new Set(["joined", "dropout"]),
   joined: new Set(["billed", "left"]),
 };
 
 const STATUS_REASON_COLUMN = {
+  further: "further_reason",
   selected: "select_reason",
   rejected: "reject_reason",
   joined: "joined_reason",
@@ -1931,6 +1933,7 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
       : String(req.body.revenue).trim();
 
   const allowedNewStatuses = new Set([
+    "further",
     "selected",
     "pending_joining",
     "rejected",
@@ -1958,7 +1961,10 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
   }
 
   // Reason is required for all statuses except pending_joining, joined, and billed
-  if (!["pending_joining", "joined", "billed"].includes(newStatus) && !reason) {
+  if (
+    !["further", "pending_joining", "joined", "billed"].includes(newStatus) &&
+    !reason
+  ) {
     return res
       .status(400)
       .json({ message: "reason is required for this status transition." });
@@ -2029,10 +2035,9 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
 
     const persistedStatus =
       newStatus === "pending_joining" ? "selected" : newStatus;
-    const effectiveJoiningDate =
-      /^\d{4}-\d{2}-\d{2}$/.test(joiningDate)
-        ? joiningDate
-        : resume.currentJoiningDate || null;
+    const effectiveJoiningDate = /^\d{4}-\d{2}-\d{2}$/.test(joiningDate)
+      ? joiningDate
+      : resume.currentJoiningDate || null;
     const joiningDateValue =
       newStatus === "joined" ? effectiveJoiningDate : null;
     const joiningNoteValue = newStatus === "joined" ? joiningNote : null;
@@ -2203,6 +2208,7 @@ router.get("/api/admin/performance", async (_req, res) => {
         COALESCE(rs.submitted, 0) AS submitted,
         COALESCE(rs.verified, 0) AS verified,
         COALESCE(rs.walk_in, 0) AS walk_in,
+        COALESCE(rs.further, 0) AS further,
         COALESCE(rs.selected, 0) AS \`select\`,
         COALESCE(rs.pending_joining, 0) AS pending_joining,
         COALESCE(rs.rejected, 0) AS reject,
@@ -2219,6 +2225,7 @@ router.get("/api/admin/performance", async (_req, res) => {
           COUNT(*) AS submitted,
           SUM(CASE WHEN jrs.selection_status = 'verified' THEN 1 ELSE 0 END) AS verified,
           SUM(CASE WHEN jrs.selection_status = 'walk_in' THEN 1 ELSE 0 END) AS walk_in,
+          SUM(CASE WHEN jrs.selection_status = 'further' THEN 1 ELSE 0 END) AS further,
           SUM(CASE WHEN jrs.selection_status = 'selected' AND c.joining_date IS NULL THEN 1 ELSE 0 END) AS selected,
           SUM(CASE WHEN jrs.selection_status = 'selected' AND c.joining_date IS NOT NULL THEN 1 ELSE 0 END) AS pending_joining,
           SUM(CASE WHEN jrs.selection_status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
@@ -2256,6 +2263,7 @@ router.get("/api/admin/performance", async (_req, res) => {
         submitted,
         verified,
         walk_in: Number(row.walk_in) || 0,
+        further: Number(row.further) || 0,
         selected,
         pending_joining: pendingJoining,
         rejected: Number(row.reject) || 0,
@@ -2269,7 +2277,9 @@ router.get("/api/admin/performance", async (_req, res) => {
           submitted > 0 ? Number(((verified / submitted) * 100).toFixed(1)) : 0,
         selectionRate:
           verified > 0
-            ? Number((((selected + pendingJoining) / verified) * 100).toFixed(1))
+            ? Number(
+                (((selected + pendingJoining) / verified) * 100).toFixed(1),
+              )
             : 0,
         joiningRate:
           pendingJoining > 0
@@ -2374,7 +2384,10 @@ router.get("/api/admin/performance", async (_req, res) => {
       totalVerified: recruiters.reduce((s, r) => s + r.verified, 0),
       totalWalkIn: recruiters.reduce((s, r) => s + r.walk_in, 0),
       totalSelected: recruiters.reduce((s, r) => s + r.selected, 0),
-      totalPendingJoining: recruiters.reduce((s, r) => s + r.pending_joining, 0),
+      totalPendingJoining: recruiters.reduce(
+        (s, r) => s + r.pending_joining,
+        0,
+      ),
       totalJoined: recruiters.reduce((s, r) => s + r.joined, 0),
       totalDropout: recruiters.reduce((s, r) => s + r.dropout, 0),
       totalRejected: recruiters.reduce((s, r) => s + r.rejected, 0),

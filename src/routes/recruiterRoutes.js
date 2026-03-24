@@ -1650,13 +1650,15 @@ router.get(
 
 const allowedRecruiterTransitions = {
   verified: ["walk_in", "rejected"],
-  walk_in: ["selected", "rejected"],
+  walk_in: ["further", "selected", "rejected"],
+  further: ["selected", "rejected"],
   selected: ["joined", "dropout", "rejected"],
   joined: ["billed", "left"],
 };
 
 const statusReasonColumnMap = {
   walk_in: "walk_in_reason",
+  further: "further_reason",
   selected: "select_reason",
   rejected: "reject_reason",
   joined: "joined_reason",
@@ -1701,7 +1703,7 @@ router.post(
 
     try {
       const [resumeRows] = await pool.query(
-          `SELECT
+        `SELECT
           rd.res_id AS resId,
           rd.job_jid AS jobJid,
           rd.rid AS recruiterRid,

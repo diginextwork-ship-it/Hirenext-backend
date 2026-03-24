@@ -107,6 +107,7 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
   const hasSubmittedReason = columns.has("submitted_reason");
   const hasVerifiedReason = columns.has("verified_reason");
   const hasWalkInReason = columns.has("walk_in_reason");
+  const hasFurtherReason = columns.has("further_reason");
   const hasSelectReason = columns.has("select_reason");
   const hasJoinedReason = columns.has("joined_reason");
   const hasDropoutReason = columns.has("dropout_reason");
@@ -118,6 +119,7 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
     hasSubmittedReason ||
     hasVerifiedReason ||
     hasWalkInReason ||
+    hasFurtherReason ||
     hasSelectReason ||
     hasJoinedReason ||
     hasDropoutReason ||
@@ -133,6 +135,7 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
   if (hasVerifiedReason)
     selectColumns.push("verified_reason AS verifiedReason");
   if (hasWalkInReason) selectColumns.push("walk_in_reason AS walkInReason");
+  if (hasFurtherReason) selectColumns.push("further_reason AS furtherReason");
   if (hasSelectReason) selectColumns.push("select_reason AS selectReason");
   if (hasJoinedReason) selectColumns.push("joined_reason AS joinedReason");
   if (hasDropoutReason) selectColumns.push("dropout_reason AS dropoutReason");
@@ -154,6 +157,7 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
         submittedReason: row.submittedReason || null,
         verifiedReason: row.verifiedReason || null,
         walkInReason: row.walkInReason || null,
+        furtherReason: row.furtherReason || null,
         selectReason: row.selectReason || null,
         joinedReason: row.joinedReason || null,
         dropoutReason: row.dropoutReason || null,
@@ -216,6 +220,13 @@ const upsertExtraInfoFields = async (connection, payload) => {
     insertValues.push(payload.walkInReason);
     placeholders.push("?");
     updates.push("walk_in_reason = VALUES(walk_in_reason)");
+  }
+
+  if (payload.furtherReason !== undefined && columns.has("further_reason")) {
+    insertColumns.push("further_reason");
+    insertValues.push(payload.furtherReason);
+    placeholders.push("?");
+    updates.push("further_reason = VALUES(further_reason)");
   }
 
   if (payload.selectReason !== undefined && columns.has("select_reason")) {
@@ -336,7 +347,10 @@ const upsertCandidateFields = async (connection, payload) => {
     updateAssignments.push("updated_at = CURRENT_TIMESTAMP");
   }
 
-  if (insertColumns.length === 0 || (updates.length === 0 && updateAssignments.length === 0)) {
+  if (
+    insertColumns.length === 0 ||
+    (updates.length === 0 && updateAssignments.length === 0)
+  ) {
     return;
   }
 
