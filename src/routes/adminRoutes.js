@@ -1890,6 +1890,7 @@ router.put("/api/admin/resumes/:resId/verified-reason", async (req, res) => {
 // ─── Advance Resume Workflow Status ─────────────────────────────────────────────
 
 const VALID_STATUS_TRANSITIONS = {
+  verified: new Set(["walk_in", "rejected"]),
   walk_in: new Set(["further", "selected", "rejected"]),
   further: new Set(["selected", "rejected"]),
   selected: new Set(["pending_joining", "dropout"]),
@@ -1898,6 +1899,7 @@ const VALID_STATUS_TRANSITIONS = {
 };
 
 const STATUS_REASON_COLUMN = {
+  walk_in: "walk_in_reason",
   further: "further_reason",
   selected: "select_reason",
   rejected: "reject_reason",
@@ -1933,6 +1935,7 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
       : String(req.body.revenue).trim();
 
   const allowedNewStatuses = new Set([
+    "walk_in",
     "further",
     "selected",
     "pending_joining",
@@ -1962,7 +1965,9 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
 
   // Reason is required for all statuses except pending_joining, joined, and billed
   if (
-    !["further", "pending_joining", "joined", "billed"].includes(newStatus) &&
+    !["walk_in", "further", "pending_joining", "joined", "billed"].includes(
+      newStatus,
+    ) &&
     !reason
   ) {
     return res
