@@ -411,6 +411,7 @@ const ensureResumesDataTable = async () => {
       res_id VARCHAR(30) PRIMARY KEY,
       rid VARCHAR(20) NOT NULL,
       job_jid ${jobJidColumnSql} NULL,
+      source VARCHAR(50) NULL,
       resume LONGBLOB NOT NULL,
       resume_filename VARCHAR(255) NOT NULL,
       resume_type VARCHAR(10) NOT NULL,
@@ -465,6 +466,12 @@ const ensureResumesDataTable = async () => {
   if (!(await columnExists("resumes_data", "submitted_by_role"))) {
     await pool.query(
       "ALTER TABLE resumes_data ADD COLUMN submitted_by_role VARCHAR(30) NULL DEFAULT 'recruiter'",
+    );
+  }
+
+  if (!(await columnExists("resumes_data", "source"))) {
+    await pool.query(
+      "ALTER TABLE resumes_data ADD COLUMN source VARCHAR(50) NULL",
     );
   }
 

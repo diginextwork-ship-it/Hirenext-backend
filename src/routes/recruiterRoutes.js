@@ -46,6 +46,32 @@ const uploadResume = multer({
 
 // normalizeAccessMode from shared utils returns "" for invalid; this wrapper defaults to "open"
 const normalizeAccessMode = (value) => _normalizeAccessMode(value) || "open";
+const resumeSourceMap = new Map([
+  ["naukri", "Naukri"],
+  ["shine", "Shine"],
+  ["reference", "Reference"],
+  ["apna job", "Apna Job"],
+  ["apnajob", "Apna Job"],
+  ["linkedin", "LinkedIn"],
+  ["internal database", "Internal Database"],
+  ["internaldatabase", "Internal Database"],
+]);
+const resumeSourceOptions = [
+  "Naukri",
+  "Shine",
+  "Reference",
+  "Apna Job",
+  "LinkedIn",
+  "Internal Database",
+];
+
+const normalizeResumeSource = (value) => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (!normalized) return "";
+  return resumeSourceMap.get(normalized) || "";
+};
 
 const toNonNegativeInt = (value, fallback) => {
   const parsed = Number(value);
@@ -653,6 +679,7 @@ router.post(
     const recruiterRid = String(req.body?.recruiter_rid || "").trim();
     const authRid = String(req.auth?.rid || "").trim();
     const safeJobId = normalizeJobJid(req.body?.job_jid);
+    const resumeSource = normalizeResumeSource(req.body?.source);
 
     if (!authRid || !recruiterRid || authRid !== recruiterRid) {
       return res.status(403).json({
@@ -665,6 +692,13 @@ router.post(
       return res.status(400).json({
         success: false,
         error: "job_jid is required.",
+      });
+    }
+
+    if (!resumeSource) {
+      return res.status(400).json({
+        success: false,
+        error: `source is required. Allowed values: ${resumeSourceOptions.join(", ")}.`,
       });
     }
 
@@ -838,6 +872,7 @@ router.post(
           "resumes_data",
           "file_hash",
         );
+        const hasSourceColumn = await columnExists("resumes_data", "source");
         const fileHash = hasFileHashColumn
           ? sha256Hex(resumeFile.buffer)
           : null;
@@ -913,6 +948,12 @@ router.post(
           resumeInsertColumns.push("file_hash");
           resumeInsertValuesSql.push("?");
           resumeInsertValues.push(fileHash);
+        }
+
+        if (hasSourceColumn) {
+          resumeInsertColumns.push("source");
+          resumeInsertValuesSql.push("?");
+          resumeInsertValues.push(resumeSource);
         }
 
         resumeInsertColumns.push(
@@ -1011,7 +1052,7 @@ router.post(
   requireRecruiterOwner,
   async (req, res) => {
     const { rid } = req.params;
-    const { job_jid, resumeBase64, resumeFilename, resumeMimeType } =
+    const { job_jid, resumeBase64, resumeFilename, resumeMimeType, source } =
       req.body || {};
 
     if (!job_jid || !resumeBase64 || !resumeFilename) {
@@ -1021,8 +1062,15 @@ router.post(
     }
 
     const safeJobId = normalizeJobJid(job_jid);
+    const resumeSource = normalizeResumeSource(source);
     if (!safeJobId) {
       return res.status(400).json({ message: "job_jid is required." });
+    }
+
+    if (!resumeSource) {
+      return res.status(400).json({
+        message: `source is required. Allowed values: ${resumeSourceOptions.join(", ")}.`,
+      });
     }
 
     const normalizedFilename = String(resumeFilename).trim();
@@ -1113,6 +1161,7 @@ router.post(
         "submitted_by_role",
       );
       const hasFileHashColumn = await columnExists("resumes_data", "file_hash");
+      const hasSourceColumn = await columnExists("resumes_data", "source");
       const normalizedMimeType = String(resumeMimeType || "")
         .trim()
         .toLowerCase();
@@ -1185,6 +1234,11 @@ router.post(
         if (hasSubmittedByRoleColumn) {
           insertColumns.push("submitted_by_role");
           insertValues.push("recruiter");
+        }
+
+        if (hasSourceColumn) {
+          insertColumns.push("source");
+          insertValues.push(resumeSource);
         }
 
         if (hasApplicantNameColumn) {

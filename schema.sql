@@ -130,6 +130,7 @@ CREATE TABLE IF NOT EXISTS resumes_data (
   rid VARCHAR(20) NOT NULL,
   job_jid INT NULL,
   submitted_by_role VARCHAR(30) NULL DEFAULT 'recruiter',
+  source VARCHAR(50) NULL,
   is_accepted BOOLEAN NOT NULL DEFAULT FALSE,
   accepted_at TIMESTAMP NULL DEFAULT NULL,
   accepted_by_admin VARCHAR(50) NULL,
@@ -198,6 +199,8 @@ ALTER TABLE extra_info
 
 ALTER TABLE resumes_data
   ADD COLUMN IF NOT EXISTS submitted_by_role VARCHAR(30) NULL DEFAULT 'recruiter';
+ALTER TABLE resumes_data
+  ADD COLUMN IF NOT EXISTS source VARCHAR(50) NULL;
 ALTER TABLE resumes_data
   DROP COLUMN IF EXISTS applicant_name;
 ALTER TABLE resumes_data
