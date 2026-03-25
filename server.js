@@ -39,6 +39,15 @@ const startServer = async () => {
     );
   } catch (error) {
     console.error("Database initialization failed:", error.message);
+    if (error?.code) {
+      console.error("Database initialization error code:", error.code);
+    }
+    if (error?.sqlMessage) {
+      console.error("Database initialization SQL message:", error.sqlMessage);
+    }
+    if (error?.sql) {
+      console.error("Database initialization SQL:", error.sql);
+    }
     console.error("Server is running but database may not be ready");
     // Don't exit - let server continue running
   }

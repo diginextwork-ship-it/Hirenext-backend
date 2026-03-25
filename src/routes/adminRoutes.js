@@ -507,7 +507,7 @@ router.get("/api/admin/dashboard", async (_req, res) => {
   }
 });
 
-router.get("/api/admin/candidate-resumes", async (req, res) => {
+const getCandidateResumesHandler = async (req, res) => {
   if (!ensureAdminAuthorized(req, res)) return;
 
   try {
@@ -529,13 +529,36 @@ router.get("/api/admin/candidate-resumes", async (req, res) => {
       });
     }
 
-    const hasApplicantNameColumn = await columnExists(
-      "resumes_data",
-      "applicant_name",
+    const hasCandidateNameColumn = await columnExists("candidate", "name");
+    const hasCandidateEmailColumn = await columnExists("candidate", "email");
+    const hasCandidateExperienceColumn = await columnExists(
+      "candidate",
+      "experience",
     );
-    const hasApplicantEmailColumn = await columnExists(
-      "resumes_data",
-      "applicant_email",
+    const hasCandidateIndustryColumn = await columnExists(
+      "candidate",
+      "industry",
+    );
+    const hasCandidatePrevSalaryColumn = await columnExists(
+      "candidate",
+      "prev_sal",
+    );
+    const hasCandidateExpectedSalaryColumn = await columnExists(
+      "candidate",
+      "expected_sal",
+    );
+    const hasCandidateNoticePeriodColumn = await columnExists(
+      "candidate",
+      "notice_period",
+    );
+    const hasCandidateYearsOfExperienceColumn = await columnExists(
+      "candidate",
+      "years_of_exp",
+    );
+    const hasCandidateWalkInColumn = await columnExists("candidate", "walk_in");
+    const hasCandidateJoiningDateColumn = await columnExists(
+      "candidate",
+      "joining_date",
     );
     const hasAtsScoreColumn = await columnExists("resumes_data", "ats_score");
     const hasAtsMatchColumn = await columnExists(
@@ -547,6 +570,28 @@ router.get("/api/admin/candidate-resumes", async (req, res) => {
       "job_description",
     );
     const hasSelectionTable = await tableExists("job_resume_selection");
+    const hasSelectionJobJidColumn =
+      hasSelectionTable &&
+      (await columnExists("job_resume_selection", "job_jid"));
+    const hasSelectionResIdColumn =
+      hasSelectionTable && (await columnExists("job_resume_selection", "res_id"));
+    const hasSelectionStatusColumn =
+      hasSelectionTable &&
+      (await columnExists("job_resume_selection", "selection_status"));
+    const hasSelectionNoteColumn =
+      hasSelectionTable &&
+      (await columnExists("job_resume_selection", "selection_note"));
+    const hasSelectedByAdminColumn =
+      hasSelectionTable &&
+      (await columnExists("job_resume_selection", "selected_by_admin"));
+    const hasSelectedAtColumn =
+      hasSelectionTable &&
+      (await columnExists("job_resume_selection", "selected_at"));
+    const hasJoiningNoteColumn =
+      hasSelectionTable &&
+      (await columnExists("job_resume_selection", "joining_note"));
+    const hasSelectionJoin =
+      hasSelectionJobJidColumn && hasSelectionResIdColumn;
     const hasExtraInfoTable = await tableExists("extra_info");
     const hasSubmittedReasonColumn =
       hasExtraInfoTable &&
@@ -554,35 +599,55 @@ router.get("/api/admin/candidate-resumes", async (req, res) => {
     const hasVerifiedReasonColumn =
       hasExtraInfoTable &&
       (await columnExists("extra_info", "verified_reason"));
-    const applicantNameSelect = "c.name AS applicantName,";
-    const priorExperienceSelect = "c.experience AS hasPriorExperience,";
-    const experienceIndustrySelect = "c.industry AS experienceIndustry,";
+    const applicantNameSelect = hasCandidateNameColumn
+      ? "c.name AS applicantName,"
+      : "NULL AS applicantName,";
+    const priorExperienceSelect = hasCandidateExperienceColumn
+      ? "c.experience AS hasPriorExperience,"
+      : "NULL AS hasPriorExperience,";
+    const experienceIndustrySelect = hasCandidateIndustryColumn
+      ? "c.industry AS experienceIndustry,"
+      : "NULL AS experienceIndustry,";
     const experienceIndustryOtherSelect = "NULL AS experienceIndustryOther,";
-    const currentSalarySelect = "c.prev_sal AS currentSalary,";
-    const expectedSalarySelect = "c.expected_sal AS expectedSalary,";
-    const noticePeriodSelect = "c.notice_period AS noticePeriod,";
-    const yearsOfExperienceSelect = "c.years_of_exp AS yearsOfExperience,";
-    const applicantEmailSelect = "c.email AS applicantEmail,";
+    const currentSalarySelect = hasCandidatePrevSalaryColumn
+      ? "c.prev_sal AS currentSalary,"
+      : "NULL AS currentSalary,";
+    const expectedSalarySelect = hasCandidateExpectedSalaryColumn
+      ? "c.expected_sal AS expectedSalary,"
+      : "NULL AS expectedSalary,";
+    const noticePeriodSelect = hasCandidateNoticePeriodColumn
+      ? "c.notice_period AS noticePeriod,"
+      : "NULL AS noticePeriod,";
+    const yearsOfExperienceSelect = hasCandidateYearsOfExperienceColumn
+      ? "c.years_of_exp AS yearsOfExperience,"
+      : "NULL AS yearsOfExperience,";
+    const applicantEmailSelect = hasCandidateEmailColumn
+      ? "c.email AS applicantEmail,"
+      : "NULL AS applicantEmail,";
     const atsScoreSelect = hasAtsScoreColumn
       ? "rd.ats_score AS atsScore,"
       : "NULL AS atsScore,";
     const atsMatchSelect = hasAtsMatchColumn
       ? "rd.ats_match_percentage AS atsMatchPercentage,"
       : "NULL AS atsMatchPercentage,";
-    const walkInDateSelect = "c.walk_in AS walkInDate,";
-    const resumeJoiningDateSelect = "c.joining_date AS resumeJoiningDate,";
+    const walkInDateSelect = hasCandidateWalkInColumn
+      ? "c.walk_in AS walkInDate,"
+      : "NULL AS walkInDate,";
+    const resumeJoiningDateSelect = hasCandidateJoiningDateColumn
+      ? "c.joining_date AS resumeJoiningDate,"
+      : "NULL AS resumeJoiningDate,";
     const jobDescriptionSelect = hasJobDescriptionColumn
       ? "j.job_description AS jobDescription,"
       : "NULL AS jobDescription,";
-    const selectionSelect = hasSelectionTable
-      ? `jrs.selection_status AS selectionStatus,
-        jrs.selection_note AS selectionNote,
-        jrs.selected_by_admin AS selectedByAdmin,
-        jrs.selected_at AS selectedAt,
+    const selectionSelect = hasSelectionJoin
+      ? `${hasSelectionStatusColumn ? "jrs.selection_status AS selectionStatus," : "NULL AS selectionStatus,"}
+        ${hasSelectionNoteColumn ? "jrs.selection_note AS selectionNote," : "NULL AS selectionNote,"}
+        ${hasSelectedByAdminColumn ? "jrs.selected_by_admin AS selectedByAdmin," : "NULL AS selectedByAdmin,"}
+        ${hasSelectedAtColumn ? "jrs.selected_at AS selectedAt," : "NULL AS selectedAt,"}
         ${walkInDateSelect}
         ${resumeJoiningDateSelect}
-        c.joining_date AS joiningDate,
-        jrs.joining_note AS joiningNote`
+        ${hasCandidateJoiningDateColumn ? "c.joining_date AS joiningDate," : "NULL AS joiningDate,"}
+        ${hasJoiningNoteColumn ? "jrs.joining_note AS joiningNote" : "NULL AS joiningNote"}`
       : `NULL AS selectionStatus,
         NULL AS selectionNote,
         NULL AS selectedByAdmin,
@@ -591,7 +656,7 @@ router.get("/api/admin/candidate-resumes", async (req, res) => {
         ${resumeJoiningDateSelect}
         NULL AS joiningDate,
         NULL AS joiningNote`;
-    const selectionJoin = hasSelectionTable
+    const selectionJoin = hasSelectionJoin
       ? `LEFT JOIN job_resume_selection jrs
         ON jrs.job_jid = rd.job_jid
        AND jrs.res_id = rd.res_id`
@@ -709,12 +774,19 @@ router.get("/api/admin/candidate-resumes", async (req, res) => {
       })),
     });
   } catch (error) {
+    console.error("GET /api/admin/candidate-resumes error:", error);
     return res.status(500).json({
       message: "Failed to fetch candidate submitted resumes.",
       error: error.message,
     });
   }
-});
+};
+
+router.get("/api/admin/candidate-resumes", getCandidateResumesHandler);
+router.get(
+  "/api/admin/candidate-submitted-resumes",
+  getCandidateResumesHandler,
+);
 
 router.post("/api/admin/resumes/:resId/accept", async (req, res) => {
   if (!ensureAdminAuthorized(req, res)) return;

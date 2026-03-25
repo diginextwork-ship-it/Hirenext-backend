@@ -561,6 +561,62 @@ const ensureCandidateTable = async () => {
     await pool.query("ALTER TABLE candidate MODIFY COLUMN revenue INT NULL");
   }
 
+  // Legacy databases may have candidate rows without res_id.
+  if (!(await columnExists("candidate", "res_id"))) {
+    await pool.query(
+      `ALTER TABLE candidate ADD COLUMN res_id ${resumeIdColumnSql} NULL AFTER cid`,
+    );
+  }
+
+  if (await columnExists("candidate", "resume_id")) {
+    await pool.query(
+      "UPDATE candidate SET res_id = resume_id WHERE res_id IS NULL AND resume_id IS NOT NULL",
+    );
+  }
+
+  const legacyCandidateColumns = [
+    { name: "job_jid", sql: `${jobJidColumnSql} NULL` },
+    { name: "recruiter_rid", sql: `${recruiterRidColumnSql} NULL` },
+    { name: "rid", sql: `${recruiterRidColumnSql} NULL` },
+    { name: "name", sql: "VARCHAR(100) NULL" },
+    { name: "phone", sql: "VARCHAR(15) NULL" },
+    { name: "email", sql: "VARCHAR(100) NULL" },
+    { name: "level_of_edu", sql: "VARCHAR(50) NULL" },
+    { name: "board_uni", sql: "VARCHAR(100) NULL" },
+    { name: "institution_name", sql: "VARCHAR(190) NULL" },
+    { name: "age", sql: "INT NULL" },
+    { name: "industry", sql: "VARCHAR(50) NULL" },
+    { name: "expected_sal", sql: "INT NULL" },
+    { name: "prev_sal", sql: "INT NULL" },
+    { name: "notice_period", sql: "INT NULL" },
+    { name: "experience", sql: "TINYINT(1) NULL" },
+    { name: "years_of_exp", sql: "VARCHAR(20) NULL" },
+    { name: "joining_date", sql: "DATE NULL" },
+    { name: "walk_in", sql: "DATE NULL" },
+    { name: "revenue", sql: "INT NULL" },
+  ];
+
+  for (const column of legacyCandidateColumns) {
+    if (!(await columnExists("candidate", column.name))) {
+      await pool.query(
+        `ALTER TABLE candidate ADD COLUMN ${column.name} ${column.sql}`,
+      );
+    }
+  }
+
+  await pool.query(
+    `UPDATE candidate c
+     SET c.res_id = CASE
+       WHEN LEFT(c.cid, 2) = 'c_' THEN
+         CASE
+           WHEN SUBSTRING(c.cid, 3) REGEXP '^[0-9]+$' THEN CONCAT('res_', SUBSTRING(c.cid, 3))
+           ELSE SUBSTRING(c.cid, 3)
+         END
+       ELSE c.res_id
+     END
+     WHERE c.res_id IS NULL`,
+  );
+
   const hasApplicationsTable = await tableExists("applications");
   const hasExtraInfoTable = await tableExists("extra_info");
   const hasSelectionTable = await tableExists("job_resume_selection");
@@ -726,7 +782,13 @@ const ensureCandidateTable = async () => {
     ${hasExtraInfoTable ? "LEFT JOIN extra_info ei ON ei.res_id = rd.res_id OR (ei.resume_id = rd.res_id AND ei.res_id IS NULL)" : ""}
     ${hasSelectionTable ? "LEFT JOIN job_resume_selection jrs ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id" : ""}
     WHERE NOT EXISTS (
-      SELECT 1 FROM candidate c WHERE c.res_id = rd.res_id
+      SELECT 1
+      FROM candidate c
+      WHERE c.res_id = rd.res_id
+         OR c.cid = CASE
+           WHEN rd.res_id LIKE 'res_%' THEN LEFT(CONCAT('c_', SUBSTRING(rd.res_id, 5)), 20)
+           ELSE LEFT(CONCAT('c_', rd.res_id), 20)
+         END
     )`,
   );
 
