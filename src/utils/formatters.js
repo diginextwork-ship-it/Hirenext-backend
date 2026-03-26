@@ -78,6 +78,21 @@ const dedupeStringList = (values) => {
   return result;
 };
 
+const pickFirstFilled = (...values) => {
+  for (const value of values) {
+    if (value === undefined || value === null) continue;
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed) return trimmed;
+      continue;
+    }
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    const normalized = String(value).trim();
+    if (normalized) return value;
+  }
+  return undefined;
+};
+
 const buildAutofillFromParsedData = (parsedData) => {
   const safeData =
     parsedData && typeof parsedData === "object" && !Array.isArray(parsedData)
@@ -129,9 +144,26 @@ const buildAutofillFromParsedData = (parsedData) => {
     ageValue || toAgeFromDob(safeData.dob || safeData.date_of_birth);
 
   return {
-    name: pickString(safeData.full_name, safeData.fullName, safeData.name),
+    name: pickString(
+      safeData.full_name,
+      safeData.fullName,
+      safeData.name,
+      safeData.candidate_name,
+      safeData.candidateName,
+      safeData.applicant_name,
+      safeData.applicantName,
+      safeData.personal_info?.name,
+      safeData.personalInfo?.name,
+    ),
     phone: normalizePhoneForStorage(
-      pickString(safeData.phone, safeData.phone_number),
+      pickString(
+        safeData.phone,
+        safeData.phone_number,
+        safeData.phoneNumber,
+        safeData.mobile,
+        safeData.mobile_number,
+        safeData.mobileNumber,
+      ),
     ),
     email: pickString(safeData.email, safeData.mail).toLowerCase(),
     latestEducationLevel: pickFromEducation(
@@ -157,6 +189,106 @@ const buildAutofillFromParsedData = (parsedData) => {
       "school",
     ),
     age: derivedAge,
+  };
+};
+
+const extractCandidateSnapshot = ({ source, parsedData, fallback } = {}) => {
+  const safeSource =
+    source && typeof source === "object" && !Array.isArray(source) ? source : {};
+  const safeFallback =
+    fallback && typeof fallback === "object" && !Array.isArray(fallback)
+      ? fallback
+      : {};
+  const autofill = buildAutofillFromParsedData(parsedData);
+  const pickAlias = (...keys) =>
+    pickFirstFilled(...keys.map((key) => safeSource[key]));
+  const rawAge = pickFirstFilled(
+    pickAlias("age"),
+    autofill.age,
+    safeFallback.age,
+  );
+
+  return {
+    name: String(
+      pickFirstFilled(
+        pickAlias(
+          "candidate_name",
+          "candidateName",
+          "applicant_name",
+          "applicantName",
+          "name",
+        ),
+        autofill.name,
+        safeFallback.name,
+      ) || "",
+    ).trim(),
+    phone: normalizePhoneForStorage(
+      pickFirstFilled(
+        pickAlias(
+          "candidate_phone",
+          "candidatePhone",
+          "phone",
+          "phone_number",
+          "phoneNumber",
+          "mobile",
+          "mobile_number",
+          "mobileNumber",
+        ),
+        autofill.phone,
+        safeFallback.phone,
+      ) || "",
+    ),
+    email: String(
+      pickFirstFilled(
+        pickAlias(
+          "candidate_email",
+          "candidateEmail",
+          "applicant_email",
+          "applicantEmail",
+          "email",
+        ),
+        autofill.email,
+        safeFallback.email,
+      ) || "",
+    )
+      .trim()
+      .toLowerCase(),
+    levelOfEdu: String(
+      pickFirstFilled(
+        pickAlias("latest_education_level"),
+        autofill.latestEducationLevel,
+        safeFallback.levelOfEdu,
+      ) || "",
+    ).trim(),
+    boardUni: String(
+      pickFirstFilled(
+        pickAlias("board_university"),
+        autofill.boardUniversity,
+        safeFallback.boardUni,
+      ) || "",
+    ).trim(),
+    institutionName: String(
+      pickFirstFilled(
+        pickAlias("institution_name"),
+        autofill.institutionName,
+        safeFallback.institutionName,
+      ) || "",
+    ).trim(),
+    age: toNumberOrNull(rawAge),
+    jobJid:
+      String(
+        pickFirstFilled(
+          pickAlias("job_jid", "jid"),
+          safeFallback.jobJid,
+        ) || "",
+      ).trim() || null,
+    recruiterRid:
+      String(
+        pickFirstFilled(
+          pickAlias("recruiter_rid"),
+          safeFallback.recruiterRid,
+        ) || "",
+      ).trim() || null,
   };
 };
 
@@ -192,6 +324,8 @@ module.exports = {
   escapeLike,
   sha256Hex,
   dedupeStringList,
+  pickFirstFilled,
   buildAutofillFromParsedData,
+  extractCandidateSnapshot,
   buildJobAtsContext,
 };

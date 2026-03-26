@@ -29,9 +29,11 @@ const {
   normalizeAccessMode,
   normalizePhoneForStorage,
   safeJsonOrNull,
+  parseJsonField,
   sha256Hex,
   dedupeStringList,
   buildAutofillFromParsedData,
+  extractCandidateSnapshot,
   buildJobAtsContext,
 } = require("../utils/formatters");
 
@@ -924,6 +926,7 @@ router.post(
             rd.res_id AS resId,
             rd.job_jid AS jobJid,
             rd.rid AS recruiterRid,
+            rd.ats_raw_json AS atsRawJson,
             c.name AS candidateName,
             c.email AS email
            FROM resumes_data rd
@@ -946,6 +949,23 @@ router.post(
         }
 
         const recruiterRid = toTrimmedString(resumeRows[0].recruiterRid);
+        const parsedResumePayload = parseJsonField(resumeRows[0].atsRawJson);
+        const statusCandidateSnapshot = extractCandidateSnapshot({
+          source: {
+            candidate_name: resumeRows[0].candidateName,
+            email: resumeRows[0].email,
+            job_jid: resumeRows[0].jobJid,
+            recruiter_rid: recruiterRid,
+          },
+          parsedData:
+            parsedResumePayload?.parsed_data ||
+            parsedResumePayload?.parsedData ||
+            parsedResumePayload,
+          fallback: {
+            jobJid: resumeRows[0].jobJid,
+            recruiterRid,
+          },
+        });
         const statusReasonMap = {
           verified: "verifiedReason",
           walk_in: "walkInReason",
@@ -1018,6 +1038,23 @@ router.post(
               toTrimmedString(resumeRows[0].candidateName) || undefined,
             email: toTrimmedString(resumeRows[0].email) || undefined,
             [reasonField]: statusReasonValue,
+          });
+        }
+
+        if (statusCandidateSnapshot.name) {
+          await upsertCandidateFields(connection, {
+            resId: normalizedResId,
+            cid: undefined,
+            jobJid: req.ownedJob.jid,
+            recruiterRid,
+            name: statusCandidateSnapshot.name,
+            phone: statusCandidateSnapshot.phone || undefined,
+            email: statusCandidateSnapshot.email || undefined,
+            levelOfEdu: statusCandidateSnapshot.levelOfEdu || undefined,
+            boardUni: statusCandidateSnapshot.boardUni || undefined,
+            institutionName:
+              statusCandidateSnapshot.institutionName || undefined,
+            age: statusCandidateSnapshot.age,
           });
         }
 
@@ -1142,6 +1179,7 @@ router.post(
             rd.res_id AS resId,
             rd.job_jid AS jobJid,
             rd.rid AS recruiterRid,
+            rd.ats_raw_json AS atsRawJson,
             c.name AS candidateName,
             c.email AS email
            FROM resumes_data rd
@@ -1159,6 +1197,23 @@ router.post(
         }
 
         const recruiterRid = toTrimmedString(resumeRows[0].recruiterRid);
+        const parsedResumePayload = parseJsonField(resumeRows[0].atsRawJson);
+        const leftStatusCandidateSnapshot = extractCandidateSnapshot({
+          source: {
+            candidate_name: resumeRows[0].candidateName,
+            email: resumeRows[0].email,
+            job_jid: resumeRows[0].jobJid,
+            recruiter_rid: recruiterRid,
+          },
+          parsedData:
+            parsedResumePayload?.parsed_data ||
+            parsedResumePayload?.parsedData ||
+            parsedResumePayload,
+          fallback: {
+            jobJid: resumeRows[0].jobJid,
+            recruiterRid,
+          },
+        });
         const authRole = normalizeRoleAlias(req.auth?.role);
 
         // Recruiters can only move their own candidates
@@ -1208,6 +1263,23 @@ router.post(
           email: toTrimmedString(resumeRows[0].email) || undefined,
           leftReason: normalizedNote,
         });
+
+        if (leftStatusCandidateSnapshot.name) {
+          await upsertCandidateFields(connection, {
+            resId: normalizedResId,
+            cid: undefined,
+            jobJid,
+            recruiterRid,
+            name: leftStatusCandidateSnapshot.name,
+            phone: leftStatusCandidateSnapshot.phone || undefined,
+            email: leftStatusCandidateSnapshot.email || undefined,
+            levelOfEdu: leftStatusCandidateSnapshot.levelOfEdu || undefined,
+            boardUni: leftStatusCandidateSnapshot.boardUni || undefined,
+            institutionName:
+              leftStatusCandidateSnapshot.institutionName || undefined,
+            age: leftStatusCandidateSnapshot.age,
+          });
+        }
 
         if (recruiterRid) {
           await connection.query(

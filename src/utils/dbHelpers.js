@@ -42,7 +42,9 @@ const getTableColumns = async (tableName, connection = pool) => {
     rows.map((row) =>
       String(
         row.column_name ?? row.COLUMN_NAME ?? Object.values(row)[0] ?? "",
-      ).trim(),
+      )
+        .trim()
+        .toLowerCase(),
     ),
   );
 };
@@ -301,6 +303,17 @@ const upsertCandidateFields = async (connection, payload) => {
   const columns = await getTableColumns("candidate", connection);
   if (!columns.has("cid") || !columns.has("res_id")) return;
 
+  const normalizedResId = String(payload?.resId || "").trim();
+  const derivedCid = normalizedResId
+    ? normalizedResId.startsWith("res_")
+      ? `c_${normalizedResId.slice(4)}`
+      : ""
+    : "";
+  const effectiveCid =
+    payload?.cid !== undefined && payload?.cid !== null && String(payload.cid).trim()
+      ? String(payload.cid).trim()
+      : derivedCid;
+
   const updates = [];
   const insertColumns = [];
   const insertValues = [];
@@ -320,8 +333,8 @@ const upsertCandidateFields = async (connection, payload) => {
     }
   };
 
-  addColumnValue("cid", payload.cid, { update: false });
-  addColumnValue("res_id", payload.resId, { update: false });
+  addColumnValue("cid", effectiveCid, { update: false });
+  addColumnValue("res_id", normalizedResId || payload.resId, { update: false });
   addColumnValue("job_jid", payload.jobJid);
   addColumnValue("recruiter_rid", payload.recruiterRid);
   addColumnValue("rid", payload.recruiterRid);
@@ -355,23 +368,62 @@ const upsertCandidateFields = async (connection, payload) => {
     return;
   }
 
-  if (payload.cid === undefined || payload.cid === null) {
-    if (!payload.resId || updateAssignments.length === 0) return;
-    await connection.query(
-      `UPDATE candidate
-       SET ${updateAssignments.join(", ")}
-       WHERE res_id = ?`,
-      [...updateValues, payload.resId],
-    );
-    return;
-  }
+  const canInsertCandidate =
+    Boolean(effectiveCid) &&
+    Boolean(normalizedResId) &&
+    insertColumns.includes("name");
 
-  await connection.query(
-    `INSERT INTO candidate (${insertColumns.map((column) => `\`${column}\``).join(", ")})
-     VALUES (${placeholders.join(", ")})
-     ON DUPLICATE KEY UPDATE ${updates.join(", ")}`,
-    insertValues,
-  );
+  try {
+    if (!canInsertCandidate) {
+      if (!normalizedResId || updateAssignments.length === 0) return;
+      const [result] = await connection.query(
+        `UPDATE candidate
+         SET ${updateAssignments.join(", ")}
+         WHERE res_id = ?`,
+        [...updateValues, normalizedResId],
+      );
+
+      if (
+        String(process.env.DEBUG_CANDIDATE_UPSERT || "").trim() === "1" &&
+        result
+      ) {
+        console.log("[candidate] Updated candidate by res_id", {
+          resId: normalizedResId,
+          affectedRows: result.affectedRows,
+          changedRows: result.changedRows,
+        });
+      }
+      return;
+    }
+
+    const [result] = await connection.query(
+      `INSERT INTO candidate (${insertColumns.map((column) => `\`${column}\``).join(", ")})
+       VALUES (${placeholders.join(", ")})
+       ON DUPLICATE KEY UPDATE ${updates.join(", ")}`,
+      insertValues,
+    );
+
+    if (String(process.env.DEBUG_CANDIDATE_UPSERT || "").trim() === "1") {
+      console.log("[candidate] Upserted candidate", {
+        cid: effectiveCid,
+        resId: normalizedResId,
+        affectedRows: result?.affectedRows,
+        changedRows: result?.changedRows,
+        warningStatus: result?.warningStatus,
+      });
+    }
+  } catch (error) {
+    console.error("[candidate] Failed to upsert candidate", {
+      resId: normalizedResId || null,
+      cid: effectiveCid || null,
+      jobJid: payload?.jobJid || null,
+      recruiterRid: payload?.recruiterRid || null,
+      message: error.message,
+      code: error.code || null,
+      sqlMessage: error.sqlMessage || null,
+    });
+    throw error;
+  }
 };
 
 module.exports = {

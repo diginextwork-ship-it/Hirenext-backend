@@ -32,7 +32,7 @@ const {
   parseJsonField,
   escapeLike,
   sha256Hex,
-  buildAutofillFromParsedData,
+  extractCandidateSnapshot,
   buildJobAtsContext,
 } = require("../utils/formatters");
 
@@ -677,7 +677,7 @@ router.post(
 
     const recruiterRid = String(req.body?.recruiter_rid || "").trim();
     const authRid = String(req.auth?.rid || "").trim();
-    const safeJobId = normalizeJobJid(req.body?.job_jid);
+    const safeJobId = normalizeJobJid(req.body?.job_jid ?? req.body?.jid);
     const resumeSource = normalizeResumeSource(req.body?.source);
 
     if (!authRid || !recruiterRid || authRid !== recruiterRid) {
@@ -796,29 +796,22 @@ router.post(
         });
       }
 
-      const autofill = buildAutofillFromParsedData(parsed.parsedData);
-      const candidateName = String(
-        req.body?.candidate_name ||
-          autofill.name ||
-          extractApplicantName(parsed.parsedData) ||
-          "",
-      ).trim();
-      const phone = normalizePhoneForStorage(
-        req.body?.phone || autofill.phone || "",
-      );
-      const email = String(req.body?.email || autofill.email || "")
-        .trim()
-        .toLowerCase();
-      const latestEducationLevel = String(
-        req.body?.latest_education_level || autofill.latestEducationLevel || "",
-      ).trim();
-      const boardUniversity = String(
-        req.body?.board_university || autofill.boardUniversity || "",
-      ).trim();
-      const institutionName = String(
-        req.body?.institution_name || autofill.institutionName || "",
-      ).trim();
-      const age = toNumberOrNull(req.body?.age ?? autofill.age);
+      const candidateSnapshot = extractCandidateSnapshot({
+        source: req.body,
+        parsedData: parsed.parsedData,
+        fallback: {
+          name: extractApplicantName(parsed.parsedData) || "",
+          jobJid: safeJobId,
+          recruiterRid,
+        },
+      });
+      const candidateName = candidateSnapshot.name;
+      const phone = candidateSnapshot.phone;
+      const email = candidateSnapshot.email;
+      const latestEducationLevel = candidateSnapshot.levelOfEdu;
+      const boardUniversity = candidateSnapshot.boardUni;
+      const institutionName = candidateSnapshot.institutionName;
+      const age = candidateSnapshot.age;
       const submittedReason = String(
         req.body?.submitted_reason ??
           req.body?.submittedReason ??
@@ -1334,6 +1327,7 @@ router.get(
         rd.res_id AS resId,
         rd.job_jid AS jobJid,
         c.name AS candidateName,
+        c.phone AS candidatePhone,
         c.walk_in AS walkInDate,
         rd.resume_filename AS resumeFilename,
         rd.resume_type AS resumeType,
@@ -1368,6 +1362,7 @@ router.get(
           return {
             ...row,
             candidateName: row.candidateName || null,
+            candidatePhone: row.candidatePhone || null,
             atsScore: row.atsScore === null ? null : Number(row.atsScore),
             atsMatchPercentage:
               row.atsMatchPercentage === null
@@ -1672,6 +1667,7 @@ router.get(
         a.res_id AS resId,
         a.job_jid AS jobJid,
         c.name AS candidateName,
+        c.phone AS candidatePhone,
         c.email,
         a.ats_score AS atsScore,
         a.ats_match_percentage AS atsMatchPercentage,
@@ -1692,6 +1688,7 @@ router.get(
         applications: rows.map((row) => ({
           id: row.id,
           candidateName: row.candidateName,
+          candidatePhone: row.candidatePhone || null,
           email: row.email,
           jobJid: row.jobJid === null ? null : Number(row.jobJid),
           atsScore: row.atsScore === null ? null : Number(row.atsScore),
@@ -1782,6 +1779,7 @@ router.post(
           rd.res_id AS resId,
           rd.job_jid AS jobJid,
           rd.rid AS recruiterRid,
+          rd.ats_raw_json AS atsRawJson,
           c.name AS candidateName,
           c.email AS email,
           COALESCE(jrs.selection_status, 'pending') AS currentStatus
@@ -1799,6 +1797,23 @@ router.post(
       }
 
       const resume = resumeRows[0];
+      const parsedResumePayload = parseJsonField(resume.atsRawJson);
+      const statusCandidateSnapshot = extractCandidateSnapshot({
+        source: {
+          candidate_name: resume.candidateName,
+          email: resume.email,
+          job_jid: resume.jobJid,
+          recruiter_rid: resume.recruiterRid,
+        },
+        parsedData:
+          parsedResumePayload?.parsed_data ||
+          parsedResumePayload?.parsedData ||
+          parsedResumePayload,
+        fallback: {
+          jobJid: resume.jobJid,
+          recruiterRid: resume.recruiterRid,
+        },
+      });
       const currentStatus = String(
         resume.currentStatus || "pending",
       ).toLowerCase();
@@ -1831,6 +1846,23 @@ router.post(
             reason,
           ],
         );
+
+        if (statusCandidateSnapshot.name) {
+          await upsertCandidateFields(connection, {
+            resId,
+            cid: undefined,
+            jobJid: resume.jobJid || undefined,
+            recruiterRid: resume.recruiterRid || undefined,
+            name: statusCandidateSnapshot.name,
+            phone: statusCandidateSnapshot.phone || undefined,
+            email: statusCandidateSnapshot.email || undefined,
+            levelOfEdu: statusCandidateSnapshot.levelOfEdu || undefined,
+            boardUni: statusCandidateSnapshot.boardUni || undefined,
+            institutionName:
+              statusCandidateSnapshot.institutionName || undefined,
+            age: statusCandidateSnapshot.age,
+          });
+        }
 
         if (targetStatus === "walk_in") {
           await upsertCandidateFields(connection, {

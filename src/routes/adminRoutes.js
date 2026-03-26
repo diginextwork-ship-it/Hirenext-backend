@@ -14,7 +14,12 @@ const {
   upsertExtraInfoFields,
   upsertCandidateFields,
 } = require("../utils/dbHelpers");
-const { toMoneyNumber, normalizeJobJid } = require("../utils/formatters");
+const {
+  toMoneyNumber,
+  normalizeJobJid,
+  parseJsonField,
+  extractCandidateSnapshot,
+} = require("../utils/formatters");
 
 const router = express.Router();
 const ADMIN_API_KEY = String(process.env.ADMIN_API_KEY || "admin123");
@@ -531,6 +536,7 @@ const getCandidateResumesHandler = async (req, res) => {
     }
 
     const hasCandidateNameColumn = await columnExists("candidate", "name");
+    const hasCandidatePhoneColumn = await columnExists("candidate", "phone");
     const hasCandidateEmailColumn = await columnExists("candidate", "email");
     const hasCandidateExperienceColumn = await columnExists(
       "candidate",
@@ -603,6 +609,9 @@ const getCandidateResumesHandler = async (req, res) => {
     const applicantNameSelect = hasCandidateNameColumn
       ? "c.name AS applicantName,"
       : "NULL AS applicantName,";
+    const applicantPhoneSelect = hasCandidatePhoneColumn
+      ? "c.phone AS applicantPhone,"
+      : "NULL AS applicantPhone,";
     const priorExperienceSelect = hasCandidateExperienceColumn
       ? "c.experience AS hasPriorExperience,"
       : "NULL AS hasPriorExperience,";
@@ -679,6 +688,7 @@ const getCandidateResumesHandler = async (req, res) => {
         rd.res_id AS resId,
         rd.job_jid AS jobJid,
         ${applicantNameSelect}
+        ${applicantPhoneSelect}
         ${applicantEmailSelect}
         ${priorExperienceSelect}
         ${experienceIndustrySelect}
@@ -715,6 +725,7 @@ const getCandidateResumesHandler = async (req, res) => {
         resId: row.resId,
         jobJid: row.jobJid ? String(row.jobJid).trim() : null,
         applicantName: row.applicantName || null,
+        applicantPhone: row.applicantPhone || null,
         applicantEmail: row.applicantEmail || null,
         hasPriorExperience:
           row.hasPriorExperience === null ||
@@ -1002,6 +1013,8 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
       `SELECT
         rd.res_id AS resId,
         rd.rid AS rid,
+        c.name AS candidateName,
+        c.phone AS candidatePhone,
         r.name AS recruiterName,
         r.email AS recruiterEmail,
         rd.resume_filename AS resumeFilename,
@@ -1042,6 +1055,8 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
       resumes: rows.map((row) => ({
         resId: row.resId,
         rid: row.rid,
+        candidateName: row.candidateName || null,
+        candidatePhone: row.candidatePhone || null,
         recruiterName: row.recruiterName,
         recruiterEmail: row.recruiterEmail,
         resumeFilename: row.resumeFilename,
@@ -2055,11 +2070,9 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
     });
   }
 
-  // Reason is required for all statuses except pending_joining, joined, and billed
+  const reasonRequiredStatuses = new Set(["rejected", "dropout", "left"]);
   if (
-    !["walk_in", "further", "pending_joining", "joined", "billed"].includes(
-      newStatus,
-    ) &&
+    reasonRequiredStatuses.has(newStatus) &&
     !reason
   ) {
     return res
@@ -2100,6 +2113,9 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
         rd.res_id AS resId,
         rd.rid,
         rd.job_jid AS jobJid,
+        rd.ats_raw_json AS atsRawJson,
+        c.name AS candidateName,
+        c.email AS candidateEmail,
         c.joining_date AS currentJoiningDate,
         COALESCE(jrs.selection_status, '') AS currentStatus
       FROM resumes_data rd
@@ -2118,6 +2134,23 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
     }
 
     const resume = resumeRows[0];
+    const parsedResumePayload = parseJsonField(resume.atsRawJson);
+    const adminStatusCandidateSnapshot = extractCandidateSnapshot({
+      source: {
+        candidate_name: resume.candidateName,
+        email: resume.candidateEmail,
+        job_jid: resume.jobJid,
+        recruiter_rid: resume.rid,
+      },
+      parsedData:
+        parsedResumePayload?.parsed_data ||
+        parsedResumePayload?.parsedData ||
+        parsedResumePayload,
+      fallback: {
+        jobJid: resume.jobJid,
+        recruiterRid: resume.rid,
+      },
+    });
     const currentStatus = String(resume.currentStatus || "")
       .trim()
       .toLowerCase();
@@ -2173,6 +2206,15 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
     await upsertCandidateFields(connection, {
       resId: normalizedResId,
       cid: undefined,
+      jobJid: resume.jobJid || undefined,
+      recruiterRid: resume.rid || undefined,
+      name: adminStatusCandidateSnapshot.name || undefined,
+      phone: adminStatusCandidateSnapshot.phone || undefined,
+      email: adminStatusCandidateSnapshot.email || undefined,
+      levelOfEdu: adminStatusCandidateSnapshot.levelOfEdu || undefined,
+      boardUni: adminStatusCandidateSnapshot.boardUni || undefined,
+      institutionName: adminStatusCandidateSnapshot.institutionName || undefined,
+      age: adminStatusCandidateSnapshot.age,
       joiningDate: candidateJoiningDateValue,
       revenue:
         newStatus === "pending_joining" || newStatus === "billed"
@@ -2229,6 +2271,7 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
       data: {
         resId: normalizedResId,
         status: newStatus,
+        reason: newStatus === "joined" ? joinedReason : effectiveReason || null,
         joining_date: joiningDateValue,
         joinedReason: newStatus === "joined" ? joinedReason : null,
         joiningNote: newStatus === "joined" ? joinedReason : null,
