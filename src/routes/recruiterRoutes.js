@@ -20,6 +20,7 @@ const {
   fetchExtraInfoByResumeIds,
   upsertExtraInfoFields,
   upsertCandidateFields,
+  addCandidateBillIntakeEntry,
 } = require("../utils/dbHelpers");
 const {
   toNumberOrNull,
@@ -1934,6 +1935,10 @@ router.post(
              ON DUPLICATE KEY UPDATE ${updateParts.join(", ")}`,
             [rid],
           );
+        }
+
+        if (targetStatus === "billed" && currentStatus !== "billed") {
+          await addCandidateBillIntakeEntry(connection, resId);
         }
 
         await connection.commit();

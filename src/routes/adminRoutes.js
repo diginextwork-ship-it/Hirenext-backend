@@ -13,6 +13,7 @@ const {
   constraintExists,
   upsertExtraInfoFields,
   upsertCandidateFields,
+  addCandidateBillIntakeEntry,
 } = require("../utils/dbHelpers");
 const {
   toMoneyNumber,
@@ -587,7 +588,8 @@ const getCandidateResumesHandler = async (req, res) => {
       hasSelectionTable &&
       (await columnExists("job_resume_selection", "job_jid"));
     const hasSelectionResIdColumn =
-      hasSelectionTable && (await columnExists("job_resume_selection", "res_id"));
+      hasSelectionTable &&
+      (await columnExists("job_resume_selection", "res_id"));
     const hasSelectionStatusColumn =
       hasSelectionTable &&
       (await columnExists("job_resume_selection", "selection_status"));
@@ -610,8 +612,7 @@ const getCandidateResumesHandler = async (req, res) => {
       hasExtraInfoTable &&
       (await columnExists("extra_info", "verified_reason"));
     const hasJoinedReasonColumn =
-      hasExtraInfoTable &&
-      (await columnExists("extra_info", "joined_reason"));
+      hasExtraInfoTable && (await columnExists("extra_info", "joined_reason"));
     const applicantNameSelect = hasCandidateNameColumn
       ? "c.name AS applicantName,"
       : "NULL AS applicantName,";
@@ -992,8 +993,7 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
       hasExtraInfoTable &&
       (await columnExists("extra_info", "verified_reason"));
     const hasJoinedReasonColumn =
-      hasExtraInfoTable &&
-      (await columnExists("extra_info", "joined_reason"));
+      hasExtraInfoTable && (await columnExists("extra_info", "joined_reason"));
 
     const atsScoreSelect = hasAtsScoreColumn
       ? "rd.ats_score AS atsScore,"
@@ -2075,10 +2075,7 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
   }
 
   const reasonRequiredStatuses = new Set(["rejected", "dropout", "left"]);
-  if (
-    reasonRequiredStatuses.has(newStatus) &&
-    !reason
-  ) {
+  if (reasonRequiredStatuses.has(newStatus) && !reason) {
     return res
       .status(400)
       .json({ message: "reason is required for this status transition." });
@@ -2215,7 +2212,8 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
       email: adminStatusCandidateSnapshot.email || undefined,
       levelOfEdu: adminStatusCandidateSnapshot.levelOfEdu || undefined,
       boardUni: adminStatusCandidateSnapshot.boardUni || undefined,
-      institutionName: adminStatusCandidateSnapshot.institutionName || undefined,
+      institutionName:
+        adminStatusCandidateSnapshot.institutionName || undefined,
       age: adminStatusCandidateSnapshot.age,
       joiningDate: candidateJoiningDateValue,
       revenue:
@@ -2249,23 +2247,28 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
     }
 
     // Credit points_per_joining to the recruiter when candidate reaches billed status
-    if (newStatus === "billed" && resume.rid && resume.jobJid) {
-      const [jobPtsRows] = await connection.query(
-        "SELECT COALESCE(points_per_joining, 0) AS pts FROM jobs WHERE jid = ? LIMIT 1",
-        [resume.jobJid],
-      );
-      const pts = Number(jobPtsRows?.[0]?.pts) || 0;
-      if (pts > 0) {
-        await connection.query(
-          "UPDATE recruiter SET points = COALESCE(points, 0) + ? WHERE rid = ?",
-          [pts, resume.rid],
+    if (newStatus === "billed") {
+      // Credit points_per_joining to the recruiter when candidate reaches billed status
+      if (resume.rid && resume.jobJid) {
+        const [jobPtsRows] = await connection.query(
+          "SELECT COALESCE(points_per_joining, 0) AS pts FROM jobs WHERE jid = ? LIMIT 1",
+          [resume.jobJid],
         );
-        await connection.query(
-          `INSERT INTO recruiter_points_log (recruiter_rid, job_jid, res_id, points, reason)
-           VALUES (?, ?, ?, ?, 'billed')`,
-          [resume.rid, resume.jobJid, normalizedResId, pts],
-        );
+        const pts = Number(jobPtsRows?.[0]?.pts) || 0;
+        if (pts > 0) {
+          await connection.query(
+            "UPDATE recruiter SET points = COALESCE(points, 0) + ? WHERE rid = ?",
+            [pts, resume.rid],
+          );
+          await connection.query(
+            `INSERT INTO recruiter_points_log (recruiter_rid, job_jid, res_id, points, reason)
+             VALUES (?, ?, ?, ?, 'billed')`,
+            [resume.rid, resume.jobJid, normalizedResId, pts],
+          );
+        }
       }
+
+      await addCandidateBillIntakeEntry(connection, normalizedResId);
     }
 
     await connection.commit();
@@ -2276,7 +2279,9 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
         status: newStatus,
         reason: newStatus === "joined" ? joinedReason : effectiveReason || null,
         verifiedReason:
-          newStatus === CANONICAL_VERIFY_STATUS ? effectiveReason || null : null,
+          newStatus === CANONICAL_VERIFY_STATUS
+            ? effectiveReason || null
+            : null,
         joining_date: joiningDateValue,
         joinedReason: newStatus === "joined" ? joinedReason : null,
         joiningNote: newStatus === "joined" ? joinedReason : null,

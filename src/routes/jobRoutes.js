@@ -21,6 +21,7 @@ const {
   fetchExtraInfoByResumeIds,
   upsertExtraInfoFields,
   upsertCandidateFields,
+  addCandidateBillIntakeEntry,
 } = require("../utils/dbHelpers");
 const {
   toNumberOrNull,
@@ -1114,6 +1115,10 @@ router.post(
           }
         }
 
+        if (normalizedStatus === "billed" && previousStatus !== "billed") {
+          await addCandidateBillIntakeEntry(connection, normalizedResId);
+        }
+
         await connection.commit();
         return res.status(200).json({
           message: "Resume status updated successfully.",
@@ -1981,6 +1986,8 @@ const processBillingTransitions = async () => {
             );
           }
         }
+
+        await addCandidateBillIntakeEntry(connection, row.res_id);
 
         await connection.commit();
         transitioned += 1;

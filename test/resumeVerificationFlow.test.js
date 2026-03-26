@@ -82,6 +82,31 @@ const cleanupTempResume = async (resId) => {
   await pool.query("DELETE FROM resumes_data WHERE res_id = ?", [resId]);
 };
 
+const setCandidateRevenue = async (resId, revenue) => {
+  await pool.query(
+    `INSERT INTO candidate (cid, res_id, job_jid, recruiter_rid, name, revenue)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+      revenue = VALUES(revenue),
+      name = VALUES(name),
+      job_jid = VALUES(job_jid),
+      recruiter_rid = VALUES(recruiter_rid)`,
+    [`c_${resId.replace(/^res_/, "")}`, resId, "JID-5", "hnr-2", "Revenue Candidate", revenue],
+  );
+};
+
+const getLatestMoneySumId = async () => {
+  const [rows] = await pool.query(
+    `SELECT COALESCE(MAX(id), 0) AS maxId
+     FROM money_sum`,
+  );
+  return Number(rows[0]?.maxId) || 0;
+};
+
+const cleanupMoneySumAfter = async (maxId) => {
+  await pool.query("DELETE FROM money_sum WHERE id > ?", [maxId]);
+};
+
 const snapshotStatusRow = async (rid) => {
   const [rows] = await pool.query(
     `SELECT recruiter_rid, submitted, verified, walk_in, \`select\`, reject, joined, dropout, billed, \`left\`, pending_join
@@ -239,6 +264,50 @@ test("legacy verify aliases are normalized to canonical verified on admin and te
   } finally {
     await cleanupTempResume(adminResId);
     await cleanupTempResume(jobResId);
+    await restoreStatusRow("hnr-2", recruiterStatusSnapshot);
+  }
+});
+
+test("team leader billed update creates admin intake entry from candidate revenue", async () => {
+  const resId = buildTempResumeId("billed");
+  const previousMoneySumId = await getLatestMoneySumId();
+  const recruiterStatusSnapshot = await snapshotStatusRow("hnr-2");
+
+  await createTempResume(resId);
+  await setCandidateRevenue(resId, 4321);
+
+  try {
+    const response = await requestJson("/api/jobs/JID-5/resume-statuses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${teamLeaderToken}`,
+      },
+      body: JSON.stringify({
+        resId,
+        status: "billed",
+        billedReason: "candidate billed in regression test",
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body?.data?.status, "billed");
+
+    const [moneyRows] = await pool.query(
+      `SELECT company_rev AS companyRev, reason, entry_type AS entryType
+       FROM money_sum
+       WHERE id > ?
+       ORDER BY id DESC
+       LIMIT 1`,
+      [previousMoneySumId],
+    );
+
+    assert.equal(Number(moneyRows[0]?.companyRev), 4321);
+    assert.equal(moneyRows[0]?.entryType, "intake");
+    assert.equal(moneyRows[0]?.reason, "candidate's bill");
+  } finally {
+    await cleanupMoneySumAfter(previousMoneySumId);
+    await cleanupTempResume(resId);
     await restoreStatusRow("hnr-2", recruiterStatusSnapshot);
   }
 });
