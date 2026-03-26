@@ -35,6 +35,12 @@ const {
   extractCandidateSnapshot,
   buildJobAtsContext,
 } = require("../utils/formatters");
+const {
+  CANONICAL_VERIFY_STATUS,
+  RECRUITER_STATUS_TRANSITIONS,
+  normalizeResumeStatusInput,
+  normalizeWorkflowStatus,
+} = require("../utils/resumeStatusFlow");
 
 const router = express.Router();
 const buildCandidateId = (sequenceValue) => `c_${sequenceValue}`;
@@ -1714,13 +1720,7 @@ router.get(
   },
 );
 
-const allowedRecruiterTransitions = {
-  verified: ["walk_in", "rejected"],
-  walk_in: ["further", "selected", "rejected"],
-  further: ["selected", "rejected"],
-  selected: ["joined", "dropout", "rejected"],
-  joined: ["billed", "left"],
-};
+const allowedRecruiterTransitions = RECRUITER_STATUS_TRANSITIONS;
 
 const statusReasonColumnMap = {
   walk_in: "walk_in_reason",
@@ -1740,9 +1740,7 @@ router.post(
   requireRecruiterOwner,
   async (req, res) => {
     const { rid, resId } = req.params;
-    const targetStatus = String(req.body?.status || "")
-      .trim()
-      .toLowerCase();
+    const targetStatus = normalizeResumeStatusInput(req.body?.status);
     const reason = String(req.body?.reason || "").trim() || null;
     const joiningDate = req.body?.joining_date
       ? String(req.body.joining_date).trim()
@@ -1759,6 +1757,13 @@ router.post(
 
     if (!targetStatus) {
       return res.status(400).json({ message: "status is required." });
+    }
+
+    if (targetStatus === CANONICAL_VERIFY_STATUS) {
+      return res.status(403).json({
+        message:
+          "Recruiters cannot mark resumes as verified. Use a team leader or admin verify route.",
+      });
     }
 
     if ((targetStatus === "billed" || targetStatus === "left") && !reason) {
@@ -1814,9 +1819,7 @@ router.post(
           recruiterRid: resume.recruiterRid,
         },
       });
-      const currentStatus = String(
-        resume.currentStatus || "pending",
-      ).toLowerCase();
+      const currentStatus = normalizeWorkflowStatus(resume.currentStatus);
       const allowed = allowedRecruiterTransitions[currentStatus];
 
       if (!allowed || !allowed.includes(targetStatus)) {

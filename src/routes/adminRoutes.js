@@ -20,6 +20,12 @@ const {
   parseJsonField,
   extractCandidateSnapshot,
 } = require("../utils/formatters");
+const {
+  ADMIN_STATUS_TRANSITIONS,
+  CANONICAL_VERIFY_STATUS,
+  normalizeResumeStatusInput,
+  normalizeWorkflowStatus,
+} = require("../utils/resumeStatusFlow");
 
 const router = express.Router();
 const ADMIN_API_KEY = String(process.env.ADMIN_API_KEY || "admin123");
@@ -1988,14 +1994,7 @@ router.put("/api/admin/resumes/:resId/verified-reason", async (req, res) => {
 
 // ─── Advance Resume Workflow Status ─────────────────────────────────────────────
 
-const VALID_STATUS_TRANSITIONS = {
-  verified: new Set(["walk_in", "rejected"]),
-  walk_in: new Set(["further", "selected", "rejected"]),
-  further: new Set(["selected", "rejected"]),
-  selected: new Set(["pending_joining", "dropout"]),
-  pending_joining: new Set(["joined", "dropout"]),
-  joined: new Set(["billed", "left"]),
-};
+const VALID_STATUS_TRANSITIONS = ADMIN_STATUS_TRANSITIONS;
 
 router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
   if (!ensureAdminAuthorized(req, res)) return;
@@ -2005,13 +2004,17 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
     return res.status(400).json({ message: "resId is required." });
   }
 
-  const newStatus = String(req.body?.status || "")
-    .trim()
-    .toLowerCase();
+  const newStatus = normalizeResumeStatusInput(req.body?.status);
+  const rawReasonSource =
+    req.body?.reason ??
+    req.body?.note ??
+    (newStatus === CANONICAL_VERIFY_STATUS
+      ? (req.body?.verifiedReason ?? req.body?.verified_reason)
+      : undefined);
   const reason =
-    req.body?.reason === undefined || req.body?.reason === null
+    rawReasonSource === undefined || rawReasonSource === null
       ? ""
-      : String(req.body.reason).trim();
+      : String(rawReasonSource).trim();
   const joiningDate = String(req.body?.joining_date || "").trim();
   const joinedReasonSource =
     req.body?.joinedReason ??
@@ -2035,6 +2038,7 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
       : String(rawRevenueSource).trim();
 
   const allowedNewStatuses = new Set([
+    "verified",
     "walk_in",
     "further",
     "selected",
@@ -2151,9 +2155,7 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
         recruiterRid: resume.rid,
       },
     });
-    const currentStatus = String(resume.currentStatus || "")
-      .trim()
-      .toLowerCase();
+    const currentStatus = normalizeWorkflowStatus(resume.currentStatus);
     const currentDerivedStatus =
       currentStatus === "selected" && resume.currentJoiningDate
         ? "pending_joining"
@@ -2223,6 +2225,7 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
     });
 
     const statusReasonFieldMap = {
+      verified: "verifiedReason",
       walk_in: "walkInReason",
       further: "furtherReason",
       selected: "selectReason",
@@ -2272,6 +2275,8 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
         resId: normalizedResId,
         status: newStatus,
         reason: newStatus === "joined" ? joinedReason : effectiveReason || null,
+        verifiedReason:
+          newStatus === CANONICAL_VERIFY_STATUS ? effectiveReason || null : null,
         joining_date: joiningDateValue,
         joinedReason: newStatus === "joined" ? joinedReason : null,
         joiningNote: newStatus === "joined" ? joinedReason : null,

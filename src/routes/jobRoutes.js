@@ -36,6 +36,11 @@ const {
   extractCandidateSnapshot,
   buildJobAtsContext,
 } = require("../utils/formatters");
+const {
+  CANONICAL_RESUME_STATUSES,
+  normalizeResumeStatusInput,
+  normalizeWorkflowStatus,
+} = require("../utils/resumeStatusFlow");
 
 const router = express.Router();
 const buildCandidateId = (sequenceValue) => `c_${sequenceValue}`;
@@ -255,18 +260,11 @@ const validateRecruiterIds = async (recruiterIds) => {
   };
 };
 
-const allowedManualResumeStatuses = new Set([
-  "verified",
-  "walk_in",
-  "selected",
-  "rejected",
-  "joined",
-  "dropout",
-  "on_hold",
-  "pending",
-  "billed",
-  "left",
-]);
+const allowedManualResumeStatuses = new Set(
+  Array.from(CANONICAL_RESUME_STATUSES).filter(
+    (status) => status !== "further" && status !== "pending_joining",
+  ),
+);
 
 router.get("/api/jobs", async (_req, res) => {
   try {
@@ -890,7 +888,7 @@ router.post(
   requireOwnedJob,
   async (req, res) => {
     const normalizedResId = toTrimmedString(req.body?.resId);
-    const normalizedStatus = toTrimmedString(req.body?.status).toLowerCase();
+    const normalizedStatus = normalizeResumeStatusInput(req.body?.status);
     const rawNote =
       req.body?.note !== undefined
         ? req.body.note
@@ -987,10 +985,9 @@ router.post(
            LIMIT 1`,
           [req.ownedJob.jid, normalizedResId],
         );
-        const previousStatus =
-          toTrimmedString(
-            existingSelectionRows[0]?.selectionStatus,
-          ).toLowerCase() || "pending";
+        const previousStatus = normalizeWorkflowStatus(
+          existingSelectionRows[0]?.selectionStatus,
+        );
 
         // "left" can only be set from "joined"
         if (normalizedStatus === "left") {
