@@ -488,6 +488,10 @@ router.get("/api/admin/dashboard", async (_req, res) => {
           r.name AS recruiterName,
           r.email AS recruiterEmail,
           ${jobJidSelect}
+          teamLeader.rid AS teamLeaderRid,
+          teamLeader.name AS teamLeaderName,
+          c.name AS candidateName,
+          c.phone AS candidatePhone,
           j.company_name AS companyName,
           j.city AS city,
           j.points_per_joining AS pointsPerJoining,
@@ -500,11 +504,44 @@ router.get("/api/admin/dashboard", async (_req, res) => {
           rd.uploaded_at AS uploadedAt
         FROM resumes_data rd
         INNER JOIN recruiter r ON r.rid = rd.rid
+        LEFT JOIN candidate c ON c.res_id = rd.res_id
         LEFT JOIN jobs j ON j.jid = rd.job_jid
+        LEFT JOIN recruiter teamLeader ON teamLeader.rid = j.recruiter_rid
         ORDER BY rd.uploaded_at DESC`,
       );
 
-      recruiterResumeUploads = rows;
+      recruiterResumeUploads = rows.map((row) => ({
+        resId: row.resId || null,
+        rid: row.rid || null,
+        recruiterName: row.recruiterName || null,
+        recruiterEmail: row.recruiterEmail || null,
+        jobJid:
+          row.jobJid === null || row.jobJid === undefined
+            ? null
+            : String(row.jobJid).trim(),
+        teamLeaderRid: row.teamLeaderRid || null,
+        teamLeaderName: row.teamLeaderName || null,
+        name: row.candidateName || null,
+        candidateName: row.candidateName || null,
+        candidatePhone: row.candidatePhone || null,
+        phone: row.candidatePhone || null,
+        companyName: row.companyName || null,
+        city: row.city || null,
+        pointsPerJoining:
+          row.pointsPerJoining === null || row.pointsPerJoining === undefined
+            ? null
+            : Number(row.pointsPerJoining),
+        revenue:
+          row.revenue === null || row.revenue === undefined
+            ? null
+            : Number(row.revenue),
+        resumeFilename: row.resumeFilename || null,
+        resumeType: row.resumeType || null,
+        isAccepted: Boolean(row.isAccepted),
+        acceptedAt: row.acceptedAt || null,
+        acceptedByAdmin: row.acceptedByAdmin || null,
+        uploadedAt: row.uploadedAt || null,
+      }));
     }
 
     return res.status(200).json({
@@ -1019,6 +1056,7 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
       `SELECT
         rd.res_id AS resId,
         rd.rid AS rid,
+        rd.ats_raw_json AS atsRawJson,
         c.name AS candidateName,
         c.phone AS candidatePhone,
         r.name AS recruiterName,
@@ -1059,35 +1097,60 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
         positionsOpen: Number(jobs[0].positionsOpen) || 1,
       },
       resumes: rows.map((row) => ({
-        resId: row.resId,
-        rid: row.rid,
-        candidateName: row.candidateName || null,
-        candidatePhone: row.candidatePhone || null,
-        recruiterName: row.recruiterName,
-        recruiterEmail: row.recruiterEmail,
-        resumeFilename: row.resumeFilename,
-        resumeType: row.resumeType,
-        atsScore: row.atsScore === null ? null : Number(row.atsScore),
-        atsMatchPercentage:
-          row.atsMatchPercentage === null
-            ? null
-            : Number(row.atsMatchPercentage),
-        submittedReason: row.submittedReason || null,
-        verifiedReason: row.verifiedReason || null,
-        uploadedAt: row.uploadedAt,
-        selection: row.selectionStatus
-          ? {
-              status: row.selectionStatus,
-              note: row.selectionNote || null,
-              selectedByAdmin: row.selectedByAdmin || null,
-              selectedAt: row.selectedAt || null,
-              walkInDate: row.walkInDate || null,
-              resumeJoiningDate: row.resumeJoiningDate || null,
-              joiningDate: row.joiningDate || null,
-              joinedReason: row.joinedReason || null,
-              joiningNote: row.joinedReason || null,
-            }
-          : null,
+        ...(() => {
+          const parsedResumePayload = parseJsonField(row.atsRawJson);
+          const candidateSnapshot = extractCandidateSnapshot({
+            source: {
+              candidate_name: row.candidateName,
+              candidate_phone: row.candidatePhone,
+              recruiter_rid: row.rid,
+            },
+            parsedData:
+              parsedResumePayload?.parsed_data ||
+              parsedResumePayload?.parsedData ||
+              parsedResumePayload,
+            fallback: {
+              jobJid: safeJobId,
+              recruiterRid: row.rid,
+            },
+          });
+
+          return {
+            resId: row.resId,
+            rid: row.rid,
+            name: candidateSnapshot.name || row.candidateName || null,
+            candidateName:
+              candidateSnapshot.name || row.candidateName || null,
+            candidatePhone:
+              candidateSnapshot.phone || row.candidatePhone || null,
+            phone: candidateSnapshot.phone || row.candidatePhone || null,
+            recruiterName: row.recruiterName,
+            recruiterEmail: row.recruiterEmail,
+            resumeFilename: row.resumeFilename,
+            resumeType: row.resumeType,
+            atsScore: row.atsScore === null ? null : Number(row.atsScore),
+            atsMatchPercentage:
+              row.atsMatchPercentage === null
+                ? null
+                : Number(row.atsMatchPercentage),
+            submittedReason: row.submittedReason || null,
+            verifiedReason: row.verifiedReason || null,
+            uploadedAt: row.uploadedAt,
+            selection: row.selectionStatus
+              ? {
+                  status: row.selectionStatus,
+                  note: row.selectionNote || null,
+                  selectedByAdmin: row.selectedByAdmin || null,
+                  selectedAt: row.selectedAt || null,
+                  walkInDate: row.walkInDate || null,
+                  resumeJoiningDate: row.resumeJoiningDate || null,
+                  joiningDate: row.joiningDate || null,
+                  joinedReason: row.joinedReason || null,
+                  joiningNote: row.joinedReason || null,
+                }
+              : null,
+          };
+        })(),
       })),
     });
   } catch (error) {
@@ -2491,7 +2554,9 @@ router.get("/api/admin/performance", async (_req, res) => {
       recruiterName: row.recruiterName || null,
       recruiterRid: row.recruiterRid || null,
       teamLeaderName: row.teamLeaderName || null,
+      name: row.candidateName || null,
       candidatePhone: row.candidatePhone || null,
+      phone: row.candidatePhone || null,
       jobJid:
         row.jobJid === null || row.jobJid === undefined
           ? null

@@ -1333,6 +1333,7 @@ router.get(
         `SELECT
         rd.res_id AS resId,
         rd.job_jid AS jobJid,
+        rd.ats_raw_json AS atsRawJson,
         c.name AS candidateName,
         c.phone AS candidatePhone,
         c.walk_in AS walkInDate,
@@ -1366,10 +1367,28 @@ router.get(
         resumes: rows.map((row) => {
           const extraInfo =
             extraInfoByResumeId.get(String(row.resId || "").trim()) || {};
+          const parsedResumePayload = parseJsonField(row.atsRawJson);
+          const candidateSnapshot = extractCandidateSnapshot({
+            source: {
+              candidate_name: row.candidateName,
+              candidate_phone: row.candidatePhone,
+              job_jid: row.jobJid,
+            },
+            parsedData:
+              parsedResumePayload?.parsed_data ||
+              parsedResumePayload?.parsedData ||
+              parsedResumePayload,
+            fallback: {
+              jobJid: row.jobJid,
+            },
+          });
           return {
             ...row,
-            candidateName: row.candidateName || null,
-            candidatePhone: row.candidatePhone || null,
+            name: candidateSnapshot.name || row.candidateName || null,
+            candidateName: candidateSnapshot.name || row.candidateName || null,
+            candidatePhone:
+              candidateSnapshot.phone || row.candidatePhone || null,
+            phone: candidateSnapshot.phone || row.candidatePhone || null,
             atsScore: row.atsScore === null ? null : Number(row.atsScore),
             atsMatchPercentage:
               row.atsMatchPercentage === null
@@ -1694,6 +1713,7 @@ router.get(
       return res.status(200).json({
         applications: rows.map((row) => ({
           id: row.id,
+          name: row.candidateName || null,
           candidateName: row.candidateName,
           candidatePhone: row.candidatePhone || null,
           email: row.email,
