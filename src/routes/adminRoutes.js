@@ -11,6 +11,7 @@ const {
   columnExists,
   getColumnMetadata,
   constraintExists,
+  upsertExtraInfoFields,
   upsertCandidateFields,
 } = require("../utils/dbHelpers");
 const { toMoneyNumber, normalizeJobJid } = require("../utils/formatters");
@@ -587,9 +588,6 @@ const getCandidateResumesHandler = async (req, res) => {
     const hasSelectedAtColumn =
       hasSelectionTable &&
       (await columnExists("job_resume_selection", "selected_at"));
-    const hasJoiningNoteColumn =
-      hasSelectionTable &&
-      (await columnExists("job_resume_selection", "joining_note"));
     const hasSelectionJoin =
       hasSelectionJobJidColumn && hasSelectionResIdColumn;
     const hasExtraInfoTable = await tableExists("extra_info");
@@ -599,6 +597,9 @@ const getCandidateResumesHandler = async (req, res) => {
     const hasVerifiedReasonColumn =
       hasExtraInfoTable &&
       (await columnExists("extra_info", "verified_reason"));
+    const hasJoinedReasonColumn =
+      hasExtraInfoTable &&
+      (await columnExists("extra_info", "joined_reason"));
     const applicantNameSelect = hasCandidateNameColumn
       ? "c.name AS applicantName,"
       : "NULL AS applicantName,";
@@ -647,7 +648,7 @@ const getCandidateResumesHandler = async (req, res) => {
         ${walkInDateSelect}
         ${resumeJoiningDateSelect}
         ${hasCandidateJoiningDateColumn ? "c.joining_date AS joiningDate," : "NULL AS joiningDate,"}
-        ${hasJoiningNoteColumn ? "jrs.joining_note AS joiningNote" : "NULL AS joiningNote"}`
+        ${hasJoinedReasonColumn ? "ei.joined_reason AS joinedReason" : "NULL AS joinedReason"}`
       : `NULL AS selectionStatus,
         NULL AS selectionNote,
         NULL AS selectedByAdmin,
@@ -655,7 +656,7 @@ const getCandidateResumesHandler = async (req, res) => {
         ${walkInDateSelect}
         ${resumeJoiningDateSelect}
         NULL AS joiningDate,
-        NULL AS joiningNote`;
+        NULL AS joinedReason`;
     const selectionJoin = hasSelectionJoin
       ? `LEFT JOIN job_resume_selection jrs
         ON jrs.job_jid = rd.job_jid
@@ -768,7 +769,8 @@ const getCandidateResumesHandler = async (req, res) => {
               walkInDate: row.walkInDate || null,
               resumeJoiningDate: row.resumeJoiningDate || null,
               joiningDate: row.joiningDate || null,
-              joiningNote: row.joiningNote || null,
+              joinedReason: row.joinedReason || null,
+              joiningNote: row.joinedReason || null,
             }
           : null,
       })),
@@ -972,6 +974,9 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
     const hasVerifiedReasonColumn =
       hasExtraInfoTable &&
       (await columnExists("extra_info", "verified_reason"));
+    const hasJoinedReasonColumn =
+      hasExtraInfoTable &&
+      (await columnExists("extra_info", "joined_reason"));
 
     const atsScoreSelect = hasAtsScoreColumn
       ? "rd.ats_score AS atsScore,"
@@ -1013,7 +1018,7 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
         ${walkInDateSelect}
         ${resumeJoiningDateSelect}
         c.joining_date AS joiningDate,
-        jrs.joining_note AS joiningNote
+        ${hasJoinedReasonColumn ? "ei.joined_reason AS joinedReason" : "NULL AS joinedReason"}
       FROM resumes_data rd
       INNER JOIN recruiter r ON r.rid = rd.rid
       LEFT JOIN candidate c ON c.res_id = rd.res_id
@@ -1058,7 +1063,8 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
               walkInDate: row.walkInDate || null,
               resumeJoiningDate: row.resumeJoiningDate || null,
               joiningDate: row.joiningDate || null,
-              joiningNote: row.joiningNote || null,
+              joinedReason: row.joinedReason || null,
+              joiningNote: row.joinedReason || null,
             }
           : null,
       })),
@@ -1976,17 +1982,6 @@ const VALID_STATUS_TRANSITIONS = {
   joined: new Set(["billed", "left"]),
 };
 
-const STATUS_REASON_COLUMN = {
-  walk_in: "walk_in_reason",
-  further: "further_reason",
-  selected: "select_reason",
-  rejected: "reject_reason",
-  joined: "joined_reason",
-  dropout: "dropout_reason",
-  billed: "billed_reason",
-  left: "left_reason",
-};
-
 router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
   if (!ensureAdminAuthorized(req, res)) return;
 
@@ -2003,10 +1998,15 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
       ? ""
       : String(req.body.reason).trim();
   const joiningDate = String(req.body?.joining_date || "").trim();
-  const joiningNote =
-    req.body?.joining_note === undefined || req.body?.joining_note === null
+  const joinedReasonSource =
+    req.body?.joinedReason ??
+    req.body?.joined_reason ??
+    req.body?.joiningNote ??
+    req.body?.joining_note;
+  const joinedReason =
+    joinedReasonSource === undefined || joinedReasonSource === null
       ? null
-      : String(req.body.joining_note).trim();
+      : String(joinedReasonSource).trim();
   const rawRevenueSource =
     req.body?.revenue ??
     req.body?.revenue_amount ??
@@ -2142,24 +2142,21 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
       : resume.currentJoiningDate || null;
     const joiningDateValue =
       newStatus === "joined" ? effectiveJoiningDate : null;
-    const joiningNoteValue = newStatus === "joined" ? joiningNote : null;
 
     if (resume.jobJid) {
       await connection.query(
         `INSERT INTO job_resume_selection
-          (job_jid, res_id, selected_by_admin, selection_status, selection_note, joining_note)
-        VALUES (?, ?, 'admin-panel', ?, ?, ?)
+          (job_jid, res_id, selected_by_admin, selection_status, selection_note)
+        VALUES (?, ?, 'admin-panel', ?, ?)
         ON DUPLICATE KEY UPDATE
           selection_status = VALUES(selection_status),
           selection_note = VALUES(selection_note),
-          joining_note = COALESCE(VALUES(joining_note), joining_note),
           selected_at = CURRENT_TIMESTAMP`,
         [
           resume.jobJid,
           normalizedResId,
           persistedStatus,
           effectiveReason || null,
-          joiningNoteValue,
         ],
       );
     }
@@ -2183,23 +2180,27 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
           : undefined,
     });
 
-    // Update reason column in extra_info
-    const reasonColumn = STATUS_REASON_COLUMN[newStatus];
-    if (reasonColumn) {
-      const hasExtraInfoTable = await tableExists("extra_info");
-      if (hasExtraInfoTable) {
-        const hasReasonColumn = await columnExists("extra_info", reasonColumn);
-        if (hasReasonColumn) {
-          await connection.query(
-            `INSERT INTO extra_info (res_id, ${reasonColumn}, updated_at)
-            VALUES (?, ?, CURRENT_TIMESTAMP)
-            ON DUPLICATE KEY UPDATE
-              ${reasonColumn} = VALUES(${reasonColumn}),
-              updated_at = CURRENT_TIMESTAMP`,
-            [normalizedResId, effectiveReason || null],
-          );
-        }
-      }
+    const statusReasonFieldMap = {
+      walk_in: "walkInReason",
+      further: "furtherReason",
+      selected: "selectReason",
+      rejected: "rejectReason",
+      joined: "joinedReason",
+      dropout: "dropoutReason",
+      billed: "billedReason",
+      left: "leftReason",
+    };
+    const reasonField = statusReasonFieldMap[newStatus];
+    const statusReasonValue =
+      newStatus === "joined" ? joinedReason : effectiveReason || null;
+
+    if (reasonField) {
+      await upsertExtraInfoFields(connection, {
+        resId: normalizedResId,
+        jobJid: resume.jobJid || undefined,
+        recruiterRid: resume.rid || undefined,
+        [reasonField]: statusReasonValue,
+      });
     }
 
     // Credit points_per_joining to the recruiter when candidate reaches billed status
@@ -2223,7 +2224,16 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
     }
 
     await connection.commit();
-    return res.status(200).json({ message: "Status updated successfully." });
+    return res.status(200).json({
+      message: "Status updated successfully.",
+      data: {
+        resId: normalizedResId,
+        status: newStatus,
+        joining_date: joiningDateValue,
+        joinedReason: newStatus === "joined" ? joinedReason : null,
+        joiningNote: newStatus === "joined" ? joinedReason : null,
+      },
+    });
   } catch (error) {
     await connection.rollback();
     return res.status(500).json({

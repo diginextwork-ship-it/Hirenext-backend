@@ -17,7 +17,6 @@ const { validateResumeFile } = require("../middleware/uploadValidation");
 const {
   tableExists,
   columnExists,
-  getTableColumns,
   fetchExtraInfoByResumeIds,
   upsertExtraInfoFields,
   upsertCandidateFields,
@@ -1344,7 +1343,6 @@ router.get(
         COALESCE(jrs.selection_status, 'pending') AS workflowStatus,
         jrs.selected_at AS workflowUpdatedAt,
         c.joining_date AS joiningDate,
-        jrs.joining_note AS joiningNote,
         j.company_name AS companyName,
         j.role_name AS roleName,
         j.city AS city
@@ -1364,27 +1362,32 @@ router.get(
       );
 
       return res.status(200).json({
-        resumes: rows.map((row) => ({
-          ...row,
-          candidateName: row.candidateName || null,
-          atsScore: row.atsScore === null ? null : Number(row.atsScore),
-          atsMatchPercentage:
-            row.atsMatchPercentage === null
-              ? null
-              : Number(row.atsMatchPercentage),
-          walkInDate: row.walkInDate || null,
-          workflowStatus: row.workflowStatus || "pending",
-          workflowUpdatedAt: row.workflowUpdatedAt || null,
-          joiningDate: row.joiningDate || null,
-          joiningNote: row.joiningNote || null,
-          job: {
-            jobJid: row.jobJid ? String(row.jobJid).trim() : null,
-            companyName: row.companyName || null,
-            roleName: row.roleName || null,
-            city: row.city || null,
-          },
-          ...(extraInfoByResumeId.get(String(row.resId || "").trim()) || {}),
-        })),
+        resumes: rows.map((row) => {
+          const extraInfo =
+            extraInfoByResumeId.get(String(row.resId || "").trim()) || {};
+          return {
+            ...row,
+            candidateName: row.candidateName || null,
+            atsScore: row.atsScore === null ? null : Number(row.atsScore),
+            atsMatchPercentage:
+              row.atsMatchPercentage === null
+                ? null
+                : Number(row.atsMatchPercentage),
+            walkInDate: row.walkInDate || null,
+            workflowStatus: row.workflowStatus || "pending",
+            workflowUpdatedAt: row.workflowUpdatedAt || null,
+            joiningDate: row.joiningDate || null,
+            joinedReason: extraInfo.joinedReason || null,
+            joiningNote: extraInfo.joiningNote || null,
+            job: {
+              jobJid: row.jobJid ? String(row.jobJid).trim() : null,
+              companyName: row.companyName || null,
+              roleName: row.roleName || null,
+              city: row.city || null,
+            },
+            ...extraInfo,
+          };
+        }),
       });
     } catch (error) {
       return res.status(500).json({
@@ -1747,9 +1750,15 @@ router.post(
     const joiningDate = req.body?.joining_date
       ? String(req.body.joining_date).trim()
       : null;
-    const joiningNote = req.body?.joining_note
-      ? String(req.body.joining_note).trim()
-      : null;
+    const joinedReasonSource =
+      req.body?.joinedReason ??
+      req.body?.joined_reason ??
+      req.body?.joiningNote ??
+      req.body?.joining_note;
+    const joinedReason =
+      joinedReasonSource === undefined || joinedReasonSource === null
+        ? null
+        : String(joinedReasonSource).trim();
 
     if (!targetStatus) {
       return res.status(400).json({ message: "status is required." });
@@ -1807,13 +1816,12 @@ router.post(
 
         await connection.query(
           `INSERT INTO job_resume_selection
-            (job_jid, res_id, selected_by_admin, selection_status, selection_note, joining_note)
-           VALUES (?, ?, ?, ?, ?, ?)
+            (job_jid, res_id, selected_by_admin, selection_status, selection_note)
+           VALUES (?, ?, ?, ?, ?)
            ON DUPLICATE KEY UPDATE
              selected_by_admin = VALUES(selected_by_admin),
              selection_status = VALUES(selection_status),
              selection_note = VALUES(selection_note),
-             joining_note = CASE WHEN VALUES(selection_status) = 'joined' THEN VALUES(joining_note) ELSE joining_note END,
              selected_at = CURRENT_TIMESTAMP`,
           [
             resume.jobJid,
@@ -1821,7 +1829,6 @@ router.post(
             rid,
             targetStatus,
             reason,
-            targetStatus === "joined" ? joiningNote : null,
           ],
         );
 
@@ -1841,51 +1848,26 @@ router.post(
           });
         }
 
-        const reasonColumn = statusReasonColumnMap[targetStatus];
-        if (reasonColumn && reason && (await tableExists("extra_info"))) {
-          const extraColumns = await getTableColumns("extra_info", connection);
-          if (extraColumns.has(reasonColumn)) {
-            const idCol = extraColumns.has("res_id")
-              ? "res_id"
-              : extraColumns.has("resume_id")
-                ? "resume_id"
-                : null;
-            if (idCol) {
-              const insertCols = [idCol];
-              const insertVals = [resId];
-              const placeholders = ["?"];
-              const updates = [`${reasonColumn} = VALUES(${reasonColumn})`];
-
-              if (extraColumns.has("job_jid")) {
-                insertCols.push("job_jid");
-                insertVals.push(resume.jobJid);
-                placeholders.push("?");
-              }
-              if (extraColumns.has("recruiter_rid")) {
-                insertCols.push("recruiter_rid");
-                insertVals.push(rid);
-                placeholders.push("?");
-              }
-              if (extraColumns.has("rid")) {
-                insertCols.push("rid");
-                insertVals.push(rid);
-                placeholders.push("?");
-              }
-              insertCols.push(reasonColumn);
-              insertVals.push(reason);
-              placeholders.push("?");
-              if (extraColumns.has("updated_at")) {
-                updates.push("updated_at = CURRENT_TIMESTAMP");
-              }
-
-              await connection.query(
-                `INSERT INTO extra_info (${insertCols.map((c) => `\`${c}\``).join(", ")})
-                 VALUES (${placeholders.join(", ")})
-                 ON DUPLICATE KEY UPDATE ${updates.join(", ")}`,
-                insertVals,
-              );
-            }
-          }
+        const statusReasonFieldMap = {
+          walk_in: "walkInReason",
+          further: "furtherReason",
+          selected: "selectReason",
+          rejected: "rejectReason",
+          joined: "joinedReason",
+          dropout: "dropoutReason",
+          billed: "billedReason",
+          left: "leftReason",
+        };
+        const reasonField = statusReasonFieldMap[targetStatus];
+        const statusReasonValue =
+          targetStatus === "joined" ? joinedReason : reason;
+        if (reasonField) {
+          await upsertExtraInfoFields(connection, {
+            resId,
+            jobJid: resume.jobJid || undefined,
+            recruiterRid: rid || undefined,
+            [reasonField]: statusReasonValue,
+          });
         }
 
         const statusDeltaMap = {
@@ -1928,7 +1910,8 @@ router.post(
             status: targetStatus,
             reason,
             joining_date: targetStatus === "joined" ? joiningDate : undefined,
-            joining_note: targetStatus === "joined" ? joiningNote : undefined,
+            joinedReason: targetStatus === "joined" ? joinedReason : undefined,
+            joiningNote: targetStatus === "joined" ? joinedReason : undefined,
           },
         });
       } catch (innerError) {

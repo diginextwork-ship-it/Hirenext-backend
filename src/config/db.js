@@ -936,6 +936,11 @@ const ensureExtraInfoTable = async () => {
       "ALTER TABLE extra_info ADD COLUMN verified_reason TEXT NULL",
     );
   }
+  if (!(await columnExists("extra_info", "walk_in_reason"))) {
+    await pool.query(
+      "ALTER TABLE extra_info ADD COLUMN walk_in_reason TEXT NULL",
+    );
+  }
   if (!(await columnExists("extra_info", "left_reason"))) {
     await pool.query("ALTER TABLE extra_info ADD COLUMN left_reason TEXT NULL");
   }
@@ -947,6 +952,26 @@ const ensureExtraInfoTable = async () => {
   if (!(await columnExists("extra_info", "further_reason"))) {
     await pool.query(
       "ALTER TABLE extra_info ADD COLUMN further_reason TEXT NULL",
+    );
+  }
+  if (!(await columnExists("extra_info", "select_reason"))) {
+    await pool.query(
+      "ALTER TABLE extra_info ADD COLUMN select_reason TEXT NULL",
+    );
+  }
+  if (!(await columnExists("extra_info", "joined_reason"))) {
+    await pool.query(
+      "ALTER TABLE extra_info ADD COLUMN joined_reason TEXT NULL",
+    );
+  }
+  if (!(await columnExists("extra_info", "dropout_reason"))) {
+    await pool.query(
+      "ALTER TABLE extra_info ADD COLUMN dropout_reason TEXT NULL",
+    );
+  }
+  if (!(await columnExists("extra_info", "reject_reason"))) {
+    await pool.query(
+      "ALTER TABLE extra_info ADD COLUMN reject_reason TEXT NULL",
     );
   }
   if (!(await columnExists("extra_info", "updated_at"))) {

@@ -160,6 +160,7 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
         furtherReason: row.furtherReason || null,
         selectReason: row.selectReason || null,
         joinedReason: row.joinedReason || null,
+        joiningNote: row.joinedReason || null,
         dropoutReason: row.dropoutReason || null,
         rejectReason: row.rejectReason || null,
         leftReason: row.leftReason || null,
