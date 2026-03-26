@@ -2486,6 +2486,25 @@ router.get("/api/admin/performance", async (_req, res) => {
     const walkInDateSelect = "c.walk_in AS walkInDate,";
     const resumeJoiningDateSelect = "c.joining_date AS joiningDate,";
 
+    const normalizePerformanceDrilldownItem = (row, statusKey) => ({
+      resId: row.resId || null,
+      recruiterName: row.recruiterName || null,
+      recruiterRid: row.recruiterRid || null,
+      teamLeaderName: row.teamLeaderName || null,
+      candidatePhone: row.candidatePhone || null,
+      jobJid:
+        row.jobJid === null || row.jobJid === undefined
+          ? null
+          : String(row.jobJid).trim(),
+      companyName: row.companyName || null,
+      city: row.city || null,
+      status: statusKey,
+      resumeFilename: row.resumeFilename || null,
+      candidateName: row.candidateName || null,
+      walkInDate: row.walkInDate || null,
+      joiningDate: row.joiningDate || null,
+    });
+
     const [statusDrilldownRows] = await pool.query(
       `SELECT
         rd.res_id AS resId,
@@ -2500,7 +2519,10 @@ router.get("/api/admin/performance", async (_req, res) => {
         recruiter.email AS recruiterEmail,
         teamLeader.rid AS teamLeaderRid,
         teamLeader.name AS teamLeaderName,
-        c.name AS candidateName
+        c.name AS candidateName,
+        c.phone AS candidatePhone,
+        j.company_name AS companyName,
+        j.city AS city
       FROM resumes_data rd
       LEFT JOIN candidate c ON c.res_id = rd.res_id
       INNER JOIN recruiter recruiter ON recruiter.rid = rd.rid
@@ -2545,21 +2567,9 @@ router.get("/api/admin/performance", async (_req, res) => {
         continue;
       }
 
-      statusDrilldown[statusKey].push({
-        resId: row.resId,
-        jobJid:
-          row.jobJid === null || row.jobJid === undefined
-            ? null
-            : Number(row.jobJid),
-        recruiterRid: row.recruiterRid || null,
-        recruiterName: row.recruiterName || null,
-        teamLeaderName: row.teamLeaderName || null,
-        resumeFilename: row.resumeFilename || null,
-        status: statusKey,
-        candidateName: row.candidateName || null,
-        walkInDate: row.walkInDate || null,
-        joiningDate: row.joiningDate || null,
-      });
+      statusDrilldown[statusKey].push(
+        normalizePerformanceDrilldownItem(row, statusKey),
+      );
     }
 
     // ── Summary totals ──────────────────────────────────────────────────────
