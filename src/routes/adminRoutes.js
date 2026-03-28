@@ -2058,6 +2058,27 @@ router.put("/api/admin/resumes/:resId/verified-reason", async (req, res) => {
 // ─── Advance Resume Workflow Status ─────────────────────────────────────────────
 
 const VALID_STATUS_TRANSITIONS = ADMIN_STATUS_TRANSITIONS;
+const ADMIN_ROLLBACK_TARGETS = {
+  verified: "submitted",
+  walk_in: "verified",
+  selected: "walk_in",
+  pending_joining: "selected",
+  joined: "pending_joining",
+};
+
+const getAdminRollbackTarget = (resume) => {
+  const currentStatus = normalizeWorkflowStatus(resume.currentStatus);
+  const derivedStatus =
+    currentStatus === "selected" && resume.currentJoiningDate
+      ? "pending_joining"
+      : currentStatus;
+
+  if (derivedStatus === "rejected") {
+    return resume.currentWalkInDate ? "walk_in" : CANONICAL_VERIFY_STATUS;
+  }
+
+  return ADMIN_ROLLBACK_TARGETS[derivedStatus] || "";
+};
 
 router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
   if (!ensureAdminAuthorized(req, res)) return;
@@ -2354,6 +2375,162 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
     await connection.rollback();
     return res.status(500).json({
       message: "Failed to advance resume status.",
+      error: error.message,
+    });
+  } finally {
+    connection.release();
+  }
+});
+
+router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
+  if (!ensureAdminAuthorized(req, res)) return;
+
+  const normalizedResId = String(req.params.resId || "").trim();
+  if (!normalizedResId) {
+    return res.status(400).json({ message: "resId is required." });
+  }
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const [resumeRows] = await connection.query(
+      `SELECT
+        rd.res_id AS resId,
+        rd.rid,
+        rd.job_jid AS jobJid,
+        COALESCE(jrs.selection_status, 'pending') AS currentStatus,
+        c.joining_date AS currentJoiningDate,
+        c.walk_in AS currentWalkInDate
+      FROM resumes_data rd
+      LEFT JOIN job_resume_selection jrs
+        ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
+      LEFT JOIN candidate c ON c.res_id = rd.res_id
+      WHERE rd.res_id = ?
+      LIMIT 1
+      FOR UPDATE`,
+      [normalizedResId],
+    );
+
+    if (resumeRows.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ message: "Resume not found." });
+    }
+
+    const resume = resumeRows[0];
+    const currentStatus = normalizeWorkflowStatus(resume.currentStatus);
+    const currentDerivedStatus =
+      currentStatus === "selected" && resume.currentJoiningDate
+        ? "pending_joining"
+        : currentStatus;
+    const rollbackTarget = getAdminRollbackTarget(resume);
+
+    if (!rollbackTarget) {
+      await connection.rollback();
+      return res.status(400).json({
+        message: `Rollback is not supported for '${currentDerivedStatus}'.`,
+      });
+    }
+
+    if (!resume.jobJid) {
+      await connection.rollback();
+      return res.status(400).json({
+        message: "Cannot rollback a resume without a linked job ID.",
+      });
+    }
+
+    if (rollbackTarget === "submitted") {
+      await connection.query(
+        `DELETE FROM job_resume_selection
+         WHERE job_jid = ? AND res_id = ?`,
+        [resume.jobJid, normalizedResId],
+      );
+    } else {
+      const persistedStatus =
+        rollbackTarget === "pending_joining" ? "selected" : rollbackTarget;
+      await connection.query(
+        `INSERT INTO job_resume_selection
+          (job_jid, res_id, selected_by_admin, selection_status, selection_note)
+         VALUES (?, ?, 'admin-rollback', ?, NULL)
+         ON DUPLICATE KEY UPDATE
+           selected_by_admin = VALUES(selected_by_admin),
+           selection_status = VALUES(selection_status),
+           selection_note = VALUES(selection_note),
+           selected_at = CURRENT_TIMESTAMP`,
+        [resume.jobJid, normalizedResId, persistedStatus],
+      );
+    }
+
+    if (currentDerivedStatus === "verified") {
+      await upsertExtraInfoFields(connection, {
+        resId: normalizedResId,
+        jobJid: resume.jobJid || undefined,
+        recruiterRid: resume.rid || undefined,
+        verifiedReason: null,
+      });
+    }
+
+    if (currentDerivedStatus === "walk_in") {
+      await upsertCandidateFields(connection, {
+        resId: normalizedResId,
+        walkIn: null,
+      });
+      await upsertExtraInfoFields(connection, {
+        resId: normalizedResId,
+        jobJid: resume.jobJid || undefined,
+        recruiterRid: resume.rid || undefined,
+        walkInReason: null,
+      });
+    }
+
+    if (currentDerivedStatus === "selected") {
+      await upsertExtraInfoFields(connection, {
+        resId: normalizedResId,
+        jobJid: resume.jobJid || undefined,
+        recruiterRid: resume.rid || undefined,
+        selectReason: null,
+      });
+    }
+
+    if (currentDerivedStatus === "rejected") {
+      await upsertExtraInfoFields(connection, {
+        resId: normalizedResId,
+        jobJid: resume.jobJid || undefined,
+        recruiterRid: resume.rid || undefined,
+        rejectReason: null,
+      });
+    }
+
+    if (currentDerivedStatus === "pending_joining") {
+      await upsertCandidateFields(connection, {
+        resId: normalizedResId,
+        joiningDate: null,
+        revenue: null,
+      });
+    }
+
+    if (currentDerivedStatus === "joined") {
+      await upsertExtraInfoFields(connection, {
+        resId: normalizedResId,
+        jobJid: resume.jobJid || undefined,
+        recruiterRid: resume.rid || undefined,
+        joinedReason: null,
+      });
+    }
+
+    await connection.commit();
+    return res.status(200).json({
+      message: "Resume rolled back successfully.",
+      data: {
+        resId: normalizedResId,
+        previousStatus: currentDerivedStatus,
+        status: rollbackTarget,
+      },
+    });
+  } catch (error) {
+    await connection.rollback();
+    return res.status(500).json({
+      message: "Failed to rollback resume status.",
       error: error.message,
     });
   } finally {
