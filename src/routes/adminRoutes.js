@@ -2324,13 +2324,17 @@ router.post(
         ? "pending_joining"
         : currentStatus;
 
-    // Validate transition
-    const allowedTransitions = VALID_STATUS_TRANSITIONS[currentDerivedStatus];
-    if (!allowedTransitions || !allowedTransitions.has(newStatus)) {
-      await connection.rollback();
-      return res.status(400).json({
-        message: `Invalid status transition from '${currentDerivedStatus}' to '${newStatus}'.`,
-      });
+    // Validate transition. Allow billed->billed as an idempotent admin retry.
+    const isIdempotentBilledRetry =
+      currentDerivedStatus === "billed" && newStatus === "billed";
+    if (!isIdempotentBilledRetry) {
+      const allowedTransitions = VALID_STATUS_TRANSITIONS[currentDerivedStatus];
+      if (!allowedTransitions || !allowedTransitions.has(newStatus)) {
+        await connection.rollback();
+        return res.status(400).json({
+          message: `Invalid status transition from '${currentDerivedStatus}' to '${newStatus}'.`,
+        });
+      }
     }
 
     if (newStatus === "billed") {
