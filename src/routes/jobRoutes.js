@@ -264,7 +264,7 @@ const validateRecruiterIds = async (recruiterIds) => {
 
 const allowedManualResumeStatuses = new Set(
   Array.from(CANONICAL_RESUME_STATUSES).filter(
-    (status) => status !== "further" && status !== "pending_joining",
+    (status) => status !== "further",
   ),
 );
 
@@ -891,6 +891,9 @@ router.post(
   async (req, res) => {
     const normalizedResId = toTrimmedString(req.body?.resId);
     const normalizedStatus = normalizeResumeStatusInput(req.body?.status);
+    const joiningDate = req.body?.joining_date
+      ? String(req.body.joining_date).trim()
+      : null;
     const rawNote =
       req.body?.note !== undefined
         ? req.body.note
@@ -916,6 +919,22 @@ router.post(
       });
     }
 
+    if (normalizedStatus === "pending_joining") {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(joiningDate || "")) {
+        return res.status(400).json({
+          message: "joining_date is required in YYYY-MM-DD format.",
+        });
+      }
+    } else if (normalizedStatus === "selected" && joiningDate) {
+      return res.status(400).json({
+        message: "joining_date should only be provided for pending_joining.",
+      });
+    } else if (joiningDate && !/^\d{4}-\d{2}-\d{2}$/.test(joiningDate)) {
+      return res.status(400).json({
+        message: "joining_date must be in YYYY-MM-DD format.",
+      });
+    }
+
     try {
       const connection = await pool.getConnection();
       try {
@@ -928,7 +947,8 @@ router.post(
             rd.rid AS recruiterRid,
             rd.ats_raw_json AS atsRawJson,
             c.name AS candidateName,
-            c.email AS email
+            c.email AS email,
+            c.joining_date AS currentJoiningDate
            FROM resumes_data rd
            LEFT JOIN candidate c ON c.res_id = rd.res_id
            WHERE rd.res_id = ?
@@ -990,10 +1010,19 @@ router.post(
         const previousStatus = normalizeWorkflowStatus(
           existingSelectionRows[0]?.selectionStatus,
         );
+        const currentDerivedStatus =
+          previousStatus === "selected" && resumeRows[0]?.currentJoiningDate
+            ? "pending_joining"
+            : previousStatus;
+        const persistedStatus =
+          normalizedStatus === "pending_joining" ? "selected" : normalizedStatus;
+        const effectiveJoiningDate = /^\d{4}-\d{2}-\d{2}$/.test(joiningDate || "")
+          ? joiningDate
+          : resumeRows[0]?.currentJoiningDate || null;
 
         // "left" can only be set from "joined"
         if (normalizedStatus === "left") {
-          if (previousStatus !== "joined") {
+          if (currentDerivedStatus !== "joined") {
             await connection.rollback();
             return res.status(400).json({
               message:
@@ -1022,24 +1051,25 @@ router.post(
               req.ownedJob.jid,
               normalizedResId,
               actorRid || "team-leader",
-              normalizedStatus,
+              persistedStatus,
               normalizedNote || null,
             ],
           );
         }
 
+        const statusTimestampFieldMap = {
+          verified: "verifiedAt",
+          walk_in: "walkInAt",
+          further: "furtherAt",
+          selected: "selectedAt",
+          pending_joining: "pendingJoiningAt",
+          rejected: "rejectedAt",
+          joined: "joinedAt",
+          dropout: "dropoutAt",
+          billed: "billedAt",
+          left: "leftAt",
+        };
         if (reasonField && statusReasonValue !== undefined) {
-          const statusTimestampFieldMap = {
-            verified: "verifiedAt",
-            walk_in: "walkInAt",
-            further: "furtherAt",
-            selected: "selectedAt",
-            rejected: "rejectedAt",
-            joined: "joinedAt",
-            dropout: "dropoutAt",
-            billed: "billedAt",
-            left: "leftAt",
-          };
           await upsertExtraInfoFields(connection, {
             resId: normalizedResId,
             jobJid: req.ownedJob.jid,
@@ -1050,9 +1080,27 @@ router.post(
             [reasonField]: statusReasonValue,
             [statusTimestampFieldMap[normalizedStatus]]: "__CURRENT_TIMESTAMP__",
           });
+        } else if (statusTimestampFieldMap[normalizedStatus]) {
+          await upsertExtraInfoFields(connection, {
+            resId: normalizedResId,
+            jobJid: req.ownedJob.jid,
+            recruiterRid,
+            candidateName:
+              toTrimmedString(resumeRows[0].candidateName) || undefined,
+            email: toTrimmedString(resumeRows[0].email) || undefined,
+            [statusTimestampFieldMap[normalizedStatus]]: "__CURRENT_TIMESTAMP__",
+          });
         }
 
         if (statusCandidateSnapshot.name) {
+          let candidateJoiningDateValue = resumeRows[0]?.currentJoiningDate || null;
+          if (normalizedStatus === "selected") {
+            candidateJoiningDateValue = null;
+          } else if (normalizedStatus === "pending_joining") {
+            candidateJoiningDateValue = joiningDate;
+          } else if (normalizedStatus === "joined" && effectiveJoiningDate) {
+            candidateJoiningDateValue = effectiveJoiningDate;
+          }
           await upsertCandidateFields(connection, {
             resId: normalizedResId,
             cid: undefined,
@@ -1066,6 +1114,7 @@ router.post(
             institutionName:
               statusCandidateSnapshot.institutionName || undefined,
             age: statusCandidateSnapshot.age,
+            joiningDate: candidateJoiningDateValue,
           });
         }
 
@@ -1140,6 +1189,8 @@ router.post(
             resId: normalizedResId,
             status: normalizedStatus,
             note: normalizedNote || null,
+            joining_date:
+              normalizedStatus === "pending_joining" ? joiningDate : null,
             verifiedReason:
               reasonField === "verifiedReason"
                 ? (statusReasonValue ?? null)
