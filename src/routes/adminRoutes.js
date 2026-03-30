@@ -2195,6 +2195,10 @@ router.post(
     req.body?.revenue ??
     req.body?.revenue_amount ??
     req.body?.revenueAmount ??
+    req.body?.amount ??
+    req.body?.billed_amount ??
+    req.body?.billedAmount ??
+    req.body?.billed ??
     req.body?.pending_revenue ??
     req.body?.pendingRevenue ??
     null;
@@ -2247,19 +2251,25 @@ router.post(
       .json({ message: "reason is required for this status transition." });
   }
 
-  const shouldValidateRevenue = newStatus === "billed" && rawRevenue !== "";
+  const isBilledStatus = newStatus === "billed";
+  const shouldValidateRevenue = isBilledStatus && rawRevenue !== "";
   const parsedRevenue = shouldValidateRevenue
     ? Number.parseFloat(rawRevenue)
     : undefined;
 
+  if (isBilledStatus && rawRevenue === "") {
+    return res.status(400).json({
+      message: "revenue amount is required for billed status.",
+    });
+  }
   if (shouldValidateRevenue && !Number.isFinite(parsedRevenue)) {
     return res.status(400).json({
       message: "revenue must be a valid non-negative number.",
     });
   }
-  if (shouldValidateRevenue && parsedRevenue < 0) {
+  if (shouldValidateRevenue && parsedRevenue <= 0) {
     return res.status(400).json({
-      message: "revenue must be a valid non-negative number.",
+      message: "revenue must be a valid positive number.",
     });
   }
 
@@ -2478,6 +2488,7 @@ router.post(
         connection,
         normalizedResId,
         {
+          amount: parsedRevenue,
           reason: effectiveReason || "candidate's bill",
           photo: toRevenueAttachmentDataUrl(req.file) || null,
         },

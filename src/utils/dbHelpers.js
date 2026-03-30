@@ -457,28 +457,38 @@ const upsertCandidateFields = async (connection, payload) => {
 const addCandidateBillIntakeEntry = async (
   connection,
   resId,
-  { reason = "candidate's bill", photo = null, moneySumId = null } = {},
+  { amount = null, reason = "candidate's bill", photo = null, moneySumId = null } = {},
 ) => {
   const normalizedResId = String(resId || "").trim();
   if (!normalizedResId) return null;
-  if (!(await tableExists("candidate")) || !(await tableExists("money_sum"))) {
+  if (!(await tableExists("money_sum"))) {
     return null;
   }
 
-  const candidateColumns = await getTableColumns("candidate", connection);
-  if (!candidateColumns.has("res_id") || !candidateColumns.has("revenue")) {
-    return null;
-  }
+  const explicitAmount = Number(amount);
+  const hasExplicitAmount = Number.isFinite(explicitAmount) && explicitAmount >= 0;
 
-  const [candidateRows] = await connection.query(
-    `SELECT revenue
-     FROM candidate
-     WHERE res_id = ?
-     LIMIT 1`,
-    [normalizedResId],
-  );
-  const rawAmount = Number(candidateRows?.[0]?.revenue);
-  const amount = Number.isFinite(rawAmount) && rawAmount >= 0 ? rawAmount : 0;
+  let normalizedAmount = 0;
+  if (hasExplicitAmount) {
+    normalizedAmount = Math.round(explicitAmount * 100) / 100;
+  } else {
+    if (!(await tableExists("candidate"))) return null;
+    const candidateColumns = await getTableColumns("candidate", connection);
+    if (!candidateColumns.has("res_id") || !candidateColumns.has("revenue")) {
+      return null;
+    }
+
+    const [candidateRows] = await connection.query(
+      `SELECT revenue
+       FROM candidate
+       WHERE res_id = ?
+       LIMIT 1`,
+      [normalizedResId],
+    );
+    const rawAmount = Number(candidateRows?.[0]?.revenue);
+    normalizedAmount =
+      Number.isFinite(rawAmount) && rawAmount >= 0 ? rawAmount : 0;
+  }
 
   const moneySumColumns = await getTableColumns("money_sum", connection);
   const [profitRows] = moneySumColumns.has("profit")
@@ -490,7 +500,7 @@ const addCandidateBillIntakeEntry = async (
       )
     : [[{ lastProfit: 0 }]];
   const lastProfit = Number(profitRows?.[0]?.lastProfit) || 0;
-  const nextProfit = Math.round((lastProfit + amount) * 100) / 100;
+  const nextProfit = Math.round((lastProfit + normalizedAmount) * 100) / 100;
 
   const safeReason = String(reason || "").trim() || "candidate's bill";
   const safePhoto =
@@ -508,12 +518,12 @@ const addCandidateBillIntakeEntry = async (
            entry_type = 'intake',
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-      [amount, nextProfit, safeReason, safePhoto, normalizedMoneySumId],
+      [normalizedAmount, nextProfit, safeReason, safePhoto, normalizedMoneySumId],
     );
 
     return {
       id: normalizedMoneySumId,
-      amount,
+      amount: normalizedAmount,
       profit: nextProfit,
       reason: safeReason,
       photo: safePhoto,
@@ -523,12 +533,12 @@ const addCandidateBillIntakeEntry = async (
   const [insertResult] = await connection.query(
     `INSERT INTO money_sum (company_rev, expense, profit, reason, photo, entry_type)
      VALUES (?, 0, ?, ?, ?, 'intake')`,
-    [amount, nextProfit, safeReason, safePhoto],
+    [normalizedAmount, nextProfit, safeReason, safePhoto],
   );
 
   return {
     id: Number(insertResult?.insertId) || null,
-    amount,
+    amount: normalizedAmount,
     profit: nextProfit,
     reason: safeReason,
     photo: safePhoto,
