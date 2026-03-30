@@ -42,6 +42,7 @@ const {
   normalizeResumeStatusInput,
   normalizeWorkflowStatus,
 } = require("../utils/resumeStatusFlow");
+const { getCurrentDateOnlyInBusinessTimeZone } = require("../utils/dateTime");
 
 const router = express.Router();
 const buildCandidateId = (sequenceValue) => `c_${sequenceValue}`;
@@ -1009,6 +1010,7 @@ router.post(
           email,
           phone,
           submittedReason: String(submittedReason || "").trim() || null,
+          submittedAt: "__CURRENT_TIMESTAMP__",
         });
 
         const [statusRows] = await connection.query(
@@ -1892,7 +1894,7 @@ router.post(
           await upsertCandidateFields(connection, {
             resId,
             cid: undefined,
-            walkIn: new Date().toISOString().slice(0, 10),
+            walkIn: getCurrentDateOnlyInBusinessTimeZone(),
           });
         }
 
@@ -1918,11 +1920,23 @@ router.post(
         const statusReasonValue =
           targetStatus === "joined" ? joinedReason : reason;
         if (reasonField) {
+          const statusTimestampFieldMap = {
+            verified: "verifiedAt",
+            walk_in: "walkInAt",
+            further: "furtherAt",
+            selected: "selectedAt",
+            rejected: "rejectedAt",
+            joined: "joinedAt",
+            dropout: "dropoutAt",
+            billed: "billedAt",
+            left: "leftAt",
+          };
           await upsertExtraInfoFields(connection, {
             resId,
             jobJid: resume.jobJid || undefined,
             recruiterRid: rid || undefined,
             [reasonField]: statusReasonValue,
+            [statusTimestampFieldMap[targetStatus]]: "__CURRENT_TIMESTAMP__",
           });
         }
 

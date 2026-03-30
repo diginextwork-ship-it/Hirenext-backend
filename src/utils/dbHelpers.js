@@ -274,6 +274,34 @@ const upsertExtraInfoFields = async (connection, payload) => {
     updates.push("billed_reason = VALUES(billed_reason)");
   }
 
+  const timestampFieldMap = {
+    submittedAt: "submitted_at",
+    verifiedAt: "verified_at",
+    walkInAt: "walk_in_at",
+    furtherAt: "further_at",
+    selectedAt: "selected_at",
+    pendingJoiningAt: "pending_joining_at",
+    joinedAt: "joined_at",
+    dropoutAt: "dropout_at",
+    rejectedAt: "rejected_at",
+    billedAt: "billed_at",
+    leftAt: "left_at",
+  };
+
+  for (const [payloadKey, columnName] of Object.entries(timestampFieldMap)) {
+    if (payload[payloadKey] === undefined || !columns.has(columnName)) continue;
+    insertColumns.push(columnName);
+    placeholders.push(
+      payload[payloadKey] === "__CURRENT_TIMESTAMP__" ? "CURRENT_TIMESTAMP" : "?",
+    );
+    if (payload[payloadKey] !== "__CURRENT_TIMESTAMP__") {
+      insertValues.push(payload[payloadKey]);
+    }
+    updates.push(
+      `${columnName} = ${payload[payloadKey] === "__CURRENT_TIMESTAMP__" ? "CURRENT_TIMESTAMP" : `VALUES(${columnName})`}`,
+    );
+  }
+
   if (insertColumns.length === 0 || updates.length === 0) return;
   if (columns.has("updated_at")) {
     updates.push("updated_at = CURRENT_TIMESTAMP");

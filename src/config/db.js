@@ -974,6 +974,26 @@ const ensureExtraInfoTable = async () => {
       "ALTER TABLE extra_info ADD COLUMN reject_reason TEXT NULL",
     );
   }
+  const extraInfoTimestampColumns = [
+    "submitted_at",
+    "verified_at",
+    "walk_in_at",
+    "further_at",
+    "selected_at",
+    "pending_joining_at",
+    "joined_at",
+    "dropout_at",
+    "rejected_at",
+    "billed_at",
+    "left_at",
+  ];
+  for (const columnName of extraInfoTimestampColumns) {
+    if (!(await columnExists("extra_info", columnName))) {
+      await pool.query(
+        `ALTER TABLE extra_info ADD COLUMN ${columnName} TIMESTAMP NULL DEFAULT NULL`,
+      );
+    }
+  }
   if (!(await columnExists("extra_info", "updated_at"))) {
     await pool.query(
       "ALTER TABLE extra_info ADD COLUMN updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP",

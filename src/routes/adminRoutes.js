@@ -27,6 +27,7 @@ const {
   normalizeResumeStatusInput,
   normalizeWorkflowStatus,
 } = require("../utils/resumeStatusFlow");
+const { parseInclusiveDateRange } = require("../utils/dateTime");
 
 const router = express.Router();
 const ADMIN_API_KEY = String(process.env.ADMIN_API_KEY || "admin123");
@@ -2066,6 +2067,44 @@ const ADMIN_ROLLBACK_TARGETS = {
   joined: "pending_joining",
 };
 
+const PERFORMANCE_EVENT_KEYS = [
+  "submitted",
+  "verified",
+  "walk_in",
+  "selected",
+  "rejected",
+  "pending_joining",
+  "joined",
+  "dropout",
+  "billed",
+  "left",
+];
+
+const PERFORMANCE_EVENT_META = {
+  submitted: { recruiterField: "submitted", summaryField: "totalSubmitted" },
+  verified: { recruiterField: "verified", summaryField: "totalVerified" },
+  walk_in: { recruiterField: "walk_in", summaryField: "totalWalkIn" },
+  selected: { recruiterField: "selected", summaryField: "totalSelected" },
+  rejected: { recruiterField: "rejected", summaryField: "totalRejected" },
+  pending_joining: {
+    recruiterField: "pending_joining",
+    summaryField: "totalPendingJoining",
+  },
+  joined: { recruiterField: "joined", summaryField: "totalJoined" },
+  dropout: { recruiterField: "dropout", summaryField: "totalDropout" },
+  billed: { recruiterField: "billed", summaryField: "totalBilled" },
+  left: { recruiterField: "left", summaryField: "totalLeft" },
+};
+
+const normalizePerformanceTimestamp = (value) =>
+  value == null ? null : String(value).trim() || null;
+
+const isTimestampWithinInclusiveRange = (value, range) => {
+  if (!value) return false;
+  if (!range?.hasDateRange) return true;
+  return value >= range.startDateTime && value <= range.endDateTime;
+};
+
 const getAdminRollbackTarget = (resume) => {
   const currentStatus = normalizeWorkflowStatus(resume.currentStatus);
   const derivedStatus =
@@ -2320,6 +2359,18 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
     const reasonField = statusReasonFieldMap[newStatus];
     const statusReasonValue =
       newStatus === "joined" ? joinedReason : effectiveReason || null;
+    const statusTimestampFieldMap = {
+      verified: "verifiedAt",
+      walk_in: "walkInAt",
+      further: "furtherAt",
+      selected: "selectedAt",
+      pending_joining: "pendingJoiningAt",
+      joined: "joinedAt",
+      rejected: "rejectedAt",
+      dropout: "dropoutAt",
+      billed: "billedAt",
+      left: "leftAt",
+    };
 
     if (reasonField) {
       await upsertExtraInfoFields(connection, {
@@ -2327,6 +2378,14 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
         jobJid: resume.jobJid || undefined,
         recruiterRid: resume.rid || undefined,
         [reasonField]: statusReasonValue,
+        [statusTimestampFieldMap[newStatus]]: "__CURRENT_TIMESTAMP__",
+      });
+    } else if (statusTimestampFieldMap[newStatus]) {
+      await upsertExtraInfoFields(connection, {
+        resId: normalizedResId,
+        jobJid: resume.jobJid || undefined,
+        recruiterRid: resume.rid || undefined,
+        [statusTimestampFieldMap[newStatus]]: "__CURRENT_TIMESTAMP__",
       });
     }
 
@@ -2587,8 +2646,23 @@ router.get("/api/admin/resumes/:resId/file", async (req, res) => {
   }
 });
 
-router.get("/api/admin/performance", async (_req, res) => {
+router.get("/api/admin/performance", async (req, res) => {
   try {
+    const dateRange = parseInclusiveDateRange(
+      req.query?.startDate,
+      req.query?.endDate,
+    );
+    if (dateRange.error) {
+      return res.status(400).json({ message: dateRange.error });
+    }
+
+    const teamLeaderDateClause = dateRange.hasDateRange
+      ? "WHERE j.created_at >= ? AND j.created_at <= ?"
+      : "";
+    const teamLeaderQueryParams = dateRange.hasDateRange
+      ? [dateRange.startDateTime, dateRange.endDateTime]
+      : [];
+
     // ── Team Leaders: jobs created ──────────────────────────────────────────
     const [teamLeaderRows] = await pool.query(
       `SELECT
@@ -2609,10 +2683,12 @@ router.get("/api/admin/performance", async (_req, res) => {
           SUM(CASE WHEN j.access_mode = 'open' THEN 1 ELSE 0 END) AS open_jobs,
           SUM(CASE WHEN j.access_mode = 'restricted' THEN 1 ELSE 0 END) AS restricted_jobs
         FROM jobs j
+        ${teamLeaderDateClause}
         GROUP BY j.recruiter_rid
       ) jc ON jc.recruiter_rid = r.rid
       WHERE LOWER(TRIM(COALESCE(r.role, 'recruiter'))) IN ('team leader', 'team_leader', 'job creator')
       ORDER BY COALESCE(jc.jobs_created, 0) DESC, r.name ASC`,
+      teamLeaderQueryParams,
     );
 
     const teamLeaders = teamLeaderRows.map((row) => ({
@@ -2626,105 +2702,129 @@ router.get("/api/admin/performance", async (_req, res) => {
       restrictedJobs: Number(row.restrictedJobs) || 0,
     }));
 
-    // ── Recruiters: resume statuses ─────────────────────────────────────────
-    const [recruiterRows] = await pool.query(
+    const [recruiterBaseRows] = await pool.query(
       `SELECT
         r.rid,
         r.name,
         r.email,
-        COALESCE(r.points, 0) AS points,
-        COALESCE(rs.submitted, 0) AS submitted,
-        COALESCE(rs.verified, 0) AS verified,
-        COALESCE(rs.walk_in, 0) AS walk_in,
-        COALESCE(rs.further, 0) AS further,
-        COALESCE(rs.selected, 0) AS \`select\`,
-        COALESCE(rs.pending_joining, 0) AS pending_joining,
-        COALESCE(rs.rejected, 0) AS reject,
-        COALESCE(rs.joined, 0) AS joined,
-        COALESCE(rs.dropout, 0) AS dropout,
-        COALESCE(rs.billed, 0) AS billed,
-        COALESCE(rs.left_count, 0) AS left_count,
-        COALESCE(rs.on_hold, 0) AS on_hold,
-        rs.last_updated
+        COALESCE(r.points, 0) AS points
       FROM recruiter r
-      LEFT JOIN (
-        SELECT
-          rd.rid AS recruiter_rid,
-          COUNT(*) AS submitted,
-          SUM(CASE WHEN jrs.selection_status = 'verified' THEN 1 ELSE 0 END) AS verified,
-          SUM(CASE WHEN jrs.selection_status = 'walk_in' THEN 1 ELSE 0 END) AS walk_in,
-          SUM(CASE WHEN jrs.selection_status = 'further' THEN 1 ELSE 0 END) AS further,
-          SUM(CASE WHEN jrs.selection_status = 'selected' AND c.joining_date IS NULL THEN 1 ELSE 0 END) AS selected,
-          SUM(CASE WHEN jrs.selection_status = 'selected' AND c.joining_date IS NOT NULL THEN 1 ELSE 0 END) AS pending_joining,
-          SUM(CASE WHEN jrs.selection_status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
-          SUM(CASE WHEN jrs.selection_status = 'joined' THEN 1 ELSE 0 END) AS joined,
-          SUM(CASE WHEN jrs.selection_status = 'dropout' THEN 1 ELSE 0 END) AS dropout,
-          SUM(CASE WHEN jrs.selection_status = 'billed' THEN 1 ELSE 0 END) AS billed,
-          SUM(CASE WHEN jrs.selection_status = 'left' THEN 1 ELSE 0 END) AS left_count,
-          SUM(CASE WHEN jrs.selection_status = 'on_hold' THEN 1 ELSE 0 END) AS on_hold,
-          MAX(COALESCE(jrs.selected_at, rd.uploaded_at)) AS last_updated
-        FROM resumes_data rd
-        LEFT JOIN candidate c ON c.res_id = rd.res_id
-        LEFT JOIN job_resume_selection jrs
-          ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
-        WHERE COALESCE(rd.submitted_by_role, 'recruiter') = 'recruiter'
-        GROUP BY rd.rid
-      ) rs ON r.rid = rs.recruiter_rid
       WHERE LOWER(TRIM(COALESCE(r.role, 'recruiter'))) = 'recruiter'
-      ORDER BY COALESCE(rs.submitted, 0) DESC, r.name ASC`,
+      ORDER BY r.name ASC`,
     );
 
-    const recruiters = recruiterRows.map((row) => {
-      const submitted = Number(row.submitted) || 0;
-      const verified = Number(row.verified) || 0;
-      const selected = Number(row.select) || 0;
-      const pendingJoining = Number(row.pending_joining) || 0;
-      const joined = Number(row.joined) || 0;
-      const dropout = Number(row.dropout) || 0;
-      const billed = Number(row.billed) || 0;
-      const left = Number(row.left_count) || 0;
-      return {
-        rid: row.rid,
-        name: row.name,
-        email: row.email,
-        points: Number(row.points) || 0,
-        submitted,
-        verified,
-        walk_in: Number(row.walk_in) || 0,
-        further: Number(row.further) || 0,
-        selected,
-        pending_joining: pendingJoining,
-        rejected: Number(row.reject) || 0,
-        joined,
-        dropout,
-        billed,
-        left,
-        on_hold: Number(row.on_hold) || 0,
-        lastUpdated: row.last_updated || null,
-        verificationRate:
-          submitted > 0 ? Number(((verified / submitted) * 100).toFixed(1)) : 0,
-        selectionRate:
-          verified > 0
-            ? Number(
-                (((selected + pendingJoining) / verified) * 100).toFixed(1),
-              )
-            : 0,
-        joiningRate:
-          pendingJoining > 0
-            ? Number(((joined / pendingJoining) * 100).toFixed(1))
-            : 0,
-        dropoutRate:
-          pendingJoining > 0
-            ? Number(((dropout / pendingJoining) * 100).toFixed(1))
-            : 0,
-        billingRate:
-          joined > 0 ? Number(((billed / joined) * 100).toFixed(1)) : 0,
-        leftRate: billed > 0 ? Number(((left / billed) * 100).toFixed(1)) : 0,
-      };
-    });
-
-    const walkInDateSelect = "c.walk_in AS walkInDate,";
-    const resumeJoiningDateSelect = "c.joining_date AS joiningDate,";
+    const [performanceRows] = await pool.query(
+      `SELECT
+        rd.res_id AS resId,
+        rd.job_jid AS jobJid,
+        rd.resume_filename AS resumeFilename,
+        DATE_FORMAT(rd.uploaded_at, '%Y-%m-%d %H:%i:%s.%f') AS submittedAt,
+        DATE_FORMAT(
+          COALESCE(
+            ei.verified_at,
+            CASE WHEN jrs.selection_status = 'verified' THEN jrs.selected_at ELSE NULL END
+          ),
+          '%Y-%m-%d %H:%i:%s.%f'
+        ) AS verifiedAt,
+        DATE_FORMAT(
+          COALESCE(
+            ei.walk_in_at,
+            CASE
+              WHEN c.walk_in IS NOT NULL THEN CAST(CONCAT(c.walk_in, ' 00:00:00.000000') AS DATETIME(6))
+              WHEN jrs.selection_status = 'walk_in' THEN jrs.selected_at
+              ELSE NULL
+            END
+          ),
+          '%Y-%m-%d %H:%i:%s.%f'
+        ) AS walkInAt,
+        DATE_FORMAT(
+          COALESCE(
+            ei.selected_at,
+            CASE
+              WHEN jrs.selection_status = 'selected' AND c.joining_date IS NULL THEN jrs.selected_at
+              ELSE NULL
+            END
+          ),
+          '%Y-%m-%d %H:%i:%s.%f'
+        ) AS selectedAt,
+        DATE_FORMAT(
+          COALESCE(
+            ei.rejected_at,
+            CASE WHEN jrs.selection_status = 'rejected' THEN jrs.selected_at ELSE NULL END
+          ),
+          '%Y-%m-%d %H:%i:%s.%f'
+        ) AS rejectedAt,
+        DATE_FORMAT(
+          COALESCE(
+            ei.pending_joining_at,
+            CASE
+              WHEN jrs.selection_status = 'selected' AND c.joining_date IS NOT NULL
+                THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6))
+              ELSE NULL
+            END
+          ),
+          '%Y-%m-%d %H:%i:%s.%f'
+        ) AS pendingJoiningAt,
+        DATE_FORMAT(
+          COALESCE(
+            ei.joined_at,
+            CASE WHEN jrs.selection_status = 'joined' THEN jrs.selected_at ELSE NULL END
+          ),
+          '%Y-%m-%d %H:%i:%s.%f'
+        ) AS joinedAt,
+        DATE_FORMAT(
+          COALESCE(
+            ei.dropout_at,
+            CASE WHEN jrs.selection_status = 'dropout' THEN jrs.selected_at ELSE NULL END
+          ),
+          '%Y-%m-%d %H:%i:%s.%f'
+        ) AS dropoutAt,
+        DATE_FORMAT(
+          COALESCE(
+            ei.billed_at,
+            CASE WHEN jrs.selection_status = 'billed' THEN jrs.selected_at ELSE NULL END
+          ),
+          '%Y-%m-%d %H:%i:%s.%f'
+        ) AS billedAt,
+        DATE_FORMAT(
+          COALESCE(
+            ei.left_at,
+            CASE WHEN jrs.selection_status = 'left' THEN jrs.selected_at ELSE NULL END
+          ),
+          '%Y-%m-%d %H:%i:%s.%f'
+        ) AS leftAt,
+        DATE_FORMAT(
+          COALESCE(
+            ei.further_at,
+            CASE WHEN jrs.selection_status = 'further' THEN jrs.selected_at ELSE NULL END
+          ),
+          '%Y-%m-%d %H:%i:%s.%f'
+        ) AS furtherAt,
+        DATE_FORMAT(
+          CASE WHEN jrs.selection_status = 'on_hold' THEN jrs.selected_at ELSE NULL END,
+          '%Y-%m-%d %H:%i:%s.%f'
+        ) AS onHoldAt,
+        DATE_FORMAT(c.walk_in, '%Y-%m-%d') AS walkInDate,
+        DATE_FORMAT(c.joining_date, '%Y-%m-%d') AS joiningDate,
+        recruiter.rid AS recruiterRid,
+        recruiter.name AS recruiterName,
+        teamLeader.name AS teamLeaderName,
+        c.name AS candidateName,
+        c.phone AS candidatePhone,
+        j.company_name AS companyName,
+        j.city AS city
+      FROM resumes_data rd
+      LEFT JOIN candidate c ON c.res_id = rd.res_id
+      INNER JOIN recruiter recruiter ON recruiter.rid = rd.rid
+      LEFT JOIN job_resume_selection jrs
+        ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
+      LEFT JOIN jobs j ON j.jid = rd.job_jid
+      LEFT JOIN recruiter teamLeader ON teamLeader.rid = j.recruiter_rid
+      LEFT JOIN extra_info ei
+        ON ei.res_id = rd.res_id OR ei.resume_id = rd.res_id
+      WHERE COALESCE(rd.submitted_by_role, 'recruiter') = 'recruiter'
+      ORDER BY rd.uploaded_at DESC, rd.res_id DESC`,
+    );
 
     const normalizePerformanceDrilldownItem = (row, statusKey) => ({
       resId: row.resId || null,
@@ -2745,48 +2845,11 @@ router.get("/api/admin/performance", async (_req, res) => {
       candidateName: row.candidateName || null,
       walkInDate: row.walkInDate || null,
       joiningDate: row.joiningDate || null,
+      eventAt: row.eventAt || null,
     });
 
-    const [statusDrilldownRows] = await pool.query(
-      `SELECT
-        rd.res_id AS resId,
-        rd.job_jid AS jobJid,
-        rd.resume_filename AS resumeFilename,
-        COALESCE(jrs.selection_status, 'pending') AS workflowStatus,
-        jrs.selected_at AS statusUpdatedAt,
-        ${walkInDateSelect}
-        ${resumeJoiningDateSelect}
-        recruiter.rid AS recruiterRid,
-        recruiter.name AS recruiterName,
-        recruiter.email AS recruiterEmail,
-        teamLeader.rid AS teamLeaderRid,
-        teamLeader.name AS teamLeaderName,
-        c.name AS candidateName,
-        c.phone AS candidatePhone,
-        j.company_name AS companyName,
-        j.city AS city
-      FROM resumes_data rd
-      LEFT JOIN candidate c ON c.res_id = rd.res_id
-      INNER JOIN recruiter recruiter ON recruiter.rid = rd.rid
-      LEFT JOIN job_resume_selection jrs
-        ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
-      LEFT JOIN jobs j ON j.jid = rd.job_jid
-      LEFT JOIN recruiter teamLeader ON teamLeader.rid = j.recruiter_rid
-      WHERE COALESCE(rd.submitted_by_role, 'recruiter') = 'recruiter'
-        AND COALESCE(jrs.selection_status, '') IN (
-          'verified',
-          'walk_in',
-          'selected',
-          'joined',
-          'dropout',
-          'rejected',
-          'billed',
-          'left'
-        )
-      ORDER BY jrs.selected_at DESC, rd.uploaded_at DESC, rd.res_id DESC`,
-    );
-
     const statusDrilldown = {
+      submitted: [],
       verified: [],
       walk_in: [],
       selected: [],
@@ -2798,42 +2861,153 @@ router.get("/api/admin/performance", async (_req, res) => {
       left: [],
     };
 
-    for (const row of statusDrilldownRows) {
-      let statusKey = String(row.workflowStatus || "")
-        .trim()
-        .toLowerCase();
-      if (statusKey === "selected" && row.joiningDate) {
-        statusKey = "pending_joining";
-      }
-      if (!Object.prototype.hasOwnProperty.call(statusDrilldown, statusKey)) {
-        continue;
+    const recruiterMap = new Map(
+      recruiterBaseRows.map((row) => [
+        row.rid,
+        {
+          rid: row.rid,
+          name: row.name,
+          email: row.email,
+          points: Number(row.points) || 0,
+          submitted: 0,
+          verified: 0,
+          walk_in: 0,
+          further: 0,
+          selected: 0,
+          pending_joining: 0,
+          rejected: 0,
+          joined: 0,
+          dropout: 0,
+          billed: 0,
+          left: 0,
+          on_hold: 0,
+          lastUpdated: null,
+        },
+      ]),
+    );
+
+    for (const rawRow of performanceRows) {
+      const recruiterStats = recruiterMap.get(rawRow.recruiterRid);
+      if (!recruiterStats) continue;
+
+      const row = {
+        ...rawRow,
+        submittedAt: normalizePerformanceTimestamp(rawRow.submittedAt),
+        verifiedAt: normalizePerformanceTimestamp(rawRow.verifiedAt),
+        walkInAt: normalizePerformanceTimestamp(rawRow.walkInAt),
+        selectedAt: normalizePerformanceTimestamp(rawRow.selectedAt),
+        rejectedAt: normalizePerformanceTimestamp(rawRow.rejectedAt),
+        pendingJoiningAt: normalizePerformanceTimestamp(rawRow.pendingJoiningAt),
+        joinedAt: normalizePerformanceTimestamp(rawRow.joinedAt),
+        dropoutAt: normalizePerformanceTimestamp(rawRow.dropoutAt),
+        billedAt: normalizePerformanceTimestamp(rawRow.billedAt),
+        leftAt: normalizePerformanceTimestamp(rawRow.leftAt),
+        furtherAt: normalizePerformanceTimestamp(rawRow.furtherAt),
+        onHoldAt: normalizePerformanceTimestamp(rawRow.onHoldAt),
+      };
+
+      const eventMap = {
+        submitted: row.submittedAt,
+        verified: row.verifiedAt,
+        walk_in: row.walkInAt,
+        selected: row.selectedAt,
+        rejected: row.rejectedAt,
+        pending_joining: row.pendingJoiningAt,
+        joined: row.joinedAt,
+        dropout: row.dropoutAt,
+        billed: row.billedAt,
+        left: row.leftAt,
+      };
+
+      for (const metricKey of PERFORMANCE_EVENT_KEYS) {
+        const eventAt = eventMap[metricKey];
+        if (!isTimestampWithinInclusiveRange(eventAt, dateRange)) continue;
+        recruiterStats[PERFORMANCE_EVENT_META[metricKey].recruiterField] += 1;
+        row.eventAt = eventAt;
+        statusDrilldown[metricKey].push(
+          normalizePerformanceDrilldownItem(row, metricKey),
+        );
+        if (!recruiterStats.lastUpdated || eventAt > recruiterStats.lastUpdated) {
+          recruiterStats.lastUpdated = eventAt;
+        }
       }
 
-      statusDrilldown[statusKey].push(
-        normalizePerformanceDrilldownItem(row, statusKey),
-      );
+      if (isTimestampWithinInclusiveRange(row.furtherAt, dateRange)) {
+        recruiterStats.further += 1;
+        if (!recruiterStats.lastUpdated || row.furtherAt > recruiterStats.lastUpdated) {
+          recruiterStats.lastUpdated = row.furtherAt;
+        }
+      }
+
+      if (isTimestampWithinInclusiveRange(row.onHoldAt, dateRange)) {
+        recruiterStats.on_hold += 1;
+        if (!recruiterStats.lastUpdated || row.onHoldAt > recruiterStats.lastUpdated) {
+          recruiterStats.lastUpdated = row.onHoldAt;
+        }
+      }
     }
+
+    const recruiters = Array.from(recruiterMap.values())
+      .map((row) => {
+        const submitted = row.submitted;
+        const verified = row.verified;
+        const selected = row.selected;
+        const pendingJoining = row.pending_joining;
+        const joined = row.joined;
+        const dropout = row.dropout;
+        const billed = row.billed;
+        const left = row.left;
+
+        return {
+          ...row,
+          verificationRate:
+            submitted > 0
+              ? Number(((verified / submitted) * 100).toFixed(1))
+              : 0,
+          selectionRate:
+            verified > 0
+              ? Number((((selected + pendingJoining) / verified) * 100).toFixed(1))
+              : 0,
+          joiningRate:
+            pendingJoining > 0
+              ? Number(((joined / pendingJoining) * 100).toFixed(1))
+              : 0,
+          dropoutRate:
+            pendingJoining > 0
+              ? Number(((dropout / pendingJoining) * 100).toFixed(1))
+              : 0,
+          billingRate:
+            joined > 0 ? Number(((billed / joined) * 100).toFixed(1)) : 0,
+          leftRate:
+            billed > 0 ? Number(((left / billed) * 100).toFixed(1)) : 0,
+        };
+      })
+      .sort((a, b) => b.submitted - a.submitted || a.name.localeCompare(b.name));
 
     // ── Summary totals ──────────────────────────────────────────────────────
     const summary = {
       totalTeamLeaders: teamLeaders.length,
       totalRecruiters: recruiters.length,
-      totalJobsCreated: teamLeaders.reduce((s, tl) => s + tl.jobsCreated, 0),
-      totalPositions: teamLeaders.reduce((s, tl) => s + tl.totalPositions, 0),
-      totalSubmitted: recruiters.reduce((s, r) => s + r.submitted, 0),
-      totalVerified: recruiters.reduce((s, r) => s + r.verified, 0),
-      totalWalkIn: recruiters.reduce((s, r) => s + r.walk_in, 0),
-      totalSelected: recruiters.reduce((s, r) => s + r.selected, 0),
-      totalPendingJoining: recruiters.reduce(
-        (s, r) => s + r.pending_joining,
-        0,
-      ),
-      totalJoined: recruiters.reduce((s, r) => s + r.joined, 0),
-      totalDropout: recruiters.reduce((s, r) => s + r.dropout, 0),
-      totalRejected: recruiters.reduce((s, r) => s + r.rejected, 0),
-      totalBilled: recruiters.reduce((s, r) => s + r.billed, 0),
-      totalLeft: recruiters.reduce((s, r) => s + r.left, 0),
+      totalJobsCreated: teamLeaders.reduce((sum, tl) => sum + tl.jobsCreated, 0),
+      totalPositions: teamLeaders.reduce((sum, tl) => sum + tl.totalPositions, 0),
+      totalSubmitted: 0,
+      totalVerified: 0,
+      totalWalkIn: 0,
+      totalSelected: 0,
+      totalPendingJoining: 0,
+      totalJoined: 0,
+      totalDropout: 0,
+      totalRejected: 0,
+      totalBilled: 0,
+      totalLeft: 0,
     };
+
+    for (const recruiter of recruiters) {
+      for (const metricKey of PERFORMANCE_EVENT_KEYS) {
+        summary[PERFORMANCE_EVENT_META[metricKey].summaryField] +=
+          recruiter[PERFORMANCE_EVENT_META[metricKey].recruiterField];
+      }
+    }
 
     return res.status(200).json({
       teamLeaders,

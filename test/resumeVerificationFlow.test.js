@@ -48,6 +48,12 @@ const buildTempResumeId = (suffix) => {
   return `res_${compactSuffix}${tempResumeCounter}`;
 };
 
+let tempEntityCounter = 0;
+const buildTempId = (prefix) => {
+  tempEntityCounter += 1;
+  return `${prefix}_${Date.now()}_${tempEntityCounter}`.slice(0, 20);
+};
+
 const createTempResume = async (resId) => {
   await pool.query(
     `INSERT INTO resumes_data
@@ -80,6 +86,114 @@ const cleanupTempResume = async (resId) => {
   await pool.query("DELETE FROM candidate WHERE res_id = ?", [resId]);
   await pool.query("DELETE FROM job_resume_selection WHERE res_id = ?", [resId]);
   await pool.query("DELETE FROM resumes_data WHERE res_id = ?", [resId]);
+};
+
+const createTempRecruiter = async ({ rid, name, email, role, points = 0 }) => {
+  await pool.query(
+    `INSERT INTO recruiter (rid, name, email, password, role, points)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [rid, name, email, "pass123", role, points],
+  );
+};
+
+const createTempJob = async ({
+  jid,
+  recruiterRid,
+  companyName,
+  roleName,
+  createdAt,
+}) => {
+  await pool.query(
+    `INSERT INTO jobs
+      (jid, recruiter_rid, city, state, pincode, company_name, role_name, positions_open, access_mode, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      jid,
+      recruiterRid,
+      "Bengaluru",
+      "Karnataka",
+      "560001",
+      companyName,
+      roleName,
+      3,
+      "open",
+      createdAt,
+    ],
+  );
+};
+
+const createPerformanceResume = async ({
+  resId,
+  recruiterRid,
+  jobJid,
+  uploadedAt,
+  candidateName,
+  candidatePhone,
+  walkInDate = null,
+  joiningDate = null,
+  currentStatus = null,
+  currentStatusAt = null,
+  extraInfo = {},
+}) => {
+  await pool.query(
+    `INSERT INTO resumes_data
+      (res_id, resume, rid, job_jid, resume_filename, resume_type, submitted_by_role, uploaded_at, ats_raw_json, source)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      resId,
+      Buffer.from("admin-performance-test"),
+      recruiterRid,
+      jobJid,
+      `${resId}.pdf`,
+      "pdf",
+      "recruiter",
+      uploadedAt,
+      JSON.stringify({
+        parsedData: {
+          name: candidateName,
+          phone: candidatePhone,
+          email: `${resId}@example.com`,
+        },
+      }),
+      "test",
+    ],
+  );
+
+  await pool.query(
+    `INSERT INTO candidate (cid, res_id, job_jid, recruiter_rid, name, phone, joining_date, walk_in)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [`c_${resId.replace(/^res_/, "").slice(0, 16)}`, resId, jobJid, recruiterRid, candidateName, candidatePhone, joiningDate, walkInDate],
+  );
+
+  if (currentStatus) {
+    await pool.query(
+      `INSERT INTO job_resume_selection
+        (job_jid, res_id, selected_by_admin, selection_status, selection_note, selected_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [jobJid, resId, "test-suite", currentStatus, "test status", currentStatusAt || uploadedAt],
+    );
+  }
+
+  const extraColumns = ["res_id", "resume_id", "job_jid", "recruiter_rid"];
+  const extraValues = [resId, resId, jobJid, recruiterRid];
+  for (const [column, value] of Object.entries(extraInfo)) {
+    extraColumns.push(column);
+    extraValues.push(value);
+  }
+  await pool.query(
+    `INSERT INTO extra_info (${extraColumns.join(", ")})
+     VALUES (${extraColumns.map(() => "?").join(", ")})`,
+    extraValues,
+  );
+};
+
+const cleanupPerformanceFixture = async ({ recruiterRid, teamLeaderRid, jobJid, resIds }) => {
+  await pool.query("DELETE FROM extra_info WHERE res_id IN (?) OR resume_id IN (?)", [resIds, resIds]);
+  await pool.query("DELETE FROM candidate WHERE res_id IN (?)", [resIds]);
+  await pool.query("DELETE FROM job_resume_selection WHERE res_id IN (?)", [resIds]);
+  await pool.query("DELETE FROM resumes_data WHERE res_id IN (?)", [resIds]);
+  await pool.query("DELETE FROM jobs WHERE jid = ?", [jobJid]);
+  await pool.query("DELETE FROM recruiter WHERE rid IN (?, ?)", [recruiterRid, teamLeaderRid]);
 };
 
 const setCandidateRevenue = async (resId, revenue) => {
@@ -157,6 +271,7 @@ const restoreStatusRow = async (rid, snapshot) => {
 };
 
 before(async () => {
+  await pool.initDatabase();
   await pool.query("SELECT 1");
   server = app.listen(0);
   await new Promise((resolve) => {
@@ -369,6 +484,176 @@ test("verify routes enforce auth and role contract", async () => {
     );
   } finally {
     await cleanupTempResume(resId);
+  }
+});
+
+test("admin performance endpoint applies inclusive date filters across summary, recruiters, team leaders, and drilldown", async () => {
+  const todayDate = "2037-03-30";
+  const yesterdayDate = "2037-03-29";
+  const monthStart = "2037-03-01";
+  const monthEnd = "2037-03-31";
+  const recruiterRid = buildTempId("rperf");
+  const teamLeaderRid = buildTempId("tlperf");
+  const jobJid = buildTempId("jobperf");
+  const todayResId = buildTempResumeId("perfday");
+  const yesterdayResId = buildTempResumeId("perfprev");
+
+  await createTempRecruiter({
+    rid: recruiterRid,
+    name: "Perf Recruiter",
+    email: `${recruiterRid}@example.com`,
+    role: "recruiter",
+    points: 12,
+  });
+  await createTempRecruiter({
+    rid: teamLeaderRid,
+    name: "Perf Team Lead",
+    email: `${teamLeaderRid}@example.com`,
+    role: "team leader",
+    points: 7,
+  });
+  await createTempJob({
+    jid: jobJid,
+    recruiterRid: teamLeaderRid,
+    companyName: "Perf Co",
+    roleName: "QA Engineer",
+    createdAt: `${todayDate} 08:30:00`,
+  });
+
+  await createPerformanceResume({
+    resId: todayResId,
+    recruiterRid,
+    jobJid,
+    uploadedAt: `${todayDate} 09:00:00`,
+    candidateName: "March Thirty",
+    candidatePhone: "9999991111",
+    walkInDate: todayDate,
+    joiningDate: todayDate,
+    currentStatus: "billed",
+    currentStatusAt: `${todayDate} 16:00:00`,
+    extraInfo: {
+      submitted_at: `${todayDate} 09:00:00`,
+      verified_at: `${todayDate} 10:00:00`,
+      walk_in_at: `${todayDate} 11:00:00`,
+      selected_at: `${todayDate} 12:00:00`,
+      pending_joining_at: `${todayDate} 13:00:00`,
+      joined_at: `${todayDate} 14:00:00`,
+      billed_at: `${todayDate} 15:00:00`,
+    },
+  });
+
+  await createPerformanceResume({
+    resId: yesterdayResId,
+    recruiterRid,
+    jobJid,
+    uploadedAt: `${yesterdayDate} 09:00:00`,
+    candidateName: "March Twenty Nine",
+    candidatePhone: "9999992222",
+    currentStatus: "left",
+    currentStatusAt: `${yesterdayDate} 18:00:00`,
+    extraInfo: {
+      submitted_at: `${yesterdayDate} 09:00:00`,
+      rejected_at: `${yesterdayDate} 10:00:00`,
+      dropout_at: `${yesterdayDate} 11:00:00`,
+      left_at: `${yesterdayDate} 12:00:00`,
+    },
+  });
+
+  try {
+    const todayResponse = await requestJson(
+      `/api/admin/performance?startDate=${todayDate}&endDate=${todayDate}`,
+      {
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+        },
+      },
+    );
+    assert.equal(todayResponse.status, 200);
+    assert.equal(todayResponse.body?.summary?.totalSubmitted, 1);
+    assert.equal(todayResponse.body?.summary?.totalVerified, 1);
+    assert.equal(todayResponse.body?.summary?.totalWalkIn, 1);
+    assert.equal(todayResponse.body?.summary?.totalSelected, 1);
+    assert.equal(todayResponse.body?.summary?.totalPendingJoining, 1);
+    assert.equal(todayResponse.body?.summary?.totalJoined, 1);
+    assert.equal(todayResponse.body?.summary?.totalBilled, 1);
+    assert.equal(todayResponse.body?.summary?.totalRejected, 0);
+    assert.equal(todayResponse.body?.summary?.totalDropout, 0);
+    assert.equal(todayResponse.body?.summary?.totalLeft, 0);
+    assert.equal(todayResponse.body?.statusDrilldown?.submitted?.length, 1);
+    assert.equal(todayResponse.body?.statusDrilldown?.verified?.length, 1);
+    assert.equal(todayResponse.body?.statusDrilldown?.walk_in?.length, 1);
+    assert.equal(todayResponse.body?.statusDrilldown?.selected?.length, 1);
+    assert.equal(todayResponse.body?.statusDrilldown?.pending_joining?.length, 1);
+    assert.equal(todayResponse.body?.statusDrilldown?.joined?.length, 1);
+    assert.equal(todayResponse.body?.statusDrilldown?.billed?.length, 1);
+    assert.equal(todayResponse.body?.statusDrilldown?.rejected?.length, 0);
+
+    const todayRecruiter = todayResponse.body?.recruiters?.find(
+      (item) => item.rid === recruiterRid,
+    );
+    assert.equal(todayRecruiter?.submitted, 1);
+    assert.equal(todayRecruiter?.verified, 1);
+    assert.equal(todayRecruiter?.walk_in, 1);
+    assert.equal(todayRecruiter?.selected, 1);
+    assert.equal(todayRecruiter?.pending_joining, 1);
+    assert.equal(todayRecruiter?.joined, 1);
+    assert.equal(todayRecruiter?.billed, 1);
+    assert.equal(todayRecruiter?.rejected, 0);
+    assert.equal(todayRecruiter?.dropout, 0);
+    assert.equal(todayRecruiter?.left, 0);
+
+    const todayTeamLeader = todayResponse.body?.teamLeaders?.find(
+      (item) => item.rid === teamLeaderRid,
+    );
+    assert.equal(todayTeamLeader?.jobsCreated, 1);
+
+    const yesterdayResponse = await requestJson(
+      `/api/admin/performance?startDate=${yesterdayDate}&endDate=${yesterdayDate}`,
+      {
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+        },
+      },
+    );
+    assert.equal(yesterdayResponse.status, 200);
+    assert.equal(yesterdayResponse.body?.summary?.totalSubmitted, 1);
+    assert.equal(yesterdayResponse.body?.summary?.totalVerified, 0);
+    assert.equal(yesterdayResponse.body?.summary?.totalRejected, 1);
+    assert.equal(yesterdayResponse.body?.summary?.totalDropout, 1);
+    assert.equal(yesterdayResponse.body?.summary?.totalLeft, 1);
+    assert.equal(yesterdayResponse.body?.summary?.totalBilled, 0);
+    assert.equal(yesterdayResponse.body?.statusDrilldown?.submitted?.length, 1);
+    assert.equal(yesterdayResponse.body?.statusDrilldown?.rejected?.length, 1);
+    assert.equal(yesterdayResponse.body?.statusDrilldown?.dropout?.length, 1);
+    assert.equal(yesterdayResponse.body?.statusDrilldown?.left?.length, 1);
+
+    const yesterdayTeamLeader = yesterdayResponse.body?.teamLeaders?.find(
+      (item) => item.rid === teamLeaderRid,
+    );
+    assert.equal(yesterdayTeamLeader?.jobsCreated, 0);
+
+    const monthResponse = await requestJson(
+      `/api/admin/performance?startDate=${monthStart}&endDate=${monthEnd}`,
+      {
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+        },
+      },
+    );
+    assert.equal(monthResponse.status, 200);
+    assert.equal(monthResponse.body?.summary?.totalSubmitted, 2);
+    assert.equal(monthResponse.body?.summary?.totalVerified, 1);
+    assert.equal(monthResponse.body?.summary?.totalRejected, 1);
+    assert.equal(monthResponse.body?.summary?.totalDropout, 1);
+    assert.equal(monthResponse.body?.summary?.totalLeft, 1);
+    assert.equal(monthResponse.body?.summary?.totalBilled, 1);
+  } finally {
+    await cleanupPerformanceFixture({
+      recruiterRid,
+      teamLeaderRid,
+      jobJid,
+      resIds: [todayResId, yesterdayResId],
+    });
   }
 });
 

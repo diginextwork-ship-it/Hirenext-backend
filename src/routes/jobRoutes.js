@@ -42,6 +42,7 @@ const {
   normalizeResumeStatusInput,
   normalizeWorkflowStatus,
 } = require("../utils/resumeStatusFlow");
+const { getCurrentDateOnlyInBusinessTimeZone } = require("../utils/dateTime");
 
 const router = express.Router();
 const buildCandidateId = (sequenceValue) => `c_${sequenceValue}`;
@@ -1028,6 +1029,17 @@ router.post(
         }
 
         if (reasonField && statusReasonValue !== undefined) {
+          const statusTimestampFieldMap = {
+            verified: "verifiedAt",
+            walk_in: "walkInAt",
+            further: "furtherAt",
+            selected: "selectedAt",
+            rejected: "rejectedAt",
+            joined: "joinedAt",
+            dropout: "dropoutAt",
+            billed: "billedAt",
+            left: "leftAt",
+          };
           await upsertExtraInfoFields(connection, {
             resId: normalizedResId,
             jobJid: req.ownedJob.jid,
@@ -1036,6 +1048,7 @@ router.post(
               toTrimmedString(resumeRows[0].candidateName) || undefined,
             email: toTrimmedString(resumeRows[0].email) || undefined,
             [reasonField]: statusReasonValue,
+            [statusTimestampFieldMap[normalizedStatus]]: "__CURRENT_TIMESTAMP__",
           });
         }
 
@@ -1060,7 +1073,7 @@ router.post(
           await upsertCandidateFields(connection, {
             resId: normalizedResId,
             cid: undefined,
-            walkIn: new Date().toISOString().slice(0, 10),
+            walkIn: getCurrentDateOnlyInBusinessTimeZone(),
           });
         }
 
@@ -1264,6 +1277,7 @@ router.post(
             toTrimmedString(resumeRows[0].candidateName) || undefined,
           email: toTrimmedString(resumeRows[0].email) || undefined,
           leftReason: normalizedNote,
+          leftAt: "__CURRENT_TIMESTAMP__",
         });
 
         if (leftStatusCandidateSnapshot.name) {
@@ -1960,6 +1974,13 @@ const processBillingTransitions = async () => {
            WHERE id = ? AND selection_status = 'joined'`,
           [row.id],
         );
+
+        await upsertExtraInfoFields(connection, {
+          resId: row.res_id,
+          jobJid: row.job_jid,
+          recruiterRid: row.recruiterRid || undefined,
+          billedAt: "__CURRENT_TIMESTAMP__",
+        });
 
         if (row.recruiterRid) {
           await connection.query(
