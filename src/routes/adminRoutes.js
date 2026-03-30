@@ -107,11 +107,7 @@ const parseAdvanceStatusUpload = (req, res, next) => {
 };
 
 const parseAdminAdvanceStatusRequest = (req, res, next) => {
-  const contentType = String(req.headers["content-type"] || "").toLowerCase();
-  if (!contentType.includes("multipart/form-data")) {
-    return next();
-  }
-  return parseRevenueUpload(req, res, next);
+  return parseAdvanceStatusUpload(req, res, next);
 };
 
 const ensureMoneySumTable = async () => {
@@ -2251,27 +2247,19 @@ router.post(
       .json({ message: "reason is required for this status transition." });
   }
 
-  const revenueRequiredStatuses = new Set(["billed"]);
-  const shouldValidateRevenue = revenueRequiredStatuses.has(newStatus);
+  const shouldValidateRevenue = newStatus === "billed" && rawRevenue !== "";
   const parsedRevenue = shouldValidateRevenue
-    ? rawRevenue === ""
-      ? null
-      : Number.parseInt(rawRevenue, 10)
+    ? Number.parseFloat(rawRevenue)
     : undefined;
 
-  if (shouldValidateRevenue && rawRevenue !== "" && !Number.isFinite(parsedRevenue)) {
+  if (shouldValidateRevenue && !Number.isFinite(parsedRevenue)) {
     return res.status(400).json({
       message: "revenue must be a valid non-negative number.",
     });
   }
-  if (shouldValidateRevenue && parsedRevenue !== null && parsedRevenue < 0) {
+  if (shouldValidateRevenue && parsedRevenue < 0) {
     return res.status(400).json({
       message: "revenue must be a valid non-negative number.",
-    });
-  }
-  if (newStatus === "billed" && parsedRevenue === null) {
-    return res.status(400).json({
-      message: "revenue is required for billed status.",
     });
   }
 

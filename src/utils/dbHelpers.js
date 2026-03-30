@@ -477,10 +477,8 @@ const addCandidateBillIntakeEntry = async (
      LIMIT 1`,
     [normalizedResId],
   );
-  const amount = Number(candidateRows?.[0]?.revenue);
-  if (!Number.isFinite(amount) || amount < 0) {
-    return null;
-  }
+  const rawAmount = Number(candidateRows?.[0]?.revenue);
+  const amount = Number.isFinite(rawAmount) && rawAmount >= 0 ? rawAmount : 0;
 
   const moneySumColumns = await getTableColumns("money_sum", connection);
   const [profitRows] = moneySumColumns.has("profit")
