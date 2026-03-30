@@ -2204,21 +2204,22 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
       .json({ message: "reason is required for this status transition." });
   }
 
-  const parsedRevenue =
-    rawRevenue === "" ? null : Number.parseInt(rawRevenue, 10);
-  if (rawRevenue !== "" && !Number.isFinite(parsedRevenue)) {
+  const revenueRequiredStatuses = new Set(["billed"]);
+  const shouldValidateRevenue = revenueRequiredStatuses.has(newStatus);
+  const parsedRevenue = shouldValidateRevenue
+    ? rawRevenue === ""
+      ? null
+      : Number.parseInt(rawRevenue, 10)
+    : undefined;
+
+  if (shouldValidateRevenue && rawRevenue !== "" && !Number.isFinite(parsedRevenue)) {
     return res.status(400).json({
       message: "revenue must be a valid non-negative number.",
     });
   }
-  if (parsedRevenue !== null && parsedRevenue < 0) {
+  if (shouldValidateRevenue && parsedRevenue !== null && parsedRevenue < 0) {
     return res.status(400).json({
       message: "revenue must be a valid non-negative number.",
-    });
-  }
-  if (newStatus === "pending_joining" && parsedRevenue === null) {
-    return res.status(400).json({
-      message: "revenue is required for pending_joining status.",
     });
   }
   if (newStatus === "billed" && parsedRevenue === null) {
@@ -2339,10 +2340,7 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
         adminStatusCandidateSnapshot.institutionName || undefined,
       age: adminStatusCandidateSnapshot.age,
       joiningDate: candidateJoiningDateValue,
-      revenue:
-        newStatus === "pending_joining" || newStatus === "billed"
-          ? parsedRevenue
-          : undefined,
+      revenue: newStatus === "billed" ? parsedRevenue : undefined,
     });
 
     const statusReasonFieldMap = {

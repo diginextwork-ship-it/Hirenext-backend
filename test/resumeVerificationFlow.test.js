@@ -427,6 +427,87 @@ test("team leader billed update creates admin intake entry from candidate revenu
   }
 });
 
+test("admin pending_joining requires joining_date without revenue", async () => {
+  const resId = buildTempResumeId("pendjoin");
+
+  await createTempResume(resId);
+
+  try {
+    const verifyResponse = await requestJson(
+      `/api/admin/resumes/${resId}/advance-status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({ status: "verified" }),
+      },
+    );
+    assert.equal(verifyResponse.status, 200);
+
+    const walkInResponse = await requestJson(
+      `/api/admin/resumes/${resId}/advance-status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({ status: "walk_in" }),
+      },
+    );
+    assert.equal(walkInResponse.status, 200);
+
+    const selectedResponse = await requestJson(
+      `/api/admin/resumes/${resId}/advance-status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({ status: "selected" }),
+      },
+    );
+    assert.equal(selectedResponse.status, 200);
+
+    const pendingJoiningResponse = await requestJson(
+      `/api/admin/resumes/${resId}/advance-status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({
+          status: "pending_joining",
+          joining_date: "2026-04-05",
+        }),
+      },
+    );
+
+    assert.equal(pendingJoiningResponse.status, 200);
+    assert.equal(pendingJoiningResponse.body?.data?.status, "pending_joining");
+    assert.equal(
+      pendingJoiningResponse.body?.data?.joining_date,
+      null,
+    );
+
+    const [candidateRows] = await pool.query(
+      `SELECT DATE_FORMAT(joining_date, '%Y-%m-%d') AS joiningDate, revenue
+       FROM candidate
+       WHERE res_id = ?
+       LIMIT 1`,
+      [resId],
+    );
+    assert.equal(candidateRows[0]?.joiningDate, "2026-04-05");
+    assert.equal(candidateRows[0]?.revenue, null);
+  } finally {
+    await cleanupTempResume(resId);
+  }
+});
+
 test("verify routes enforce auth and role contract", async () => {
   const resId = buildTempResumeId("access");
   await createTempResume(resId);
