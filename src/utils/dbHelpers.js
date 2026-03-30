@@ -454,7 +454,11 @@ const upsertCandidateFields = async (connection, payload) => {
   }
 };
 
-const addCandidateBillIntakeEntry = async (connection, resId) => {
+const addCandidateBillIntakeEntry = async (
+  connection,
+  resId,
+  { reason = "candidate's bill", photo = null, moneySumId = null } = {},
+) => {
   const normalizedResId = String(resId || "").trim();
   if (!normalizedResId) return null;
   if (!(await tableExists("candidate")) || !(await tableExists("money_sum"))) {
@@ -490,15 +494,46 @@ const addCandidateBillIntakeEntry = async (connection, resId) => {
   const lastProfit = Number(profitRows?.[0]?.lastProfit) || 0;
   const nextProfit = Math.round((lastProfit + amount) * 100) / 100;
 
-  await connection.query(
-    `INSERT INTO money_sum (company_rev, expense, profit, reason, entry_type)
-     VALUES (?, 0, ?, ?, 'intake')`,
-    [amount, nextProfit, "candidate's bill"],
+  const safeReason = String(reason || "").trim() || "candidate's bill";
+  const safePhoto =
+    photo === undefined || photo === null || photo === "" ? null : String(photo);
+  const normalizedMoneySumId = Number(moneySumId);
+
+  if (Number.isInteger(normalizedMoneySumId) && normalizedMoneySumId > 0) {
+    await connection.query(
+      `UPDATE money_sum
+       SET company_rev = ?,
+           expense = 0,
+           profit = ?,
+           reason = ?,
+           photo = ?,
+           entry_type = 'intake',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [amount, nextProfit, safeReason, safePhoto, normalizedMoneySumId],
+    );
+
+    return {
+      id: normalizedMoneySumId,
+      amount,
+      profit: nextProfit,
+      reason: safeReason,
+      photo: safePhoto,
+    };
+  }
+
+  const [insertResult] = await connection.query(
+    `INSERT INTO money_sum (company_rev, expense, profit, reason, photo, entry_type)
+     VALUES (?, 0, ?, ?, ?, 'intake')`,
+    [amount, nextProfit, safeReason, safePhoto],
   );
 
   return {
+    id: Number(insertResult?.insertId) || null,
     amount,
     profit: nextProfit,
+    reason: safeReason,
+    photo: safePhoto,
   };
 };
 

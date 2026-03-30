@@ -39,6 +39,7 @@ const ALLOWED_REVENUE_UPLOAD_MIME_TYPES = new Set([
   "application/pdf",
 ]);
 const MAX_REVENUE_UPLOAD_BYTES = 8 * 1024 * 1024;
+const ALLOWED_BILLED_ATTACHMENT_MIME_TYPES = new Set(["application/pdf"]);
 
 const revenueUpload = multer({
   storage: multer.memoryStorage(),
@@ -68,6 +69,49 @@ const parseRevenueUpload = (req, res, next) => {
       message: error?.message || "Invalid attachment upload.",
     });
   });
+};
+
+const billedStatusUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_REVENUE_UPLOAD_BYTES },
+  fileFilter: (_req, file, callback) => {
+    const mimeType = String(file?.mimetype || "")
+      .trim()
+      .toLowerCase();
+    if (!ALLOWED_BILLED_ATTACHMENT_MIME_TYPES.has(mimeType)) {
+      return callback(new Error("Only PDF attachments are allowed."));
+    }
+    return callback(null, true);
+  },
+});
+
+const parseAdvanceStatusUpload = (req, res, next) => {
+  const contentType = String(req.headers?.["content-type"] || "")
+    .trim()
+    .toLowerCase();
+  if (!contentType.includes("multipart/form-data")) {
+    return next();
+  }
+
+  billedStatusUpload.single("photo")(req, res, (error) => {
+    if (!error) return next();
+    if (error?.code === "LIMIT_FILE_SIZE") {
+      return res
+        .status(400)
+        .json({ message: "Billed attachment must be 8MB or smaller." });
+    }
+    return res.status(400).json({
+      message: error?.message || "Invalid billed attachment upload.",
+    });
+  });
+};
+
+const parseAdminAdvanceStatusRequest = (req, res, next) => {
+  const contentType = String(req.headers["content-type"] || "").toLowerCase();
+  if (!contentType.includes("multipart/form-data")) {
+    return next();
+  }
+  return parseRevenueUpload(req, res, next);
 };
 
 const ensureMoneySumTable = async () => {
@@ -2119,7 +2163,10 @@ const getAdminRollbackTarget = (resume) => {
   return ADMIN_ROLLBACK_TARGETS[derivedStatus] || "";
 };
 
-router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
+router.post(
+  "/api/admin/resumes/:resId/advance-status",
+  parseAdminAdvanceStatusRequest,
+  async (req, res) => {
   if (!ensureAdminAuthorized(req, res)) return;
 
   const normalizedResId = String(req.params.resId || "").trim();
@@ -2262,8 +2309,15 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
     const parsedResumePayload = parseJsonField(resume.atsRawJson);
     const adminStatusCandidateSnapshot = extractCandidateSnapshot({
       source: {
-        candidate_name: resume.candidateName,
-        email: resume.candidateEmail,
+        candidate_name:
+          req.body?.candidate_name ??
+          req.body?.candidateName ??
+          resume.candidateName,
+        candidate_email:
+          req.body?.candidate_email ??
+          req.body?.candidateEmail ??
+          resume.candidateEmail,
+        candidate_phone: req.body?.candidate_phone ?? req.body?.candidatePhone,
         job_jid: resume.jobJid,
         recruiter_rid: resume.rid,
       },
@@ -2289,6 +2343,25 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
       return res.status(400).json({
         message: `Invalid status transition from '${currentDerivedStatus}' to '${newStatus}'.`,
       });
+    }
+
+    if (newStatus === "billed") {
+      if (!req.file) {
+        await connection.rollback();
+        return res.status(400).json({
+          message: "photo PDF attachment is required for billed status.",
+        });
+      }
+
+      const billedMimeType = String(req.file.mimetype || "")
+        .trim()
+        .toLowerCase();
+      if (billedMimeType !== "application/pdf") {
+        await connection.rollback();
+        return res.status(400).json({
+          message: "Only PDF attachments are allowed for billed status.",
+        });
+      }
     }
 
     const persistedStatus =
@@ -2409,7 +2482,19 @@ router.post("/api/admin/resumes/:resId/advance-status", async (req, res) => {
         }
       }
 
-      await addCandidateBillIntakeEntry(connection, normalizedResId);
+      const intakeEntry = await addCandidateBillIntakeEntry(
+        connection,
+        normalizedResId,
+        {
+          reason: effectiveReason || "candidate's bill",
+          photo: toRevenueAttachmentDataUrl(req.file) || null,
+        },
+      );
+      if (!intakeEntry) {
+        throw new Error(
+          "Failed to create billed intake entry in money_sum for this candidate.",
+        );
+      }
     }
 
     await connection.commit();
@@ -2593,7 +2678,8 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
   } finally {
     connection.release();
   }
-});
+},
+);
 
 // ─── Admin Performance Dashboard ───────────────────────────────────────────────
 router.get("/api/admin/resumes/:resId/file", async (req, res) => {

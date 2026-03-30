@@ -38,6 +38,33 @@ const requestJson = async (path, options = {}) => {
   };
 };
 
+const requestMultipart = async (path, { method = "POST", headers = {}, fields = {}, file } = {}) => {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(fields)) {
+    if (value !== undefined && value !== null) {
+      form.append(key, String(value));
+    }
+  }
+  if (file) {
+    form.append(
+      file.fieldName || "photo",
+      new Blob([file.content], { type: file.type }),
+      file.filename,
+    );
+  }
+
+  const response = await fetch(`${baseUrl}${path}`, {
+    method,
+    headers,
+    body: form,
+  });
+  const text = await response.text();
+  return {
+    status: response.status,
+    body: text ? JSON.parse(text) : null,
+  };
+};
+
 let tempResumeCounter = 0;
 const buildTempResumeId = (suffix) => {
   tempResumeCounter += 1;
@@ -206,6 +233,49 @@ const setCandidateRevenue = async (resId, revenue) => {
       job_jid = VALUES(job_jid),
       recruiter_rid = VALUES(recruiter_rid)`,
     [`c_${resId.replace(/^res_/, "")}`, resId, "JID-5", "hnr-2", "Revenue Candidate", revenue],
+  );
+};
+
+const setJoinedCandidateState = async ({
+  resId,
+  revenue,
+  candidateName = "Joined Candidate",
+  candidateEmail,
+  candidatePhone = "9876543210",
+}) => {
+  await pool.query(
+    `INSERT INTO candidate (cid, res_id, job_jid, recruiter_rid, name, phone, email, revenue, joining_date)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+      job_jid = VALUES(job_jid),
+      recruiter_rid = VALUES(recruiter_rid),
+      name = VALUES(name),
+      phone = VALUES(phone),
+      email = VALUES(email),
+      revenue = VALUES(revenue),
+      joining_date = VALUES(joining_date)`,
+    [
+      `c_${resId.replace(/^res_/, "")}`.slice(0, 20),
+      resId,
+      "JID-5",
+      "hnr-2",
+      candidateName,
+      candidatePhone,
+      candidateEmail || `${resId}@example.com`,
+      revenue,
+      "2026-03-01",
+    ],
+  );
+
+  await pool.query(
+    `INSERT INTO job_resume_selection
+      (job_jid, res_id, selected_by_admin, selection_status, selection_note, selected_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+      selection_status = VALUES(selection_status),
+      selection_note = VALUES(selection_note),
+      selected_at = VALUES(selected_at)`,
+    ["JID-5", resId, "test-suite", "joined", "joined in test", "2026-03-01 10:00:00"],
   );
 };
 
@@ -424,6 +494,181 @@ test("team leader billed update creates admin intake entry from candidate revenu
     await cleanupMoneySumAfter(previousMoneySumId);
     await cleanupTempResume(resId);
     await restoreStatusRow("hnr-2", recruiterStatusSnapshot);
+  }
+});
+
+test("admin joined to billed accepts multipart PDF and stores attachment in money_sum", async () => {
+  const resId = buildTempResumeId("adbill");
+  const previousMoneySumId = await getLatestMoneySumId();
+  const recruiterStatusSnapshot = await snapshotStatusRow("hnr-2");
+
+  await createTempResume(resId);
+  await setJoinedCandidateState({
+    resId,
+    revenue: 6789,
+    candidateName: "Manual Billing Candidate",
+    candidateEmail: `${resId}@example.com`,
+    candidatePhone: "9988776655",
+  });
+
+  try {
+    const response = await requestMultipart(
+      `/api/admin/resumes/${resId}/advance-status`,
+      {
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+        },
+        fields: {
+          status: "billed",
+          reason: "manual billed from admin",
+          revenue: "6789",
+          candidate_name: "Manual Billing Candidate",
+          candidate_email: `${resId}@example.com`,
+          candidate_phone: "9988776655",
+        },
+        file: {
+          fieldName: "photo",
+          filename: "invoice.pdf",
+          type: "application/pdf",
+          content: "%PDF-1.4 regression pdf",
+        },
+      },
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body?.data?.status, "billed");
+
+    const [selectionRows] = await pool.query(
+      `SELECT selection_status AS status
+       FROM job_resume_selection
+       WHERE res_id = ?
+       LIMIT 1`,
+      [resId],
+    );
+    assert.equal(selectionRows[0]?.status, "billed");
+
+    const [moneyRows] = await pool.query(
+      `SELECT company_rev AS companyRev, reason, photo, entry_type AS entryType
+       FROM money_sum
+       WHERE id > ?
+       ORDER BY id DESC
+       LIMIT 1`,
+      [previousMoneySumId],
+    );
+
+    assert.equal(Number(moneyRows[0]?.companyRev), 6789);
+    assert.equal(moneyRows[0]?.entryType, "intake");
+    assert.equal(moneyRows[0]?.reason, "manual billed from admin");
+    assert.match(String(moneyRows[0]?.photo || ""), /^data:application\/pdf;base64,/);
+  } finally {
+    await cleanupMoneySumAfter(previousMoneySumId);
+    await cleanupTempResume(resId);
+    await restoreStatusRow("hnr-2", recruiterStatusSnapshot);
+  }
+});
+
+test("admin billed transition still rejects invalid workflow transitions", async () => {
+  const resId = buildTempResumeId("badbill");
+
+  await createTempResume(resId);
+  await setCandidateRevenue(resId, 5000);
+
+  try {
+    const response = await requestMultipart(
+      `/api/admin/resumes/${resId}/advance-status`,
+      {
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+        },
+        fields: {
+          status: "billed",
+          reason: "should fail",
+          revenue: "5000",
+        },
+        file: {
+          fieldName: "photo",
+          filename: "invoice.pdf",
+          type: "application/pdf",
+          content: "%PDF-1.4 invalid transition",
+        },
+      },
+    );
+
+    assert.equal(response.status, 400);
+    assert.match(
+      response.body?.message || "",
+      /Invalid status transition from 'pending' to 'billed'\./,
+    );
+  } finally {
+    await cleanupTempResume(resId);
+  }
+});
+
+test("admin billed transition rejects missing attachment", async () => {
+  const resId = buildTempResumeId("nofile");
+
+  await createTempResume(resId);
+  await setJoinedCandidateState({ resId, revenue: 5500 });
+
+  try {
+    const response = await requestMultipart(
+      `/api/admin/resumes/${resId}/advance-status`,
+      {
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+        },
+        fields: {
+          status: "billed",
+          reason: "missing file",
+          revenue: "5500",
+        },
+      },
+    );
+
+    assert.equal(response.status, 400);
+    assert.equal(
+      response.body?.message,
+      "photo PDF attachment is required for billed status.",
+    );
+  } finally {
+    await cleanupTempResume(resId);
+  }
+});
+
+test("admin billed transition rejects non-PDF attachment", async () => {
+  const resId = buildTempResumeId("badpdf");
+
+  await createTempResume(resId);
+  await setJoinedCandidateState({ resId, revenue: 5600 });
+
+  try {
+    const response = await requestMultipart(
+      `/api/admin/resumes/${resId}/advance-status`,
+      {
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+        },
+        fields: {
+          status: "billed",
+          reason: "wrong mime",
+          revenue: "5600",
+        },
+        file: {
+          fieldName: "photo",
+          filename: "invoice.png",
+          type: "image/png",
+          content: "not-a-pdf",
+        },
+      },
+    );
+
+    assert.equal(response.status, 400);
+    assert.equal(
+      response.body?.message,
+      "Only PDF attachments are allowed for billed status.",
+    );
+  } finally {
+    await cleanupTempResume(resId);
   }
 });
 
