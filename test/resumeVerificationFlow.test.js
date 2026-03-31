@@ -582,7 +582,6 @@ test("admin billed transition still rejects invalid workflow transitions", async
         fields: {
           status: "billed",
           reason: "should fail",
-          revenue: "5000",
         },
         file: {
           fieldName: "photo",
@@ -619,7 +618,6 @@ test("admin billed transition rejects missing attachment", async () => {
         fields: {
           status: "billed",
           reason: "missing file",
-          revenue: "5500",
         },
       },
     );
@@ -650,7 +648,6 @@ test("admin billed transition rejects non-PDF attachment", async () => {
         fields: {
           status: "billed",
           reason: "wrong mime",
-          revenue: "5600",
         },
         file: {
           fieldName: "photo",
@@ -665,6 +662,42 @@ test("admin billed transition rejects non-PDF attachment", async () => {
     assert.equal(
       response.body?.message,
       "Only PDF attachments are allowed for billed status.",
+    );
+  } finally {
+    await cleanupTempResume(resId);
+  }
+});
+
+test("admin billed transition rejects when revenue is not configured", async () => {
+  const resId = buildTempResumeId("norev");
+
+  await createTempResume(resId);
+  await setJoinedCandidateState({ resId, revenue: null });
+
+  try {
+    const response = await requestMultipart(
+      `/api/admin/resumes/${resId}/advance-status`,
+      {
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+        },
+        fields: {
+          status: "billed",
+          reason: "missing revenue",
+        },
+        file: {
+          fieldName: "photo",
+          filename: "invoice.pdf",
+          type: "application/pdf",
+          content: "%PDF-1.4 missing revenue",
+        },
+      },
+    );
+
+    assert.equal(response.status, 422);
+    assert.equal(
+      response.body?.message,
+      "Revenue not configured for this candidate/company",
     );
   } finally {
     await cleanupTempResume(resId);

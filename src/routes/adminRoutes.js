@@ -79,7 +79,9 @@ const billedStatusUpload = multer({
       .trim()
       .toLowerCase();
     if (!ALLOWED_BILLED_ATTACHMENT_MIME_TYPES.has(mimeType)) {
-      return callback(new Error("Only PDF attachments are allowed."));
+      return callback(
+        new Error("Only PDF attachments are allowed for billed status."),
+      );
     }
     return callback(null, true);
   },
@@ -2139,6 +2141,20 @@ const PERFORMANCE_EVENT_META = {
 const normalizePerformanceTimestamp = (value) =>
   value == null ? null : String(value).trim() || null;
 
+const normalizePositiveRevenue = (value) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.round(parsed * 100) / 100;
+};
+
+const resolveRevenueAmount = (...candidates) => {
+  for (const candidate of candidates) {
+    const normalized = normalizePositiveRevenue(candidate);
+    if (normalized !== null) return normalized;
+  }
+  return null;
+};
+
 const isTimestampWithinInclusiveRange = (value, range) => {
   if (!value) return false;
   if (!range?.hasDateRange) return true;
@@ -2191,21 +2207,6 @@ router.post(
     joinedReasonSource === undefined || joinedReasonSource === null
       ? null
       : String(joinedReasonSource).trim();
-  const rawRevenueSource =
-    req.body?.revenue ??
-    req.body?.revenue_amount ??
-    req.body?.revenueAmount ??
-    req.body?.amount ??
-    req.body?.billed_amount ??
-    req.body?.billedAmount ??
-    req.body?.billed ??
-    req.body?.pending_revenue ??
-    req.body?.pendingRevenue ??
-    null;
-  const rawRevenue =
-    rawRevenueSource === undefined || rawRevenueSource === null
-      ? ""
-      : String(rawRevenueSource).trim();
 
   const allowedNewStatuses = new Set([
     "verified",
@@ -2252,21 +2253,6 @@ router.post(
   }
 
   const isBilledStatus = newStatus === "billed";
-  const hasRevenueInPayload = rawRevenue !== "";
-  const parsedRevenue = hasRevenueInPayload
-    ? Number.parseFloat(rawRevenue)
-    : undefined;
-
-  if (hasRevenueInPayload && !Number.isFinite(parsedRevenue)) {
-    return res.status(400).json({
-      message: "revenue must be a valid non-negative number.",
-    });
-  }
-  if (hasRevenueInPayload && parsedRevenue <= 0) {
-    return res.status(400).json({
-      message: "revenue must be a valid positive number.",
-    });
-  }
 
   const connection = await pool.getConnection();
   try {
@@ -2282,10 +2268,12 @@ router.post(
         c.name AS candidateName,
         c.email AS candidateEmail,
         c.revenue AS candidateRevenue,
+        j.revenue AS companyRevenue,
         c.joining_date AS currentJoiningDate,
         COALESCE(jrs.selection_status, '') AS currentStatus
       FROM resumes_data rd
       LEFT JOIN candidate c ON c.res_id = rd.res_id
+      LEFT JOIN jobs j ON j.jid = rd.job_jid
       LEFT JOIN job_resume_selection jrs
         ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
       WHERE rd.res_id = ?
@@ -2329,13 +2317,12 @@ router.post(
       currentStatus === "selected" && resume.currentJoiningDate
         ? "pending_joining"
         : currentStatus;
-    const storedCandidateRevenue = Number(resume.candidateRevenue);
+    const resolvedRevenueAmount = resolveRevenueAmount(
+      resume.candidateRevenue,
+      resume.companyRevenue,
+    );
     const billedRevenueAmount = isBilledStatus
-      ? hasRevenueInPayload
-        ? parsedRevenue
-        : Number.isFinite(storedCandidateRevenue)
-          ? storedCandidateRevenue
-          : undefined
+      ? resolvedRevenueAmount
       : undefined;
 
     if (
@@ -2343,9 +2330,8 @@ router.post(
       (!Number.isFinite(billedRevenueAmount) || billedRevenueAmount <= 0)
     ) {
       await connection.rollback();
-      return res.status(400).json({
-        message:
-          "candidate revenue is required before billed status. Please set revenue first.",
+      return res.status(422).json({
+        message: "Revenue not configured for this candidate/company",
       });
     }
 
@@ -2529,6 +2515,11 @@ router.post(
         joining_date: joiningDateValue,
         joinedReason: newStatus === "joined" ? joinedReason : null,
         joiningNote: newStatus === "joined" ? joinedReason : null,
+        revenue: resolvedRevenueAmount,
+        company_rev:
+          newStatus === "billed"
+            ? billedRevenueAmount
+            : resolvedRevenueAmount,
       },
     });
   } catch (error) {
@@ -2913,6 +2904,8 @@ router.get("/api/admin/performance", async (req, res) => {
         teamLeader.name AS teamLeaderName,
         c.name AS candidateName,
         c.phone AS candidatePhone,
+        c.revenue AS candidateRevenue,
+        j.revenue AS companyRevenue,
         j.company_name AS companyName,
         j.city AS city
       FROM resumes_data rd
@@ -2948,6 +2941,8 @@ router.get("/api/admin/performance", async (req, res) => {
       walkInDate: row.walkInDate || null,
       joiningDate: row.joiningDate || null,
       eventAt: row.eventAt || null,
+      revenue: row.revenue,
+      company_rev: row.company_rev,
     });
 
     const statusDrilldown = {
@@ -3006,7 +3001,12 @@ router.get("/api/admin/performance", async (req, res) => {
         leftAt: normalizePerformanceTimestamp(rawRow.leftAt),
         furtherAt: normalizePerformanceTimestamp(rawRow.furtherAt),
         onHoldAt: normalizePerformanceTimestamp(rawRow.onHoldAt),
+        revenue: resolveRevenueAmount(
+          rawRow.candidateRevenue,
+          rawRow.companyRevenue,
+        ),
       };
+      row.company_rev = row.revenue;
 
       const eventMap = {
         submitted: row.submittedAt,
