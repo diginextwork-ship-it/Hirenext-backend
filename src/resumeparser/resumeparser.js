@@ -247,43 +247,24 @@ const getGeminiStatus = () => ({
  */
 async function atsExtractor(resumeData) {
   // Truncate very large resumes to avoid timeout
-  const maxResumeLength = 15000;
+  const maxResumeLength = 9000;
   const truncatedResume =
     resumeData.length > maxResumeLength
       ? resumeData.substring(0, maxResumeLength) +
         "\n\n[Resume truncated for processing]"
       : resumeData;
 
-  const prompt = `
-    You are an AI assistant that parses resumes into strict JSON.
-
-    Extract these fields from the resume:
-    1. full_name
-    2. email
-    3. phone
-    4. github_portfolio
-    5. linkedin_id
-    6. employment_details (array of short strings)
-    7. technical_skills (array of short strings)
-    8. soft_skills (array of short strings)
-    9. education (array of objects) where each object has:
-       - latest_education_level
-       - board_university
-       - institution_name
-    10. age
-
-    Return valid JSON only. Do not include markdown or code blocks.
-    Use null when a field is missing.
-
-    Resume:
-    ${truncatedResume}
-  `;
+  const prompt = `Parse this resume and return ONLY compact JSON with this exact schema:
+{"full_name":null,"email":null,"phone":null,"github_portfolio":null,"linkedin_id":null,"employment_details":[],"technical_skills":[],"soft_skills":[],"education":[{"latest_education_level":null,"board_university":null,"institution_name":null}],"age":null}
+Rules: no markdown, no explanation, keep arrays short and relevant, use null when missing.
+Resume:
+${truncatedResume}`;
 
   try {
     console.log(`Extracting resume data (${resumeData.length} chars)...`);
     const text = await generateWithFallbackModels(prompt, {
-      maxRetries: 2,
-      chunkSize: 20000,
+      maxRetries: 1,
+      chunkSize: 12000,
     });
 
     return cleanJsonText(text);
@@ -298,8 +279,8 @@ async function atsExtractor(resumeData) {
  */
 async function calculateAtsScore(resumeData, jobDescription) {
   // Truncate large inputs
-  const maxResumeLength = 10000;
-  const maxJdLength = 5000;
+  const maxResumeLength = 7000;
+  const maxJdLength = 3000;
 
   const truncatedResume =
     resumeData.length > maxResumeLength
@@ -312,45 +293,21 @@ async function calculateAtsScore(resumeData, jobDescription) {
         "\n\n[Job description truncated]"
       : jobDescription;
 
-  const prompt = `
-    You are an ATS analyzer. Compare the resume with the job description and return strict JSON.
-
-    Include:
-    1. ats_score (0-100 number)
-    2. match_percentage (string like "83%")
-    3. matching_keywords (array)
-    4. missing_keywords (array)
-    5. strengths (array)
-    6. weaknesses (array)
-    7. recommendations (array)
-    8. overall_assessment (short string)
-
-    JSON format:
-    {
-        "ats_score": 0,
-        "match_percentage": "0%",
-        "matching_keywords": [],
-        "missing_keywords": [],
-        "strengths": [],
-        "weaknesses": [],
-        "recommendations": [],
-        "overall_assessment": ""
-    }
-
-    JOB DESCRIPTION:
-    ${truncatedJd}
-
-    RESUME:
-    ${truncatedResume}
-  `;
+  const prompt = `Compare resume vs job description and return ONLY JSON:
+{"ats_score":0,"match_percentage":"0%","matching_keywords":[],"missing_keywords":[],"strengths":[],"weaknesses":[],"recommendations":[],"overall_assessment":""}
+Rules: ats_score must be 0-100 number, keep keyword arrays concise and unique, no markdown/explanations.
+JOB DESCRIPTION:
+${truncatedJd}
+RESUME:
+${truncatedResume}`;
 
   try {
     console.log(
       `Calculating ATS score (Resume: ${resumeData.length} chars, JD: ${jobDescription.length} chars)...`,
     );
     const text = await generateWithFallbackModels(prompt, {
-      maxRetries: 2,
-      chunkSize: 20000,
+      maxRetries: 1,
+      chunkSize: 10000,
     });
 
     return cleanJsonText(text);

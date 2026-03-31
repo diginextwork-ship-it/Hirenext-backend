@@ -311,23 +311,25 @@ const parseResumeWithAts = async ({
     }
 
     const resumeText = await extractTextFromBuffer(resumeBuffer, extension);
-    const aiParsedData = safeJson(
-      await atsExtractor(resumeText),
-      "resume data",
-    );
+    const normalizedJobDescription = String(jobDescription || "").trim();
+    const [rawAiParsedData, rawAiAtsData] = await Promise.all([
+      atsExtractor(resumeText),
+      normalizedJobDescription
+        ? calculateAtsScore(resumeText, normalizedJobDescription)
+        : Promise.resolve(null),
+    ]);
+
+    const aiParsedData = safeJson(rawAiParsedData, "resume data");
     const fallbackParsedData = extractAutofillFallbackFromText(resumeText);
     const parsedData = hasParsedAutofillSignal(aiParsedData)
       ? aiParsedData
       : fallbackParsedData;
-    const aiAtsRawJson = String(jobDescription || "").trim()
-      ? safeJson(
-          await calculateAtsScore(resumeText, String(jobDescription).trim()),
-          "ATS score",
-        )
+    const aiAtsRawJson = normalizedJobDescription
+      ? safeJson(rawAiAtsData, "ATS score")
       : null;
     const fallbackAtsRawJson = calculateFallbackAts(
       resumeText,
-      String(jobDescription || "").trim(),
+      normalizedJobDescription,
     );
     const atsRawJson =
       aiAtsRawJson && typeof aiAtsRawJson === "object" && !aiAtsRawJson.error
