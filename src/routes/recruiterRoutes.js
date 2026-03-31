@@ -828,6 +828,7 @@ router.post(
       const email = candidateSnapshot.email;
       const latestEducationLevel = candidateSnapshot.levelOfEdu;
       const boardUniversity = candidateSnapshot.boardUni;
+      const normalizedBoardUniversity = String(boardUniversity || "").trim() || null;
       const institutionName = candidateSnapshot.institutionName;
       const age = candidateSnapshot.age;
       const submittedReason = String(
@@ -842,14 +843,13 @@ router.post(
         !phone ||
         !email ||
         !latestEducationLevel ||
-        !boardUniversity ||
         !institutionName ||
         age === null
       ) {
         return res.status(400).json({
           success: false,
           error:
-            "Resume parsing could not fill all required fields. Please provide candidate_name, phone, email, latest_education_level, board_university, institution_name, and age.",
+            "Resume parsing could not fill all required fields. Please provide candidate_name, phone, email, latest_education_level, institution_name, and age.",
         });
       }
 
@@ -998,7 +998,7 @@ router.post(
           phone,
           email,
           levelOfEdu: latestEducationLevel,
-          boardUni: boardUniversity,
+          boardUni: normalizedBoardUniversity,
           institutionName,
           age,
         });
