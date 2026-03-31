@@ -86,6 +86,16 @@ const toNonNegativeInt = (value, fallback) => {
   return parsed;
 };
 
+const resolveRevenueAmount = (...candidates) => {
+  for (const candidate of candidates) {
+    const parsed = Number(candidate);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.round(parsed * 100) / 100;
+    }
+  }
+  return null;
+};
+
 const getRecruiterIdColumn = async (tableName) => {
   if (await columnExists(tableName, "recruiter_rid")) return "recruiter_rid";
   if (await columnExists(tableName, "rid")) return "rid";
@@ -1810,9 +1820,12 @@ router.post(
           rd.ats_raw_json AS atsRawJson,
           c.name AS candidateName,
           c.email AS email,
+          c.revenue AS candidateRevenue,
+          j.revenue AS companyRevenue,
           COALESCE(jrs.selection_status, 'pending') AS currentStatus
         FROM resumes_data rd
         LEFT JOIN candidate c ON c.res_id = rd.res_id
+        LEFT JOIN jobs j ON j.jid = rd.job_jid
         LEFT JOIN job_resume_selection jrs
           ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
         WHERE rd.res_id = ? AND rd.rid = ?
@@ -1843,6 +1856,13 @@ router.post(
         },
       });
       const currentStatus = normalizeWorkflowStatus(resume.currentStatus);
+      const billedRevenueAmount =
+        targetStatus === "billed" && currentStatus !== "billed"
+          ? resolveRevenueAmount(
+              resume.candidateRevenue,
+              resume.companyRevenue,
+            )
+          : null;
       const allowed = allowedRecruiterTransitions[currentStatus];
 
       if (!allowed || !allowed.includes(targetStatus)) {
@@ -1887,6 +1907,8 @@ router.post(
             institutionName:
               statusCandidateSnapshot.institutionName || undefined,
             age: statusCandidateSnapshot.age,
+            revenue:
+              targetStatus === "billed" ? billedRevenueAmount : undefined,
           });
         }
 
@@ -1972,7 +1994,19 @@ router.post(
         }
 
         if (targetStatus === "billed" && currentStatus !== "billed") {
-          await addCandidateBillIntakeEntry(connection, resId);
+          if (
+            !Number.isFinite(billedRevenueAmount) ||
+            billedRevenueAmount <= 0
+          ) {
+            await connection.rollback();
+            return res.status(422).json({
+              message: "Revenue amount is required before moving candidate to billed.",
+            });
+          }
+
+          await addCandidateBillIntakeEntry(connection, resId, {
+            amount: billedRevenueAmount,
+          });
         }
 
         await connection.commit();
@@ -1986,6 +2020,10 @@ router.post(
             joining_date: targetStatus === "joined" ? joiningDate : undefined,
             joinedReason: targetStatus === "joined" ? joinedReason : undefined,
             joiningNote: targetStatus === "joined" ? joinedReason : undefined,
+            revenue:
+              targetStatus === "billed" ? billedRevenueAmount : undefined,
+            company_rev:
+              targetStatus === "billed" ? billedRevenueAmount : undefined,
           },
         });
       } catch (innerError) {

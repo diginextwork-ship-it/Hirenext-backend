@@ -1118,6 +1118,12 @@ router.post(
               statusCandidateSnapshot.institutionName || undefined,
             age: statusCandidateSnapshot.age,
             joiningDate: candidateJoiningDateValue,
+            revenue:
+              normalizedStatus === "billed"
+                ? [resumeRows[0]?.candidateRevenue, resumeRows[0]?.companyRevenue]
+                    .map((value) => Number(value))
+                    .find((value) => Number.isFinite(value) && value > 0) ?? null
+                : undefined,
           });
         }
 
@@ -1180,12 +1186,14 @@ router.post(
           }
         }
 
-        if (normalizedStatus === "billed" && previousStatus !== "billed") {
-          const billedRevenueAmount =
-            [resumeRows[0]?.candidateRevenue, resumeRows[0]?.companyRevenue]
-              .map((value) => Number(value))
-              .find((value) => Number.isFinite(value) && value > 0) ?? null;
+        const billedRevenueAmount =
+          normalizedStatus === "billed"
+            ? [resumeRows[0]?.candidateRevenue, resumeRows[0]?.companyRevenue]
+                .map((value) => Number(value))
+                .find((value) => Number.isFinite(value) && value > 0) ?? null
+            : null;
 
+        if (normalizedStatus === "billed" && previousStatus !== "billed") {
           if (!Number.isFinite(billedRevenueAmount) || billedRevenueAmount <= 0) {
             await connection.rollback();
             return res.status(422).json({
@@ -1213,6 +1221,10 @@ router.post(
                 ? (statusReasonValue ?? null)
                 : null,
             updatedBy: actorRid || "team-leader",
+            revenue:
+              normalizedStatus === "billed" ? billedRevenueAmount : null,
+            company_rev:
+              normalizedStatus === "billed" ? billedRevenueAmount : null,
           },
         });
       } catch (innerError) {

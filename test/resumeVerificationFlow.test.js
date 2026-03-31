@@ -477,6 +477,8 @@ test("team leader billed update creates admin intake entry from candidate revenu
 
     assert.equal(response.status, 200);
     assert.equal(response.body?.data?.status, "billed");
+    assert.equal(response.body?.data?.company_rev, 4321);
+    assert.equal(response.body?.data?.revenue, 4321);
 
     const [moneyRows] = await pool.query(
       `SELECT company_rev AS companyRev, reason, entry_type AS entryType
@@ -488,6 +490,59 @@ test("team leader billed update creates admin intake entry from candidate revenu
     );
 
     assert.equal(Number(moneyRows[0]?.companyRev), 4321);
+    assert.equal(moneyRows[0]?.entryType, "intake");
+    assert.equal(moneyRows[0]?.reason, "candidate's bill");
+  } finally {
+    await cleanupMoneySumAfter(previousMoneySumId);
+    await cleanupTempResume(resId);
+    await restoreStatusRow("hnr-2", recruiterStatusSnapshot);
+  }
+});
+
+test("recruiter billed update returns amount and creates intake entry from candidate revenue", async () => {
+  const resId = buildTempResumeId("rbill");
+  const previousMoneySumId = await getLatestMoneySumId();
+  const recruiterStatusSnapshot = await snapshotStatusRow("hnr-2");
+
+  await createTempResume(resId);
+  await setJoinedCandidateState({
+    resId,
+    revenue: 5432,
+    candidateName: "Recruiter Billing Candidate",
+    candidateEmail: `${resId}@example.com`,
+  });
+
+  try {
+    const response = await requestJson(
+      `/api/recruiters/hnr-2/resumes/${resId}/advance-status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${recruiterToken}`,
+        },
+        body: JSON.stringify({
+          status: "billed",
+          reason: "recruiter billed in regression test",
+        }),
+      },
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body?.data?.status, "billed");
+    assert.equal(response.body?.data?.company_rev, 5432);
+    assert.equal(response.body?.data?.revenue, 5432);
+
+    const [moneyRows] = await pool.query(
+      `SELECT company_rev AS companyRev, reason, entry_type AS entryType
+       FROM money_sum
+       WHERE id > ?
+       ORDER BY id DESC
+       LIMIT 1`,
+      [previousMoneySumId],
+    );
+
+    assert.equal(Number(moneyRows[0]?.companyRev), 5432);
     assert.equal(moneyRows[0]?.entryType, "intake");
     assert.equal(moneyRows[0]?.reason, "candidate's bill");
   } finally {
