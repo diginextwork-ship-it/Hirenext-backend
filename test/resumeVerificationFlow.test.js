@@ -668,36 +668,71 @@ test("admin billed transition rejects non-PDF attachment", async () => {
   }
 });
 
-test("admin billed transition rejects when revenue is not configured", async () => {
+test("admin joined transition rejects when revenue is not configured", async () => {
   const resId = buildTempResumeId("norev");
 
   await createTempResume(resId);
-  await setJoinedCandidateState({ resId, revenue: null });
 
   try {
-    const response = await requestMultipart(
+    const verifyResponse = await requestJson(`/api/admin/resumes/${resId}/advance-status`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({ status: "verified" }),
+    });
+    assert.equal(verifyResponse.status, 200);
+
+    const walkInResponse = await requestJson(`/api/admin/resumes/${resId}/advance-status`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({ status: "walk_in" }),
+    });
+    assert.equal(walkInResponse.status, 200);
+
+    const selectedResponse = await requestJson(`/api/admin/resumes/${resId}/advance-status`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({ status: "selected" }),
+    });
+    assert.equal(selectedResponse.status, 200);
+
+    const pendingJoiningResponse = await requestJson(
       `/api/admin/resumes/${resId}/advance-status`,
       {
+        method: "POST",
         headers: {
+          "Content-Type": "application/json",
           Authorization: `Bearer ${adminToken}`,
         },
-        fields: {
-          status: "billed",
-          reason: "missing revenue",
-        },
-        file: {
-          fieldName: "photo",
-          filename: "invoice.pdf",
-          type: "application/pdf",
-          content: "%PDF-1.4 missing revenue",
-        },
+        body: JSON.stringify({
+          status: "pending_joining",
+          joining_date: "2026-04-05",
+        }),
       },
     );
+    assert.equal(pendingJoiningResponse.status, 200);
 
-    assert.equal(response.status, 422);
+    const joinedResponse = await requestJson(`/api/admin/resumes/${resId}/advance-status`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({ status: "joined" }),
+    });
+
+    assert.equal(joinedResponse.status, 422);
     assert.equal(
-      response.body?.message,
-      "Revenue not configured for this candidate/company",
+      joinedResponse.body?.message,
+      "Revenue amount is required before moving candidate to joined.",
     );
   } finally {
     await cleanupTempResume(resId);

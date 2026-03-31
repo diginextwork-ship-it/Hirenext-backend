@@ -948,9 +948,12 @@ router.post(
             rd.ats_raw_json AS atsRawJson,
             c.name AS candidateName,
             c.email AS email,
-            c.joining_date AS currentJoiningDate
+            c.joining_date AS currentJoiningDate,
+            c.revenue AS candidateRevenue,
+            j.revenue AS companyRevenue
            FROM resumes_data rd
            LEFT JOIN candidate c ON c.res_id = rd.res_id
+           LEFT JOIN jobs j ON j.jid = rd.job_jid
            WHERE rd.res_id = ?
            LIMIT 1`,
           [normalizedResId],
@@ -1178,7 +1181,21 @@ router.post(
         }
 
         if (normalizedStatus === "billed" && previousStatus !== "billed") {
-          await addCandidateBillIntakeEntry(connection, normalizedResId);
+          const billedRevenueAmount =
+            [resumeRows[0]?.candidateRevenue, resumeRows[0]?.companyRevenue]
+              .map((value) => Number(value))
+              .find((value) => Number.isFinite(value) && value > 0) ?? null;
+
+          if (!Number.isFinite(billedRevenueAmount) || billedRevenueAmount <= 0) {
+            await connection.rollback();
+            return res.status(422).json({
+              message: "Revenue amount is required before moving candidate to billed.",
+            });
+          }
+
+          await addCandidateBillIntakeEntry(connection, normalizedResId, {
+            amount: billedRevenueAmount,
+          });
         }
 
         await connection.commit();

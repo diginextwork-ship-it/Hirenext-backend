@@ -2207,6 +2207,14 @@ router.post(
     joinedReasonSource === undefined || joinedReasonSource === null
       ? null
       : String(joinedReasonSource).trim();
+  const submittedRevenueAmount = resolveRevenueAmount(
+    req.body?.revenue,
+    req.body?.revenueAmount,
+    req.body?.candidateRevenue,
+    req.body?.companyRevenue,
+    req.body?.companyRev,
+    req.body?.company_rev,
+  );
 
   const allowedNewStatuses = new Set([
     "verified",
@@ -2321,17 +2329,19 @@ router.post(
       resume.candidateRevenue,
       resume.companyRevenue,
     );
+    const joinedRevenueAmount =
+      newStatus === "joined" ? submittedRevenueAmount : undefined;
     const billedRevenueAmount = isBilledStatus
       ? resolvedRevenueAmount
       : undefined;
 
     if (
-      isBilledStatus &&
-      (!Number.isFinite(billedRevenueAmount) || billedRevenueAmount <= 0)
+      newStatus === "joined" &&
+      (!Number.isFinite(joinedRevenueAmount) || joinedRevenueAmount <= 0)
     ) {
       await connection.rollback();
       return res.status(422).json({
-        message: "Revenue not configured for this candidate/company",
+        message: "Revenue amount is required before moving candidate to joined.",
       });
     }
 
@@ -2416,7 +2426,12 @@ router.post(
         adminStatusCandidateSnapshot.institutionName || undefined,
       age: adminStatusCandidateSnapshot.age,
       joiningDate: candidateJoiningDateValue,
-      revenue: newStatus === "billed" ? billedRevenueAmount : undefined,
+      revenue:
+        newStatus === "joined"
+          ? joinedRevenueAmount
+          : newStatus === "billed"
+            ? billedRevenueAmount
+            : undefined,
     });
 
     const statusReasonFieldMap = {
@@ -2515,7 +2530,10 @@ router.post(
         joining_date: joiningDateValue,
         joinedReason: newStatus === "joined" ? joinedReason : null,
         joiningNote: newStatus === "joined" ? joinedReason : null,
-        revenue: resolvedRevenueAmount,
+        revenue:
+          newStatus === "joined"
+            ? joinedRevenueAmount
+            : resolvedRevenueAmount,
         company_rev:
           newStatus === "billed"
             ? billedRevenueAmount
