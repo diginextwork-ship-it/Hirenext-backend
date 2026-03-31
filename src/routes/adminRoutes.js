@@ -2252,22 +2252,17 @@ router.post(
   }
 
   const isBilledStatus = newStatus === "billed";
-  const shouldValidateRevenue = isBilledStatus && rawRevenue !== "";
-  const parsedRevenue = shouldValidateRevenue
+  const hasRevenueInPayload = rawRevenue !== "";
+  const parsedRevenue = hasRevenueInPayload
     ? Number.parseFloat(rawRevenue)
     : undefined;
 
-  if (isBilledStatus && rawRevenue === "") {
-    return res.status(400).json({
-      message: "revenue amount is required for billed status.",
-    });
-  }
-  if (shouldValidateRevenue && !Number.isFinite(parsedRevenue)) {
+  if (hasRevenueInPayload && !Number.isFinite(parsedRevenue)) {
     return res.status(400).json({
       message: "revenue must be a valid non-negative number.",
     });
   }
-  if (shouldValidateRevenue && parsedRevenue <= 0) {
+  if (hasRevenueInPayload && parsedRevenue <= 0) {
     return res.status(400).json({
       message: "revenue must be a valid positive number.",
     });
@@ -2286,6 +2281,7 @@ router.post(
         rd.ats_raw_json AS atsRawJson,
         c.name AS candidateName,
         c.email AS candidateEmail,
+        c.revenue AS candidateRevenue,
         c.joining_date AS currentJoiningDate,
         COALESCE(jrs.selection_status, '') AS currentStatus
       FROM resumes_data rd
@@ -2333,6 +2329,25 @@ router.post(
       currentStatus === "selected" && resume.currentJoiningDate
         ? "pending_joining"
         : currentStatus;
+    const storedCandidateRevenue = Number(resume.candidateRevenue);
+    const billedRevenueAmount = isBilledStatus
+      ? hasRevenueInPayload
+        ? parsedRevenue
+        : Number.isFinite(storedCandidateRevenue)
+          ? storedCandidateRevenue
+          : undefined
+      : undefined;
+
+    if (
+      isBilledStatus &&
+      (!Number.isFinite(billedRevenueAmount) || billedRevenueAmount <= 0)
+    ) {
+      await connection.rollback();
+      return res.status(400).json({
+        message:
+          "candidate revenue is required before billed status. Please set revenue first.",
+      });
+    }
 
     // Validate transition. Allow billed->billed as an idempotent admin retry.
     const isIdempotentBilledRetry =
@@ -2415,7 +2430,7 @@ router.post(
         adminStatusCandidateSnapshot.institutionName || undefined,
       age: adminStatusCandidateSnapshot.age,
       joiningDate: candidateJoiningDateValue,
-      revenue: newStatus === "billed" ? parsedRevenue : undefined,
+      revenue: newStatus === "billed" ? billedRevenueAmount : undefined,
     });
 
     const statusReasonFieldMap = {
@@ -2488,7 +2503,7 @@ router.post(
         connection,
         normalizedResId,
         {
-          amount: parsedRevenue,
+          amount: billedRevenueAmount,
           reason: effectiveReason || "candidate's bill",
           photo: toRevenueAttachmentDataUrl(req.file) || null,
         },

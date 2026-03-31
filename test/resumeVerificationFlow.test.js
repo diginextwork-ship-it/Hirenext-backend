@@ -521,7 +521,6 @@ test("admin joined to billed accepts multipart PDF and stores attachment in mone
         fields: {
           status: "billed",
           reason: "manual billed from admin",
-          revenue: "6789",
           candidate_name: "Manual Billing Candidate",
           candidate_email: `${resId}@example.com`,
           candidate_phone: "9988776655",
