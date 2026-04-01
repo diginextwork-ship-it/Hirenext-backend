@@ -828,7 +828,8 @@ router.post(
       const email = candidateSnapshot.email;
       const latestEducationLevel = candidateSnapshot.levelOfEdu;
       const boardUniversity = candidateSnapshot.boardUni;
-      const normalizedBoardUniversity = String(boardUniversity || "").trim() || null;
+      const normalizedBoardUniversity =
+        String(boardUniversity || "").trim() || null;
       const institutionName = candidateSnapshot.institutionName;
       const age = candidateSnapshot.age;
       const submittedReason = String(
@@ -1047,6 +1048,16 @@ router.post(
         connection.release();
       }
     } catch (error) {
+      console.error("Resume submit failed:", error);
+
+      if (error && error.code === "ER_DUP_ENTRY") {
+        return res.status(409).json({
+          success: false,
+          error: "This resume has already been uploaded for the selected job.",
+          details: error.message,
+        });
+      }
+
       return res.status(500).json({
         success: false,
         error: "Failed to submit resume.",
@@ -1312,6 +1323,15 @@ router.post(
         connection.release();
       }
     } catch (error) {
+      console.error("Recruiter add resume failed:", error);
+
+      if (error && error.code === "ER_DUP_ENTRY") {
+        return res.status(409).json({
+          message: "This resume has already been uploaded for the selected job.",
+          error: error.message,
+        });
+      }
+
       return res.status(500).json({
         message: "Failed to add resume.",
         error: error.message,
