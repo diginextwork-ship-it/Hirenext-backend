@@ -369,6 +369,13 @@ test("admin verify route accepts canonical verified and persists verify reason",
 
     assert.equal(response.status, 200);
     assert.equal(response.body?.data?.status, "verified");
+    assert.equal(response.body?.data?.workflowStatus, "verified");
+    assert.equal(response.body?.data?.selection?.status, "verified");
+    assert.deepEqual(response.body?.data?.allowedNextStatuses, [
+      "walk_in",
+      "rejected",
+    ]);
+    assert.equal(response.body?.data?.canRollback, true);
     assert.equal(
       response.body?.data?.verifiedReason,
       "checked in regression test",
@@ -648,10 +655,17 @@ test("admin billed transition still rejects invalid workflow transitions", async
     );
 
     assert.equal(response.status, 400);
-    assert.match(
-      response.body?.message || "",
-      /Invalid status transition from 'pending' to 'billed'\./,
+    assert.equal(response.body?.error, "INVALID_STATUS_TRANSITION");
+    assert.equal(
+      response.body?.message,
+      "Invalid status transition from 'submitted' to 'billed'.",
     );
+    assert.equal(response.body?.currentStatus, "submitted");
+    assert.equal(response.body?.requestedStatus, "billed");
+    assert.deepEqual(response.body?.allowedNextStatuses, [
+      "verified",
+      "rejected",
+    ]);
   } finally {
     await cleanupTempResume(resId);
   }
@@ -857,8 +871,16 @@ test("admin pending_joining requires joining_date without revenue", async () => 
     assert.equal(pendingJoiningResponse.status, 200);
     assert.equal(pendingJoiningResponse.body?.data?.status, "pending_joining");
     assert.equal(
+      pendingJoiningResponse.body?.data?.workflowStatus,
+      "pending_joining",
+    );
+    assert.equal(
+      pendingJoiningResponse.body?.data?.selection?.status,
+      "pending_joining",
+    );
+    assert.equal(
       pendingJoiningResponse.body?.data?.joining_date,
-      null,
+      "2026-04-05",
     );
 
     const [candidateRows] = await pool.query(
@@ -1026,6 +1048,62 @@ test("verify routes enforce auth and role contract", async () => {
   }
 });
 
+test("admin rollback returns the actual previous workflow status and synced payload", async () => {
+  const resId = buildTempResumeId("rollback");
+
+  await createTempResume(resId);
+
+  try {
+    for (const body of [
+      { status: "verified" },
+      { status: "walk_in" },
+      { status: "selected" },
+      { status: "pending_joining", joining_date: "2026-04-05" },
+      { status: "dropout", reason: "candidate stopped responding" },
+    ]) {
+      const response = await requestJson(
+        `/api/admin/resumes/${resId}/advance-status`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${adminToken}`,
+          },
+          body: JSON.stringify(body),
+        },
+      );
+      assert.equal(response.status, 200);
+    }
+
+    const rollbackResponse = await requestJson(
+      `/api/admin/resumes/${resId}/rollback-status`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+        },
+      },
+    );
+
+    assert.equal(rollbackResponse.status, 200);
+    assert.equal(rollbackResponse.body?.data?.previousStatus, "dropout");
+    assert.equal(rollbackResponse.body?.data?.workflowStatus, "pending_joining");
+    assert.equal(rollbackResponse.body?.data?.status, "pending_joining");
+    assert.equal(
+      rollbackResponse.body?.data?.selection?.status,
+      "pending_joining",
+    );
+    assert.equal(rollbackResponse.body?.data?.joiningDate, "2026-04-05");
+    assert.deepEqual(rollbackResponse.body?.data?.allowedNextStatuses, [
+      "joined",
+      "dropout",
+    ]);
+    assert.equal(rollbackResponse.body?.data?.canRollback, true);
+  } finally {
+    await cleanupTempResume(resId);
+  }
+});
+
 test("admin performance endpoint applies inclusive date filters across summary, recruiters, team leaders, and drilldown", async () => {
   const todayDate = "2037-03-30";
   const yesterdayDate = "2037-03-29";
@@ -1108,34 +1186,42 @@ test("admin performance endpoint applies inclusive date filters across summary, 
       },
     );
     assert.equal(todayResponse.status, 200);
-    assert.equal(todayResponse.body?.summary?.totalSubmitted, 1);
-    assert.equal(todayResponse.body?.summary?.totalVerified, 1);
-    assert.equal(todayResponse.body?.summary?.totalWalkIn, 1);
-    assert.equal(todayResponse.body?.summary?.totalSelected, 1);
-    assert.equal(todayResponse.body?.summary?.totalPendingJoining, 1);
-    assert.equal(todayResponse.body?.summary?.totalJoined, 1);
+    assert.equal(todayResponse.body?.summary?.totalSubmitted, 0);
+    assert.equal(todayResponse.body?.summary?.totalVerified, 0);
+    assert.equal(todayResponse.body?.summary?.totalWalkIn, 0);
+    assert.equal(todayResponse.body?.summary?.totalSelected, 0);
+    assert.equal(todayResponse.body?.summary?.totalPendingJoining, 0);
+    assert.equal(todayResponse.body?.summary?.totalJoined, 0);
     assert.equal(todayResponse.body?.summary?.totalBilled, 1);
     assert.equal(todayResponse.body?.summary?.totalRejected, 0);
     assert.equal(todayResponse.body?.summary?.totalDropout, 0);
     assert.equal(todayResponse.body?.summary?.totalLeft, 0);
-    assert.equal(todayResponse.body?.statusDrilldown?.submitted?.length, 1);
-    assert.equal(todayResponse.body?.statusDrilldown?.verified?.length, 1);
-    assert.equal(todayResponse.body?.statusDrilldown?.walk_in?.length, 1);
-    assert.equal(todayResponse.body?.statusDrilldown?.selected?.length, 1);
-    assert.equal(todayResponse.body?.statusDrilldown?.pending_joining?.length, 1);
-    assert.equal(todayResponse.body?.statusDrilldown?.joined?.length, 1);
+    assert.equal(todayResponse.body?.statusDrilldown?.submitted?.length, 0);
+    assert.equal(todayResponse.body?.statusDrilldown?.verified?.length, 0);
+    assert.equal(todayResponse.body?.statusDrilldown?.walk_in?.length, 0);
+    assert.equal(todayResponse.body?.statusDrilldown?.selected?.length, 0);
+    assert.equal(todayResponse.body?.statusDrilldown?.pending_joining?.length, 0);
+    assert.equal(todayResponse.body?.statusDrilldown?.joined?.length, 0);
     assert.equal(todayResponse.body?.statusDrilldown?.billed?.length, 1);
     assert.equal(todayResponse.body?.statusDrilldown?.rejected?.length, 0);
+    assert.equal(
+      todayResponse.body?.statusDrilldown?.billed?.[0]?.workflowStatus,
+      "billed",
+    );
+    assert.equal(
+      todayResponse.body?.statusDrilldown?.billed?.[0]?.status,
+      "billed",
+    );
 
     const todayRecruiter = todayResponse.body?.recruiters?.find(
       (item) => item.rid === recruiterRid,
     );
-    assert.equal(todayRecruiter?.submitted, 1);
-    assert.equal(todayRecruiter?.verified, 1);
-    assert.equal(todayRecruiter?.walk_in, 1);
-    assert.equal(todayRecruiter?.selected, 1);
-    assert.equal(todayRecruiter?.pending_joining, 1);
-    assert.equal(todayRecruiter?.joined, 1);
+    assert.equal(todayRecruiter?.submitted, 0);
+    assert.equal(todayRecruiter?.verified, 0);
+    assert.equal(todayRecruiter?.walk_in, 0);
+    assert.equal(todayRecruiter?.selected, 0);
+    assert.equal(todayRecruiter?.pending_joining, 0);
+    assert.equal(todayRecruiter?.joined, 0);
     assert.equal(todayRecruiter?.billed, 1);
     assert.equal(todayRecruiter?.rejected, 0);
     assert.equal(todayRecruiter?.dropout, 0);
@@ -1155,15 +1241,15 @@ test("admin performance endpoint applies inclusive date filters across summary, 
       },
     );
     assert.equal(yesterdayResponse.status, 200);
-    assert.equal(yesterdayResponse.body?.summary?.totalSubmitted, 1);
+    assert.equal(yesterdayResponse.body?.summary?.totalSubmitted, 0);
     assert.equal(yesterdayResponse.body?.summary?.totalVerified, 0);
-    assert.equal(yesterdayResponse.body?.summary?.totalRejected, 1);
-    assert.equal(yesterdayResponse.body?.summary?.totalDropout, 1);
+    assert.equal(yesterdayResponse.body?.summary?.totalRejected, 0);
+    assert.equal(yesterdayResponse.body?.summary?.totalDropout, 0);
     assert.equal(yesterdayResponse.body?.summary?.totalLeft, 1);
     assert.equal(yesterdayResponse.body?.summary?.totalBilled, 0);
-    assert.equal(yesterdayResponse.body?.statusDrilldown?.submitted?.length, 1);
-    assert.equal(yesterdayResponse.body?.statusDrilldown?.rejected?.length, 1);
-    assert.equal(yesterdayResponse.body?.statusDrilldown?.dropout?.length, 1);
+    assert.equal(yesterdayResponse.body?.statusDrilldown?.submitted?.length, 0);
+    assert.equal(yesterdayResponse.body?.statusDrilldown?.rejected?.length, 0);
+    assert.equal(yesterdayResponse.body?.statusDrilldown?.dropout?.length, 0);
     assert.equal(yesterdayResponse.body?.statusDrilldown?.left?.length, 1);
 
     const yesterdayTeamLeader = yesterdayResponse.body?.teamLeaders?.find(
@@ -1180,10 +1266,10 @@ test("admin performance endpoint applies inclusive date filters across summary, 
       },
     );
     assert.equal(monthResponse.status, 200);
-    assert.equal(monthResponse.body?.summary?.totalSubmitted, 2);
-    assert.equal(monthResponse.body?.summary?.totalVerified, 1);
-    assert.equal(monthResponse.body?.summary?.totalRejected, 1);
-    assert.equal(monthResponse.body?.summary?.totalDropout, 1);
+    assert.equal(monthResponse.body?.summary?.totalSubmitted, 0);
+    assert.equal(monthResponse.body?.summary?.totalVerified, 0);
+    assert.equal(monthResponse.body?.summary?.totalRejected, 0);
+    assert.equal(monthResponse.body?.summary?.totalDropout, 0);
     assert.equal(monthResponse.body?.summary?.totalLeft, 1);
     assert.equal(monthResponse.body?.summary?.totalBilled, 1);
   } finally {

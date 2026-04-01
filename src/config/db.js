@@ -1197,10 +1197,12 @@ const ensureJobResumeSelectionTable = async () => {
     selectionStatusMetadata?.columnType || "",
   ).toLowerCase();
   const requiredStatuses = [
+    "submitted",
     "verified",
     "walk_in",
     "further",
     "selected",
+    "pending_joining",
     "rejected",
     "joined",
     "dropout",
@@ -1216,7 +1218,7 @@ const ensureJobResumeSelectionTable = async () => {
     await pool.query(
       `ALTER TABLE job_resume_selection
        MODIFY COLUMN selection_status
-       ENUM('verified','walk_in','further','selected','rejected','joined','dropout','on_hold','billed','left')
+       ENUM('submitted','verified','walk_in','further','selected','pending_joining','rejected','joined','dropout','on_hold','billed','left')
        NOT NULL DEFAULT 'selected'`,
     );
   }

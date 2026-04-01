@@ -283,7 +283,7 @@ CREATE TABLE IF NOT EXISTS job_resume_selection (
 );
 
 ALTER TABLE job_resume_selection
-  MODIFY COLUMN selection_status ENUM('selected', 'rejected', 'on_hold', 'verified', 'walk_in', 'further', 'joined', 'dropout', 'pending', 'billed', 'left') NOT NULL DEFAULT 'selected';
+  MODIFY COLUMN selection_status ENUM('submitted', 'selected', 'rejected', 'on_hold', 'verified', 'walk_in', 'further', 'pending_joining', 'joined', 'dropout', 'pending', 'billed', 'left') NOT NULL DEFAULT 'selected';
 
 ALTER TABLE job_resume_selection
   ADD COLUMN IF NOT EXISTS joining_note TEXT NULL;

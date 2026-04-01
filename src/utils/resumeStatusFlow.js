@@ -1,23 +1,29 @@
 const CANONICAL_VERIFY_STATUS = "verified";
+const DEFAULT_WORKFLOW_STATUS = "submitted";
 
 const LEGACY_STATUS_ALIASES = new Map([
   ["verify", CANONICAL_VERIFY_STATUS],
   ["verfied", CANONICAL_VERIFY_STATUS],
+  ["pending", DEFAULT_WORKFLOW_STATUS],
 ]);
 
-const CANONICAL_RESUME_STATUSES = new Set([
+const CANONICAL_WORKFLOW_STATUSES = [
+  DEFAULT_WORKFLOW_STATUS,
   CANONICAL_VERIFY_STATUS,
   "walk_in",
-  "further",
   "selected",
   "pending_joining",
-  "rejected",
   "joined",
-  "dropout",
-  "on_hold",
-  "pending",
   "billed",
   "left",
+  "dropout",
+  "rejected",
+];
+
+const CANONICAL_RESUME_STATUSES = new Set([
+  ...CANONICAL_WORKFLOW_STATUSES,
+  "further",
+  "on_hold",
 ]);
 
 const normalizeResumeStatusInput = (value) => {
@@ -28,37 +34,61 @@ const normalizeResumeStatusInput = (value) => {
   return LEGACY_STATUS_ALIASES.get(normalized) || normalized;
 };
 
-const normalizeWorkflowStatus = (value, fallback = "pending") => {
+const normalizeWorkflowStatus = (value, fallback = DEFAULT_WORKFLOW_STATUS) => {
   const normalized = normalizeResumeStatusInput(value);
-  return normalized || fallback;
+  if (!normalized) return fallback;
+  return CANONICAL_WORKFLOW_STATUSES.includes(normalized) ? normalized : fallback;
 };
 
 const isSupportedResumeStatus = (value) =>
   CANONICAL_RESUME_STATUSES.has(normalizeResumeStatusInput(value));
 
 const ADMIN_STATUS_TRANSITIONS = {
-  pending: new Set([CANONICAL_VERIFY_STATUS]),
+  [DEFAULT_WORKFLOW_STATUS]: new Set([CANONICAL_VERIFY_STATUS, "rejected"]),
   [CANONICAL_VERIFY_STATUS]: new Set(["walk_in", "rejected"]),
-  walk_in: new Set(["further", "selected", "rejected"]),
-  further: new Set(["selected", "rejected"]),
+  walk_in: new Set(["selected", "rejected"]),
   selected: new Set(["pending_joining", "dropout"]),
   pending_joining: new Set(["joined", "dropout"]),
   joined: new Set(["billed", "left"]),
+  billed: new Set(),
+  left: new Set(),
+  dropout: new Set(),
+  rejected: new Set(),
 };
 
 const RECRUITER_STATUS_TRANSITIONS = {
   [CANONICAL_VERIFY_STATUS]: ["walk_in", "rejected"],
-  walk_in: ["further", "selected", "rejected"],
-  further: ["selected", "rejected"],
+  walk_in: ["selected", "rejected"],
   selected: ["joined", "dropout", "rejected"],
   joined: ["billed", "left"],
 };
 
+const WORKFLOW_PREVIOUS_STATUS = {
+  [CANONICAL_VERIFY_STATUS]: DEFAULT_WORKFLOW_STATUS,
+  walk_in: CANONICAL_VERIFY_STATUS,
+  selected: "walk_in",
+  pending_joining: "selected",
+  joined: "pending_joining",
+  billed: "joined",
+  left: "joined",
+};
+
+const getAllowedNextStatuses = (status) => [
+  ...(ADMIN_STATUS_TRANSITIONS[normalizeWorkflowStatus(status)] || []),
+];
+
+const getPreviousWorkflowStatus = (status) =>
+  WORKFLOW_PREVIOUS_STATUS[normalizeWorkflowStatus(status)] || null;
+
 module.exports = {
   ADMIN_STATUS_TRANSITIONS,
   CANONICAL_RESUME_STATUSES,
+  CANONICAL_WORKFLOW_STATUSES,
   CANONICAL_VERIFY_STATUS,
+  DEFAULT_WORKFLOW_STATUS,
   RECRUITER_STATUS_TRANSITIONS,
+  getAllowedNextStatuses,
+  getPreviousWorkflowStatus,
   isSupportedResumeStatus,
   normalizeResumeStatusInput,
   normalizeWorkflowStatus,

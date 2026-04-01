@@ -23,7 +23,11 @@ const {
 } = require("../utils/formatters");
 const {
   ADMIN_STATUS_TRANSITIONS,
+  CANONICAL_WORKFLOW_STATUSES,
   CANONICAL_VERIFY_STATUS,
+  DEFAULT_WORKFLOW_STATUS,
+  getAllowedNextStatuses,
+  getPreviousWorkflowStatus,
   normalizeResumeStatusInput,
   normalizeWorkflowStatus,
 } = require("../utils/resumeStatusFlow");
@@ -808,70 +812,79 @@ const getCandidateResumesHandler = async (req, res) => {
 
     return res.status(200).json({
       totalCount: rows.length,
-      resumes: rows.map((row) => ({
-        resId: row.resId,
-        jobJid: row.jobJid ? String(row.jobJid).trim() : null,
-        applicantName: row.applicantName || null,
-        applicantPhone: row.applicantPhone || null,
-        applicantEmail: row.applicantEmail || null,
-        hasPriorExperience:
-          row.hasPriorExperience === null ||
-          row.hasPriorExperience === undefined
-            ? null
-            : Boolean(row.hasPriorExperience),
-        experience: {
-          industry: row.experienceIndustry || null,
-          industryOther: row.experienceIndustryOther || null,
-          currentSalary:
-            row.currentSalary === null || row.currentSalary === undefined
+      resumes: rows.map((row) => {
+        const workflowFields = buildWorkflowResponseFields({
+          workflowStatus: row.selectionStatus,
+          selectionStatus: row.selectionStatus,
+          selectionNote: row.selectionNote,
+          selectedByAdmin: row.selectedByAdmin,
+          selectedAt: row.selectedAt,
+          walkInDate: row.walkInDate,
+          resumeJoiningDate: row.resumeJoiningDate,
+          joiningDate: row.joiningDate,
+          joinedReason: row.joinedReason,
+          joiningNote: row.joinedReason,
+          verifiedReason: row.verifiedReason,
+          uploadedAt: row.uploadedAt,
+        });
+
+        return {
+          resId: row.resId,
+          jobJid: row.jobJid ? String(row.jobJid).trim() : null,
+          applicantName: row.applicantName || null,
+          applicantPhone: row.applicantPhone || null,
+          applicantEmail: row.applicantEmail || null,
+          hasPriorExperience:
+            row.hasPriorExperience === null ||
+            row.hasPriorExperience === undefined
               ? null
-              : Number(row.currentSalary),
-          expectedSalary:
-            row.expectedSalary === null || row.expectedSalary === undefined
+              : Boolean(row.hasPriorExperience),
+          experience: {
+            industry: row.experienceIndustry || null,
+            industryOther: row.experienceIndustryOther || null,
+            currentSalary:
+              row.currentSalary === null || row.currentSalary === undefined
+                ? null
+                : Number(row.currentSalary),
+            expectedSalary:
+              row.expectedSalary === null || row.expectedSalary === undefined
+                ? null
+                : Number(row.expectedSalary),
+            noticePeriod: row.noticePeriod || null,
+            yearsOfExperience:
+              row.yearsOfExperience === null ||
+              row.yearsOfExperience === undefined
+                ? null
+                : Number(row.yearsOfExperience),
+          },
+          resumeFilename: row.resumeFilename || null,
+          resumeType: row.resumeType || null,
+          atsScore:
+            row.atsScore === null || row.atsScore === undefined
               ? null
-              : Number(row.expectedSalary),
-          noticePeriod: row.noticePeriod || null,
-          yearsOfExperience:
-            row.yearsOfExperience === null ||
-            row.yearsOfExperience === undefined
+              : Number(row.atsScore),
+          atsMatchPercentage:
+            row.atsMatchPercentage === null ||
+            row.atsMatchPercentage === undefined
               ? null
-              : Number(row.yearsOfExperience),
-        },
-        resumeFilename: row.resumeFilename || null,
-        resumeType: row.resumeType || null,
-        atsScore:
-          row.atsScore === null || row.atsScore === undefined
-            ? null
-            : Number(row.atsScore),
-        atsMatchPercentage:
-          row.atsMatchPercentage === null ||
-          row.atsMatchPercentage === undefined
-            ? null
-            : Number(row.atsMatchPercentage),
-        submittedReason: row.submittedReason || null,
-        verifiedReason: row.verifiedReason || null,
-        uploadedAt: row.uploadedAt || null,
-        job: {
-          roleName: row.roleName || null,
-          companyName: row.companyName || null,
-          city: row.city || null,
-          jobDescription: row.jobDescription || null,
-          skills: row.skills || null,
-        },
-        selection: row.selectionStatus
-          ? {
-              status: row.selectionStatus,
-              note: row.selectionNote || null,
-              selectedByAdmin: row.selectedByAdmin || null,
-              selectedAt: row.selectedAt || null,
-              walkInDate: row.walkInDate || null,
-              resumeJoiningDate: row.resumeJoiningDate || null,
-              joiningDate: row.joiningDate || null,
-              joinedReason: row.joinedReason || null,
-              joiningNote: row.joinedReason || null,
-            }
-          : null,
-      })),
+              : Number(row.atsMatchPercentage),
+          submittedReason: row.submittedReason || null,
+          verifiedReason: row.verifiedReason || null,
+          uploadedAt: row.uploadedAt || null,
+          walkInDate: row.walkInDate || null,
+          joiningDate: row.joiningDate || null,
+          joinedReason: row.joinedReason || null,
+          joiningNote: row.joinedReason || null,
+          ...workflowFields,
+          job: {
+            roleName: row.roleName || null,
+            companyName: row.companyName || null,
+            city: row.city || null,
+            jobDescription: row.jobDescription || null,
+            skills: row.skills || null,
+          },
+        };
+      }),
     });
   } catch (error) {
     console.error("GET /api/admin/candidate-resumes error:", error);
@@ -1158,6 +1171,21 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
             },
           });
 
+          const workflowFields = buildWorkflowResponseFields({
+            workflowStatus: row.selectionStatus,
+            selectionStatus: row.selectionStatus,
+            selectionNote: row.selectionNote,
+            selectedByAdmin: row.selectedByAdmin,
+            selectedAt: row.selectedAt,
+            walkInDate: row.walkInDate,
+            resumeJoiningDate: row.resumeJoiningDate,
+            joiningDate: row.joiningDate,
+            joinedReason: row.joinedReason,
+            joiningNote: row.joinedReason,
+            verifiedReason: row.verifiedReason,
+            uploadedAt: row.uploadedAt,
+          });
+
           return {
             resId: row.resId,
             rid: row.rid,
@@ -1179,19 +1207,11 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
             submittedReason: row.submittedReason || null,
             verifiedReason: row.verifiedReason || null,
             uploadedAt: row.uploadedAt,
-            selection: row.selectionStatus
-              ? {
-                  status: row.selectionStatus,
-                  note: row.selectionNote || null,
-                  selectedByAdmin: row.selectedByAdmin || null,
-                  selectedAt: row.selectedAt || null,
-                  walkInDate: row.walkInDate || null,
-                  resumeJoiningDate: row.resumeJoiningDate || null,
-                  joiningDate: row.joiningDate || null,
-                  joinedReason: row.joinedReason || null,
-                  joiningNote: row.joinedReason || null,
-                }
-              : null,
+            walkInDate: row.walkInDate || null,
+            joiningDate: row.joiningDate || null,
+            joinedReason: row.joinedReason || null,
+            joiningNote: row.joinedReason || null,
+            ...workflowFields,
           };
         })(),
       })),
@@ -2101,26 +2121,7 @@ router.put("/api/admin/resumes/:resId/verified-reason", async (req, res) => {
 // ─── Advance Resume Workflow Status ─────────────────────────────────────────────
 
 const VALID_STATUS_TRANSITIONS = ADMIN_STATUS_TRANSITIONS;
-const ADMIN_ROLLBACK_TARGETS = {
-  verified: "submitted",
-  walk_in: "verified",
-  selected: "walk_in",
-  pending_joining: "selected",
-  joined: "pending_joining",
-};
-
-const PERFORMANCE_EVENT_KEYS = [
-  "submitted",
-  "verified",
-  "walk_in",
-  "selected",
-  "rejected",
-  "pending_joining",
-  "joined",
-  "dropout",
-  "billed",
-  "left",
-];
+const PERFORMANCE_EVENT_KEYS = [...CANONICAL_WORKFLOW_STATUSES];
 
 const PERFORMANCE_EVENT_META = {
   submitted: { recruiterField: "submitted", summaryField: "totalSubmitted" },
@@ -2140,6 +2141,197 @@ const PERFORMANCE_EVENT_META = {
 
 const normalizePerformanceTimestamp = (value) =>
   value == null ? null : String(value).trim() || null;
+
+const hasNonEmptyValue = (value) =>
+  value !== undefined && value !== null && String(value).trim() !== "";
+
+const isCanonicalWorkflowStatus = (value) =>
+  CANONICAL_WORKFLOW_STATUSES.includes(normalizeWorkflowStatus(value));
+
+const resolveCanonicalWorkflowStatus = ({
+  workflowStatus,
+  selectionStatus,
+  status,
+  joiningDate,
+} = {}) => {
+  const candidates = [workflowStatus, selectionStatus, status];
+  for (const candidate of candidates) {
+    const normalized = normalizeResumeStatusInput(candidate);
+    if (CANONICAL_WORKFLOW_STATUSES.includes(normalized)) {
+      if (normalized === "selected" && hasNonEmptyValue(joiningDate)) {
+        return "pending_joining";
+      }
+      return normalized;
+    }
+  }
+
+  return DEFAULT_WORKFLOW_STATUS;
+};
+
+const resolveRollbackSourceStatus = (resume) => {
+  const currentStatus = resolveCanonicalWorkflowStatus({
+    workflowStatus: resume.workflowStatus,
+    selectionStatus: resume.selectionStatus,
+    status: resume.currentStatus,
+    joiningDate: resume.currentJoiningDate,
+  });
+
+  if (currentStatus === "rejected") {
+    if (hasNonEmptyValue(resume.currentWalkInDate) || hasNonEmptyValue(resume.walkInAt)) {
+      return "walk_in";
+    }
+    if (
+      hasNonEmptyValue(resume.verifiedAt) ||
+      hasNonEmptyValue(resume.verifiedReason)
+    ) {
+      return CANONICAL_VERIFY_STATUS;
+    }
+    return DEFAULT_WORKFLOW_STATUS;
+  }
+
+  if (currentStatus === "dropout") {
+    return hasNonEmptyValue(resume.currentJoiningDate) ||
+      hasNonEmptyValue(resume.pendingJoiningAt)
+      ? "pending_joining"
+      : "selected";
+  }
+
+  return getPreviousWorkflowStatus(currentStatus);
+};
+
+const buildInvalidTransitionPayload = (currentStatus, requestedStatus) => ({
+  error: "INVALID_STATUS_TRANSITION",
+  message: `Invalid status transition from '${currentStatus}' to '${requestedStatus}'.`,
+  currentStatus,
+  requestedStatus,
+  allowedNextStatuses: getAllowedNextStatuses(currentStatus),
+});
+
+const buildStatusHistory = (row = {}) => {
+  const entries = [
+    {
+      status: "submitted",
+      changedAt: normalizePerformanceTimestamp(row.submittedAt || row.uploadedAt),
+      changedBy: row.submittedBy || null,
+    },
+    {
+      status: "verified",
+      changedAt: normalizePerformanceTimestamp(row.verifiedAt),
+      changedBy: row.verifiedBy || null,
+    },
+    {
+      status: "walk_in",
+      changedAt: normalizePerformanceTimestamp(row.walkInAt),
+      changedBy: row.walkInBy || null,
+    },
+    {
+      status: "selected",
+      changedAt: normalizePerformanceTimestamp(
+        row.selectedAtHistory || row.selectedAt,
+      ),
+      changedBy: row.selectedByAdmin || null,
+    },
+    {
+      status: "pending_joining",
+      changedAt: normalizePerformanceTimestamp(row.pendingJoiningAt),
+      changedBy: row.pendingJoiningBy || row.selectedByAdmin || null,
+    },
+    {
+      status: "joined",
+      changedAt: normalizePerformanceTimestamp(row.joinedAt),
+      changedBy: row.joinedBy || row.selectedByAdmin || null,
+    },
+    {
+      status: "billed",
+      changedAt: normalizePerformanceTimestamp(row.billedAt),
+      changedBy: row.billedBy || row.selectedByAdmin || null,
+    },
+    {
+      status: "left",
+      changedAt: normalizePerformanceTimestamp(row.leftAt),
+      changedBy: row.leftBy || row.selectedByAdmin || null,
+    },
+    {
+      status: "dropout",
+      changedAt: normalizePerformanceTimestamp(row.dropoutAt),
+      changedBy: row.dropoutBy || row.selectedByAdmin || null,
+    },
+    {
+      status: "rejected",
+      changedAt: normalizePerformanceTimestamp(row.rejectedAt),
+      changedBy: row.rejectedBy || row.selectedByAdmin || null,
+    },
+  ]
+    .filter((entry) => entry.changedAt)
+    .sort((a, b) => a.changedAt.localeCompare(b.changedAt));
+
+  return entries;
+};
+
+const buildWorkflowResponseFields = (row = {}, options = {}) => {
+  const workflowStatus = resolveCanonicalWorkflowStatus({
+    workflowStatus: row.workflowStatus,
+    selectionStatus: row.selectionStatus,
+    status: row.status,
+    joiningDate:
+      row.joiningDate ??
+      row.currentJoiningDate ??
+      row.resumeJoiningDate ??
+      row.selectionJoiningDate,
+  });
+  const allowedNextStatuses = getAllowedNextStatuses(workflowStatus);
+  const canRollback = Boolean(resolveRollbackSourceStatus({
+    ...row,
+    workflowStatus,
+  }));
+  const includeSelection =
+    options.includeSelection !== undefined
+      ? options.includeSelection
+      : workflowStatus !== DEFAULT_WORKFLOW_STATUS ||
+        hasNonEmptyValue(row.selectionStatus) ||
+        hasNonEmptyValue(row.selectionNote) ||
+        hasNonEmptyValue(row.selectedAt);
+
+  const selection = includeSelection
+    ? {
+        ...(row.selection || {}),
+        status: workflowStatus,
+        note:
+          row.selection?.note ??
+          row.selectionNote ??
+          row.note ??
+          null,
+        selectedByAdmin:
+          row.selection?.selectedByAdmin ?? row.selectedByAdmin ?? null,
+        selectedAt: row.selection?.selectedAt ?? row.selectedAt ?? null,
+        walkInDate:
+          row.selection?.walkInDate ?? row.walkInDate ?? row.currentWalkInDate ?? null,
+        resumeJoiningDate:
+          row.selection?.resumeJoiningDate ??
+          row.resumeJoiningDate ??
+          row.currentJoiningDate ??
+          null,
+        joiningDate:
+          row.selection?.joiningDate ?? row.joiningDate ?? row.currentJoiningDate ?? null,
+        joinedReason:
+          row.selection?.joinedReason ?? row.joinedReason ?? row.joiningNote ?? null,
+        joiningNote:
+          row.selection?.joiningNote ?? row.joinedReason ?? row.joiningNote ?? null,
+        dropoutReason:
+          row.selection?.dropoutReason ?? row.dropoutReason ?? null,
+      }
+    : null;
+
+  return {
+    workflowStatus,
+    status: workflowStatus,
+    selection,
+    allowedNextStatuses,
+    canRollback,
+    statusHistory:
+      options.includeStatusHistory === false ? undefined : buildStatusHistory(row),
+  };
+};
 
 const normalizePositiveRevenue = (value) => {
   const parsed = Number(value);
@@ -2162,17 +2354,95 @@ const isTimestampWithinInclusiveRange = (value, range) => {
 };
 
 const getAdminRollbackTarget = (resume) => {
-  const currentStatus = normalizeWorkflowStatus(resume.currentStatus);
-  const derivedStatus =
-    currentStatus === "selected" && resume.currentJoiningDate
-      ? "pending_joining"
-      : currentStatus;
+  return resolveRollbackSourceStatus(resume) || "";
+};
 
-  if (derivedStatus === "rejected") {
-    return resume.currentWalkInDate ? "walk_in" : CANONICAL_VERIFY_STATUS;
-  }
+const fetchAdminResumeWorkflowPayload = async (connection, resId) => {
+  const [rows] = await connection.query(
+    `SELECT
+      rd.res_id AS resId,
+      rd.job_jid AS jobJid,
+      rd.rid AS recruiterRid,
+      rd.uploaded_at AS uploadedAt,
+      rd.ats_raw_json AS atsRawJson,
+      c.name AS candidateName,
+      c.email AS candidateEmail,
+      c.phone AS candidatePhone,
+      DATE_FORMAT(c.walk_in, '%Y-%m-%d') AS walkInDate,
+      DATE_FORMAT(c.joining_date, '%Y-%m-%d') AS joiningDate,
+      DATE_FORMAT(c.walk_in, '%Y-%m-%d') AS currentWalkInDate,
+      DATE_FORMAT(c.joining_date, '%Y-%m-%d') AS currentJoiningDate,
+      jrs.selection_status AS selectionStatus,
+      jrs.selection_note AS selectionNote,
+      jrs.selected_by_admin AS selectedByAdmin,
+      jrs.selected_at AS selectedAt,
+      ei.verified_reason AS verifiedReason,
+      ei.joined_reason AS joinedReason,
+      ei.dropout_reason AS dropoutReason,
+      ei.verified_at AS verifiedAt,
+      ei.walk_in_at AS walkInAt,
+      ei.selected_at AS selectedAtHistory,
+      ei.pending_joining_at AS pendingJoiningAt,
+      ei.joined_at AS joinedAt,
+      ei.billed_at AS billedAt,
+      ei.left_at AS leftAt,
+      ei.dropout_at AS dropoutAt,
+      ei.rejected_at AS rejectedAt
+    FROM resumes_data rd
+    LEFT JOIN candidate c ON c.res_id = rd.res_id
+    LEFT JOIN job_resume_selection jrs
+      ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
+    LEFT JOIN extra_info ei
+      ON ei.res_id = rd.res_id OR (ei.resume_id = rd.res_id AND ei.res_id IS NULL)
+    WHERE rd.res_id = ?
+    LIMIT 1`,
+    [resId],
+  );
 
-  return ADMIN_ROLLBACK_TARGETS[derivedStatus] || "";
+  if (rows.length === 0) return null;
+
+  const row = rows[0];
+  const parsedResumePayload = parseJsonField(row.atsRawJson);
+  const candidateSnapshot = extractCandidateSnapshot({
+    source: {
+      candidate_name: row.candidateName,
+      candidate_email: row.candidateEmail,
+      candidate_phone: row.candidatePhone,
+      job_jid: row.jobJid,
+      recruiter_rid: row.recruiterRid,
+    },
+    parsedData:
+      parsedResumePayload?.parsed_data ||
+      parsedResumePayload?.parsedData ||
+      parsedResumePayload,
+    fallback: {
+      jobJid: row.jobJid,
+      recruiterRid: row.recruiterRid,
+    },
+  });
+  const workflowFields = buildWorkflowResponseFields({
+    ...row,
+    workflowStatus: row.selectionStatus,
+    selectedAt: row.selectedAt,
+  });
+
+  return {
+    resId: row.resId,
+    jobJid: row.jobJid ? String(row.jobJid).trim() : null,
+    recruiterRid: row.recruiterRid || null,
+    candidateName: candidateSnapshot.name || row.candidateName || null,
+    candidateEmail: candidateSnapshot.email || row.candidateEmail || null,
+    candidatePhone: candidateSnapshot.phone || row.candidatePhone || null,
+    name: candidateSnapshot.name || row.candidateName || null,
+    email: candidateSnapshot.email || row.candidateEmail || null,
+    phone: candidateSnapshot.phone || row.candidatePhone || null,
+    walkInDate: row.walkInDate || null,
+    joiningDate: row.joiningDate || null,
+    joinedReason: row.joinedReason || null,
+    joiningNote: row.joinedReason || null,
+    dropoutReason: row.dropoutReason || null,
+    ...workflowFields,
+  };
 };
 
 router.post(
@@ -2219,7 +2489,6 @@ router.post(
   const allowedNewStatuses = new Set([
     "verified",
     "walk_in",
-    "further",
     "selected",
     "pending_joining",
     "rejected",
@@ -2349,12 +2618,12 @@ router.post(
     const isIdempotentBilledRetry =
       currentDerivedStatus === "billed" && newStatus === "billed";
     if (!isIdempotentBilledRetry) {
-      const allowedTransitions = VALID_STATUS_TRANSITIONS[currentDerivedStatus];
-      if (!allowedTransitions || !allowedTransitions.has(newStatus)) {
+      const allowedTransitions = getAllowedNextStatuses(currentDerivedStatus);
+      if (!allowedTransitions.includes(newStatus)) {
         await connection.rollback();
-        return res.status(400).json({
-          message: `Invalid status transition from '${currentDerivedStatus}' to '${newStatus}'.`,
-        });
+        return res
+          .status(400)
+          .json(buildInvalidTransitionPayload(currentDerivedStatus, newStatus));
       }
     }
 
@@ -2377,13 +2646,13 @@ router.post(
       }
     }
 
-    const persistedStatus =
-      newStatus === "pending_joining" ? "selected" : newStatus;
     const effectiveJoiningDate = /^\d{4}-\d{2}-\d{2}$/.test(joiningDate)
       ? joiningDate
       : resume.currentJoiningDate || null;
     const joiningDateValue =
-      newStatus === "joined" ? effectiveJoiningDate : null;
+      newStatus === "pending_joining" || newStatus === "joined"
+        ? effectiveJoiningDate
+        : null;
 
     if (resume.jobJid) {
       await connection.query(
@@ -2397,7 +2666,7 @@ router.post(
         [
           resume.jobJid,
           normalizedResId,
-          persistedStatus,
+          newStatus,
           effectiveReason || null,
         ],
       );
@@ -2516,20 +2785,22 @@ router.post(
       }
     }
 
+    const updatedResumePayload = await fetchAdminResumeWorkflowPayload(
+      connection,
+      normalizedResId,
+    );
+
     await connection.commit();
     return res.status(200).json({
       message: "Status updated successfully.",
       data: {
-        resId: normalizedResId,
-        status: newStatus,
+        ...updatedResumePayload,
         reason: newStatus === "joined" ? joinedReason : effectiveReason || null,
         verifiedReason:
           newStatus === CANONICAL_VERIFY_STATUS
             ? effectiveReason || null
             : null,
-        joining_date: joiningDateValue,
-        joinedReason: newStatus === "joined" ? joinedReason : null,
-        joiningNote: newStatus === "joined" ? joinedReason : null,
+        joining_date: updatedResumePayload?.joiningDate ?? joiningDateValue,
         revenue:
           newStatus === "joined"
             ? joinedRevenueAmount
@@ -2568,13 +2839,19 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
         rd.res_id AS resId,
         rd.rid,
         rd.job_jid AS jobJid,
-        COALESCE(jrs.selection_status, 'pending') AS currentStatus,
+        COALESCE(jrs.selection_status, 'submitted') AS currentStatus,
         c.joining_date AS currentJoiningDate,
-        c.walk_in AS currentWalkInDate
+        c.walk_in AS currentWalkInDate,
+        ei.verified_reason AS verifiedReason,
+        ei.verified_at AS verifiedAt,
+        ei.walk_in_at AS walkInAt,
+        ei.pending_joining_at AS pendingJoiningAt
       FROM resumes_data rd
       LEFT JOIN job_resume_selection jrs
         ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
       LEFT JOIN candidate c ON c.res_id = rd.res_id
+      LEFT JOIN extra_info ei
+        ON ei.res_id = rd.res_id OR (ei.resume_id = rd.res_id AND ei.res_id IS NULL)
       WHERE rd.res_id = ?
       LIMIT 1
       FOR UPDATE`,
@@ -2588,10 +2865,10 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
 
     const resume = resumeRows[0];
     const currentStatus = normalizeWorkflowStatus(resume.currentStatus);
-    const currentDerivedStatus =
-      currentStatus === "selected" && resume.currentJoiningDate
-        ? "pending_joining"
-        : currentStatus;
+    const currentDerivedStatus = resolveCanonicalWorkflowStatus({
+      workflowStatus: currentStatus,
+      joiningDate: resume.currentJoiningDate,
+    });
     const rollbackTarget = getAdminRollbackTarget(resume);
 
     if (!rollbackTarget) {
@@ -2615,18 +2892,16 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
         [resume.jobJid, normalizedResId],
       );
     } else {
-      const persistedStatus =
-        rollbackTarget === "pending_joining" ? "selected" : rollbackTarget;
       await connection.query(
         `INSERT INTO job_resume_selection
           (job_jid, res_id, selected_by_admin, selection_status, selection_note)
          VALUES (?, ?, 'admin-rollback', ?, NULL)
          ON DUPLICATE KEY UPDATE
-           selected_by_admin = VALUES(selected_by_admin),
-           selection_status = VALUES(selection_status),
-           selection_note = VALUES(selection_note),
-           selected_at = CURRENT_TIMESTAMP`,
-        [resume.jobJid, normalizedResId, persistedStatus],
+          selected_by_admin = VALUES(selected_by_admin),
+          selection_status = VALUES(selection_status),
+          selection_note = VALUES(selection_note),
+          selected_at = CURRENT_TIMESTAMP`,
+        [resume.jobJid, normalizedResId, rollbackTarget],
       );
     }
 
@@ -2687,13 +2962,44 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
       });
     }
 
+    if (currentDerivedStatus === "dropout") {
+      await upsertExtraInfoFields(connection, {
+        resId: normalizedResId,
+        jobJid: resume.jobJid || undefined,
+        recruiterRid: resume.rid || undefined,
+        dropoutReason: null,
+      });
+    }
+
+    if (currentDerivedStatus === "left") {
+      await upsertExtraInfoFields(connection, {
+        resId: normalizedResId,
+        jobJid: resume.jobJid || undefined,
+        recruiterRid: resume.rid || undefined,
+        leftReason: null,
+      });
+    }
+
+    if (currentDerivedStatus === "billed") {
+      await upsertExtraInfoFields(connection, {
+        resId: normalizedResId,
+        jobJid: resume.jobJid || undefined,
+        recruiterRid: resume.rid || undefined,
+        billedReason: null,
+      });
+    }
+
+    const updatedResumePayload = await fetchAdminResumeWorkflowPayload(
+      connection,
+      normalizedResId,
+    );
+
     await connection.commit();
     return res.status(200).json({
       message: "Resume rolled back successfully.",
       data: {
-        resId: normalizedResId,
         previousStatus: currentDerivedStatus,
-        status: rollbackTarget,
+        ...updatedResumePayload,
       },
     });
   } catch (error) {
@@ -2917,6 +3223,7 @@ router.get("/api/admin/performance", async (req, res) => {
         ) AS onHoldAt,
         DATE_FORMAT(c.walk_in, '%Y-%m-%d') AS walkInDate,
         DATE_FORMAT(c.joining_date, '%Y-%m-%d') AS joiningDate,
+        COALESCE(jrs.selection_status, 'submitted') AS workflowStatus,
         recruiter.rid AS recruiterRid,
         recruiter.name AS recruiterName,
         teamLeader.name AS teamLeaderName,
@@ -2939,29 +3246,32 @@ router.get("/api/admin/performance", async (req, res) => {
       ORDER BY rd.uploaded_at DESC, rd.res_id DESC`,
     );
 
-    const normalizePerformanceDrilldownItem = (row, statusKey) => ({
-      resId: row.resId || null,
-      recruiterName: row.recruiterName || null,
-      recruiterRid: row.recruiterRid || null,
-      teamLeaderName: row.teamLeaderName || null,
-      name: row.candidateName || null,
-      candidatePhone: row.candidatePhone || null,
-      phone: row.candidatePhone || null,
-      jobJid:
-        row.jobJid === null || row.jobJid === undefined
-          ? null
-          : String(row.jobJid).trim(),
-      companyName: row.companyName || null,
-      city: row.city || null,
-      status: statusKey,
-      resumeFilename: row.resumeFilename || null,
-      candidateName: row.candidateName || null,
-      walkInDate: row.walkInDate || null,
-      joiningDate: row.joiningDate || null,
-      eventAt: row.eventAt || null,
-      revenue: row.revenue,
-      company_rev: row.company_rev,
-    });
+    const normalizePerformanceDrilldownItem = (row) => {
+      const workflowFields = buildWorkflowResponseFields(row);
+      return {
+        resId: row.resId || null,
+        recruiterName: row.recruiterName || null,
+        recruiterRid: row.recruiterRid || null,
+        teamLeaderName: row.teamLeaderName || null,
+        name: row.candidateName || null,
+        candidatePhone: row.candidatePhone || null,
+        phone: row.candidatePhone || null,
+        jobJid:
+          row.jobJid === null || row.jobJid === undefined
+            ? null
+            : String(row.jobJid).trim(),
+        companyName: row.companyName || null,
+        city: row.city || null,
+        resumeFilename: row.resumeFilename || null,
+        candidateName: row.candidateName || null,
+        walkInDate: row.walkInDate || null,
+        joiningDate: row.joiningDate || null,
+        eventAt: row.eventAt || null,
+        revenue: row.revenue,
+        company_rev: row.company_rev,
+        ...workflowFields,
+      };
+    };
 
     const statusDrilldown = {
       submitted: [],
@@ -3025,8 +3335,12 @@ router.get("/api/admin/performance", async (req, res) => {
         ),
       };
       row.company_rev = row.revenue;
+      row.workflowStatus = resolveCanonicalWorkflowStatus({
+        workflowStatus: row.workflowStatus,
+        joiningDate: row.joiningDate,
+      });
 
-      const eventMap = {
+      const currentEventAtMap = {
         submitted: row.submittedAt,
         verified: row.verifiedAt,
         walk_in: row.walkInAt,
@@ -3039,31 +3353,15 @@ router.get("/api/admin/performance", async (req, res) => {
         left: row.leftAt,
       };
 
-      for (const metricKey of PERFORMANCE_EVENT_KEYS) {
-        const eventAt = eventMap[metricKey];
-        if (!isTimestampWithinInclusiveRange(eventAt, dateRange)) continue;
-        recruiterStats[PERFORMANCE_EVENT_META[metricKey].recruiterField] += 1;
-        row.eventAt = eventAt;
-        statusDrilldown[metricKey].push(
-          normalizePerformanceDrilldownItem(row, metricKey),
-        );
-        if (!recruiterStats.lastUpdated || eventAt > recruiterStats.lastUpdated) {
-          recruiterStats.lastUpdated = eventAt;
-        }
-      }
+      const currentStatus = row.workflowStatus;
+      const eventAt = currentEventAtMap[currentStatus];
+      if (!isTimestampWithinInclusiveRange(eventAt, dateRange)) continue;
 
-      if (isTimestampWithinInclusiveRange(row.furtherAt, dateRange)) {
-        recruiterStats.further += 1;
-        if (!recruiterStats.lastUpdated || row.furtherAt > recruiterStats.lastUpdated) {
-          recruiterStats.lastUpdated = row.furtherAt;
-        }
-      }
-
-      if (isTimestampWithinInclusiveRange(row.onHoldAt, dateRange)) {
-        recruiterStats.on_hold += 1;
-        if (!recruiterStats.lastUpdated || row.onHoldAt > recruiterStats.lastUpdated) {
-          recruiterStats.lastUpdated = row.onHoldAt;
-        }
+      recruiterStats[PERFORMANCE_EVENT_META[currentStatus].recruiterField] += 1;
+      row.eventAt = eventAt;
+      statusDrilldown[currentStatus].push(normalizePerformanceDrilldownItem(row));
+      if (!recruiterStats.lastUpdated || eventAt > recruiterStats.lastUpdated) {
+        recruiterStats.lastUpdated = eventAt;
       }
     }
 
