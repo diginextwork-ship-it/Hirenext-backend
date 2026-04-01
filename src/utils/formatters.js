@@ -274,6 +274,12 @@ const extractCandidateSnapshot = ({ source, parsedData, fallback } = {}) => {
         safeFallback.institutionName,
       ) || "",
     ).trim(),
+    location: String(
+      pickFirstFilled(
+        pickAlias("candidate_location", "candidateLocation", "location"),
+        safeFallback.location,
+      ) || "",
+    ).trim(),
     age: toNumberOrNull(rawAge),
     jobJid:
       String(

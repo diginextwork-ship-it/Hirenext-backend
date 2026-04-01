@@ -831,6 +831,7 @@ router.post(
       const normalizedBoardUniversity =
         String(boardUniversity || "").trim() || null;
       const institutionName = candidateSnapshot.institutionName;
+      const location = String(candidateSnapshot.location || "").trim() || null;
       const age = candidateSnapshot.age;
       const submittedReason = String(
         req.body?.submitted_reason ??
@@ -1001,6 +1002,7 @@ router.post(
           levelOfEdu: latestEducationLevel,
           boardUni: normalizedBoardUniversity,
           institutionName,
+          location,
           age,
         });
 
@@ -1064,8 +1066,16 @@ router.post(
   requireRecruiterOwner,
   async (req, res) => {
     const { rid } = req.params;
-    const { job_jid, resumeBase64, resumeFilename, resumeMimeType, source } =
-      req.body || {};
+    const {
+      job_jid,
+      resumeBase64,
+      resumeFilename,
+      resumeMimeType,
+      source,
+      candidate_location,
+      candidateLocation,
+      location,
+    } = req.body || {};
 
     if (!job_jid || !resumeBase64 || !resumeFilename) {
       return res.status(400).json({
@@ -1289,6 +1299,10 @@ router.post(
           jobJid: safeJobId,
           recruiterRid: rid,
           name: resumeAts.applicantName || "Unknown Candidate",
+          location:
+            String(
+              candidate_location ?? candidateLocation ?? location ?? "",
+            ).trim() || null,
         });
 
         await connection.commit();

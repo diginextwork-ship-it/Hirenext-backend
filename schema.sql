@@ -234,6 +234,7 @@ CREATE TABLE IF NOT EXISTS candidate (
   level_of_edu VARCHAR(50) NULL,
   board_uni VARCHAR(100) NULL,
   institution_name VARCHAR(190) NULL,
+  location VARCHAR(150) NULL,
   marks DECIMAL(5,2) NULL,
   age INT NULL,
   industry VARCHAR(50) NULL,

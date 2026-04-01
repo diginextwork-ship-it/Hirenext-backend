@@ -372,6 +372,7 @@ const upsertCandidateFields = async (connection, payload) => {
   addColumnValue("level_of_edu", payload.levelOfEdu);
   addColumnValue("board_uni", payload.boardUni);
   addColumnValue("institution_name", payload.institutionName);
+  addColumnValue("location", payload.location);
   addColumnValue("marks", payload.marks);
   addColumnValue("age", payload.age);
   addColumnValue("industry", payload.industry);
