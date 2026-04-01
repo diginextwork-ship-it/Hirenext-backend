@@ -46,6 +46,13 @@ const { getCurrentDateOnlyInBusinessTimeZone } = require("../utils/dateTime");
 
 const router = express.Router();
 const buildCandidateId = (sequenceValue) => `c_${sequenceValue}`;
+const buildResumeProcessingState = (overrides = {}) => ({
+  status: "completed",
+  resumeParsed: true,
+  atsCalculated: true,
+  submitAllowed: true,
+  ...overrides,
+});
 
 // ─── Top Performing Recruiters Leaderboard ─────────────────────────────
 // Returns top 10 recruiters by total points (and billed points)
@@ -715,6 +722,7 @@ router.post("/api/applications/parse-resume", async (req, res) => {
       atsMatchPercentage: parsed.atsMatchPercentage ?? null,
       atsRawJson: parsed.atsRawJson ?? null,
       parser_meta: parsed.parserMeta || null,
+      processing: buildResumeProcessingState(),
     });
   } catch (error) {
     return res.status(500).json({

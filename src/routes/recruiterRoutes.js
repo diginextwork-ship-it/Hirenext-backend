@@ -80,6 +80,14 @@ const normalizeResumeSource = (value) => {
   return resumeSourceMap.get(normalized) || "";
 };
 
+const buildResumeProcessingState = (overrides = {}) => ({
+  status: "completed",
+  resumeParsed: true,
+  atsCalculated: true,
+  submitAllowed: true,
+  ...overrides,
+});
+
 const toNonNegativeInt = (value, fallback) => {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 0) return fallback;
@@ -1319,6 +1327,10 @@ router.post(
             atsMatchPercentage: resumeAts.atsMatchPercentage,
             atsStatus: resumeAts.atsStatus,
           },
+          processing: buildResumeProcessingState({
+            atsCalculated: resumeAts.atsStatus === "scored",
+            submitAllowed: true,
+          }),
         });
       } catch (error) {
         await connection.rollback();
