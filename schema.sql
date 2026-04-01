@@ -142,7 +142,7 @@ CREATE TABLE IF NOT EXISTS resumes_data (
   ats_raw_json JSON NULL,
   file_hash VARCHAR(64) NULL,
   uploaded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE INDEX idx_resumes_data_file_hash (file_hash),
+  UNIQUE INDEX idx_resumes_data_file_hash (job_jid, file_hash),
   INDEX idx_resumes_data_rid (rid),
   INDEX idx_resumes_data_job_jid (job_jid),
   INDEX idx_resumes_data_uploaded_at (uploaded_at),
@@ -219,7 +219,9 @@ ALTER TABLE resumes_data
   ADD COLUMN IF NOT EXISTS accepted_by_admin VARCHAR(50) NULL;
 ALTER TABLE resumes_data
   ADD COLUMN IF NOT EXISTS file_hash VARCHAR(64) NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_resumes_data_file_hash ON resumes_data (file_hash);
+DROP INDEX IF EXISTS file_hash ON resumes_data;
+DROP INDEX IF EXISTS idx_resumes_data_file_hash ON resumes_data;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_resumes_data_file_hash ON resumes_data (job_jid, file_hash);
 
 CREATE TABLE IF NOT EXISTS candidate (
   cid VARCHAR(20) PRIMARY KEY,

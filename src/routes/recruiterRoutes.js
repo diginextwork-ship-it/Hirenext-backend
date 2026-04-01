@@ -888,15 +888,15 @@ router.post(
           : null;
         if (hasFileHashColumn && fileHash) {
           const [duplicateRows] = await connection.query(
-            "SELECT res_id AS resId FROM resumes_data WHERE file_hash = ? LIMIT 1",
-            [fileHash],
+            "SELECT res_id AS resId FROM resumes_data WHERE job_jid = ? AND file_hash = ? LIMIT 1",
+            [jobId, fileHash],
           );
           if (duplicateRows.length > 0) {
             await connection.rollback();
             return res.status(409).json({
               success: false,
               error:
-                "A copy of the provided resume already exists in our database.",
+                "This resume has already been uploaded for the selected job.",
             });
           }
         }
@@ -1202,16 +1202,16 @@ router.post(
       try {
         await connection.beginTransaction();
 
-        if (hasFileHashColumn && fileHash) {
+        if (hasFileHashColumn && fileHash && hasJobJidColumn) {
           const [duplicateRows] = await connection.query(
-            "SELECT res_id AS resId FROM resumes_data WHERE file_hash = ? LIMIT 1",
-            [fileHash],
+            "SELECT res_id AS resId FROM resumes_data WHERE job_jid = ? AND file_hash = ? LIMIT 1",
+            [job_jid, fileHash],
           );
           if (duplicateRows.length > 0) {
             await connection.rollback();
             return res.status(409).json({
               message:
-                "A copy of the provided resume already exists in our database.",
+                "This resume has already been uploaded for the selected job.",
             });
           }
         }
