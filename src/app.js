@@ -22,6 +22,33 @@ const normalizeOrigin = (value) => {
   }
 };
 
+const isPrivateIpv4 = (hostname) =>
+  /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname) ||
+  /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname) ||
+  /^192\.168\.\d{1,3}\.\d{1,3}$/.test(hostname) ||
+  /^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(hostname);
+
+const isPrivateHostname = (hostname) => {
+  const normalizedHostname = String(hostname || "").trim().toLowerCase();
+  if (!normalizedHostname) return false;
+
+  return (
+    normalizedHostname === "localhost" ||
+    normalizedHostname === "::1" ||
+    normalizedHostname.endsWith(".local") ||
+    isPrivateIpv4(normalizedHostname)
+  );
+};
+
+const isPrivateNetworkOrigin = (origin) => {
+  try {
+    const { hostname } = new URL(origin);
+    return isPrivateHostname(hostname);
+  } catch (_error) {
+    return false;
+  }
+};
+
 // CORS Configuration - CRITICAL FOR PRODUCTION
 const allowedOrigins = new Set(
   [
@@ -40,6 +67,11 @@ const allowedOrigins = new Set(
 
 const allowVercelPreviews =
   String(process.env.ALLOW_VERCEL_PREVIEWS || "false").toLowerCase() === "true";
+const allowPrivateNetworkOrigins =
+  String(
+    process.env.ALLOW_PRIVATE_NETWORK_ORIGINS ||
+      (process.env.NODE_ENV === "production" ? "false" : "true"),
+  ).toLowerCase() === "true";
 
 app.use(
   cors({
@@ -56,6 +88,9 @@ app.use(
         } catch (_error) {
           isAllowed = false;
         }
+      }
+      if (!isAllowed && allowPrivateNetworkOrigins) {
+        isAllowed = isPrivateNetworkOrigin(normalizedOrigin);
       }
 
       if (isAllowed) {
