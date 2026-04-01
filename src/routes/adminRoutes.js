@@ -3353,15 +3353,20 @@ router.get("/api/admin/performance", async (req, res) => {
         left: row.leftAt,
       };
 
-      const currentStatus = row.workflowStatus;
-      const eventAt = currentEventAtMap[currentStatus];
-      if (!isTimestampWithinInclusiveRange(eventAt, dateRange)) continue;
+      for (const metricKey of PERFORMANCE_EVENT_KEYS) {
+        const eventAt = currentEventAtMap[metricKey];
+        if (!isTimestampWithinInclusiveRange(eventAt, dateRange)) continue;
 
-      recruiterStats[PERFORMANCE_EVENT_META[currentStatus].recruiterField] += 1;
-      row.eventAt = eventAt;
-      statusDrilldown[currentStatus].push(normalizePerformanceDrilldownItem(row));
-      if (!recruiterStats.lastUpdated || eventAt > recruiterStats.lastUpdated) {
-        recruiterStats.lastUpdated = eventAt;
+        recruiterStats[PERFORMANCE_EVENT_META[metricKey].recruiterField] += 1;
+        statusDrilldown[metricKey].push(
+          normalizePerformanceDrilldownItem({
+            ...row,
+            eventAt,
+          }),
+        );
+        if (!recruiterStats.lastUpdated || eventAt > recruiterStats.lastUpdated) {
+          recruiterStats.lastUpdated = eventAt;
+        }
       }
     }
 
