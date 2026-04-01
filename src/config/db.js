@@ -106,42 +106,6 @@ const indexExists = async (tableName, indexName) => {
   return rows.length > 0;
 };
 
-const getIndexColumns = async (tableName, indexName) => {
-  const [rows] = await pool.query(
-    `SELECT column_name AS columnName
-     FROM information_schema.statistics
-     WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?
-     ORDER BY seq_in_index`,
-    [tableName, indexName],
-  );
-  return rows.map((row) => String(row.columnName || "").trim());
-};
-
-const getIndexesForColumn = async (tableName, columnName) => {
-  const [rows] = await pool.query(
-    `SELECT index_name AS indexName, column_name AS columnName, non_unique AS nonUnique, seq_in_index AS seqInIndex
-     FROM information_schema.statistics
-     WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?
-     ORDER BY index_name, seq_in_index`,
-    [tableName, columnName],
-  );
-
-  const indexes = new Map();
-  for (const row of rows) {
-    const indexName = String(row.indexName || "").trim();
-    if (!indexName) continue;
-    if (!indexes.has(indexName)) {
-      indexes.set(indexName, {
-        indexName,
-        nonUnique: Number(row.nonUnique) === 1,
-        columns: [],
-      });
-    }
-    indexes.get(indexName).columns.push(String(row.columnName || "").trim());
-  }
-
-  return Array.from(indexes.values());
-};
 
 const constraintExists = async (tableName, constraintName) => {
   const [rows] = await pool.query(
@@ -455,9 +419,7 @@ const ensureResumesDataTable = async () => {
       ats_score DECIMAL(5,2) NULL,
       ats_match_percentage DECIMAL(5,2) NULL,
       ats_raw_json JSON NULL,
-      file_hash CHAR(64) NULL,
       uploaded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE INDEX idx_resumes_data_file_hash (job_jid, file_hash),
       INDEX idx_resumes_data_rid (rid),
       INDEX idx_resumes_data_job_jid (job_jid),
       INDEX idx_resumes_data_uploaded_at (uploaded_at),
@@ -532,42 +494,15 @@ const ensureResumesDataTable = async () => {
     );
   }
 
-  // Used to detect duplicate resume uploads for the same job only.
+  // Used to detect duplicate resume uploads across the whole table.
   if (!(await columnExists("resumes_data", "file_hash"))) {
     await pool.query(
       "ALTER TABLE resumes_data ADD COLUMN file_hash CHAR(64) NULL",
     );
   }
-  const fileHashIndexes = await getIndexesForColumn("resumes_data", "file_hash");
-  for (const index of fileHashIndexes) {
-    const isLegacyGlobalUniqueIndex =
-      !index.nonUnique &&
-      index.columns.length === 1 &&
-      index.columns[0] === "file_hash";
-    if (isLegacyGlobalUniqueIndex) {
-      await pool.query(`ALTER TABLE resumes_data DROP INDEX ${index.indexName}`);
-    }
-  }
-  const hasFileHashIndex = await indexExists(
-    "resumes_data",
-    "idx_resumes_data_file_hash",
-  );
-  if (hasFileHashIndex) {
-    const fileHashIndexColumns = await getIndexColumns(
-      "resumes_data",
-      "idx_resumes_data_file_hash",
-    );
-    const isJobScopedIndex =
-      fileHashIndexColumns.length === 2 &&
-      fileHashIndexColumns[0] === "job_jid" &&
-      fileHashIndexColumns[1] === "file_hash";
-    if (!isJobScopedIndex) {
-      await pool.query("ALTER TABLE resumes_data DROP INDEX idx_resumes_data_file_hash");
-    }
-  }
   if (!(await indexExists("resumes_data", "idx_resumes_data_file_hash"))) {
     await pool.query(
-      "CREATE UNIQUE INDEX idx_resumes_data_file_hash ON resumes_data (job_jid, file_hash)",
+      "CREATE UNIQUE INDEX idx_resumes_data_file_hash ON resumes_data (file_hash)",
     );
   }
 };

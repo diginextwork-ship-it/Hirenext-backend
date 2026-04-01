@@ -1898,16 +1898,16 @@ router.post("/api/applications", async (req, res) => {
 
       const hasFileHashColumn = await columnExists("resumes_data", "file_hash");
       const fileHash = hasFileHashColumn ? sha256Hex(resumeBuffer) : null;
-      if (hasFileHashColumn && fileHash && hasJobJidColumn) {
+      if (hasFileHashColumn && fileHash) {
         const [duplicateRows] = await connection.query(
-          "SELECT res_id AS resId FROM resumes_data WHERE job_jid = ? AND file_hash = ? LIMIT 1",
-          [safeJobId, fileHash],
+          "SELECT res_id AS resId FROM resumes_data WHERE file_hash = ? LIMIT 1",
+          [fileHash],
         );
         if (duplicateRows.length > 0) {
           await connection.rollback();
           return res.status(409).json({
             message:
-              "This resume has already been uploaded for the selected job.",
+              "A copy of the provided resume already exists in our database.",
           });
         }
       }

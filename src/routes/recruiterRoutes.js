@@ -889,15 +889,15 @@ router.post(
           : null;
         if (hasFileHashColumn && fileHash) {
           const [duplicateRows] = await connection.query(
-            "SELECT res_id AS resId FROM resumes_data WHERE job_jid = ? AND file_hash = ? LIMIT 1",
-            [jobId, fileHash],
+            "SELECT res_id AS resId FROM resumes_data WHERE file_hash = ? LIMIT 1",
+            [fileHash],
           );
           if (duplicateRows.length > 0) {
             await connection.rollback();
             return res.status(409).json({
               success: false,
               error:
-                "This resume has already been uploaded for the selected job.",
+                "A copy of the provided resume already exists in our database.",
             });
           }
         }
@@ -1048,16 +1048,6 @@ router.post(
         connection.release();
       }
     } catch (error) {
-      console.error("Resume submit failed:", error);
-
-      if (error && error.code === "ER_DUP_ENTRY") {
-        return res.status(409).json({
-          success: false,
-          error: "This resume has already been uploaded for the selected job.",
-          details: error.message,
-        });
-      }
-
       return res.status(500).json({
         success: false,
         error: "Failed to submit resume.",
@@ -1213,16 +1203,16 @@ router.post(
       try {
         await connection.beginTransaction();
 
-        if (hasFileHashColumn && fileHash && hasJobJidColumn) {
+        if (hasFileHashColumn && fileHash) {
           const [duplicateRows] = await connection.query(
-            "SELECT res_id AS resId FROM resumes_data WHERE job_jid = ? AND file_hash = ? LIMIT 1",
-            [job_jid, fileHash],
+            "SELECT res_id AS resId FROM resumes_data WHERE file_hash = ? LIMIT 1",
+            [fileHash],
           );
           if (duplicateRows.length > 0) {
             await connection.rollback();
             return res.status(409).json({
               message:
-                "This resume has already been uploaded for the selected job.",
+                "A copy of the provided resume already exists in our database.",
             });
           }
         }
@@ -1323,15 +1313,6 @@ router.post(
         connection.release();
       }
     } catch (error) {
-      console.error("Recruiter add resume failed:", error);
-
-      if (error && error.code === "ER_DUP_ENTRY") {
-        return res.status(409).json({
-          message: "This resume has already been uploaded for the selected job.",
-          error: error.message,
-        });
-      }
-
       return res.status(500).json({
         message: "Failed to add resume.",
         error: error.message,

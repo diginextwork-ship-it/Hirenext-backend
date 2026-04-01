@@ -214,30 +214,6 @@ const createPerformanceResume = async ({
   );
 };
 
-const insertResumeWithHash = async ({ resId, recruiterRid, jobJid, fileHash }) => {
-  await pool.query(
-    `INSERT INTO resumes_data
-      (res_id, resume, rid, job_jid, resume_filename, resume_type, submitted_by_role, ats_raw_json, source, file_hash)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      resId,
-      Buffer.from("duplicate-hash-test"),
-      recruiterRid,
-      jobJid,
-      `${resId}.pdf`,
-      "pdf",
-      "recruiter",
-      JSON.stringify({
-        parsedData: {
-          name: "Duplicate Hash Candidate",
-          email: `${resId}@example.com`,
-        },
-      }),
-      "test",
-      fileHash,
-    ],
-  );
-};
 
 const cleanupPerformanceFixture = async ({ recruiterRid, teamLeaderRid, jobJid, resIds }) => {
   await pool.query("DELETE FROM extra_info WHERE res_id IN (?) OR resume_id IN (?)", [resIds, resIds]);
@@ -1307,107 +1283,6 @@ test("admin performance endpoint applies inclusive date filters across summary, 
   }
 });
 
-test("same resume hash can be stored for different jobs", async () => {
-  const recruiterRid = buildTempId("rduph");
-  const firstJobJid = buildTempId("jobdha");
-  const secondJobJid = buildTempId("jobdhb");
-  const firstResId = buildTempResumeId("hasha");
-  const secondResId = buildTempResumeId("hashb");
-  const sharedHash = "a".repeat(64);
-
-  await createTempRecruiter({
-    rid: recruiterRid,
-    name: "Duplicate Hash Recruiter",
-    email: `${recruiterRid}@example.com`,
-    role: "recruiter",
-  });
-  await createTempJob({
-    jid: firstJobJid,
-    recruiterRid,
-    companyName: "Hash Co One",
-    roleName: "Support Engineer",
-    createdAt: "2037-04-01 09:00:00",
-  });
-  await createTempJob({
-    jid: secondJobJid,
-    recruiterRid,
-    companyName: "Hash Co Two",
-    roleName: "Support Engineer",
-    createdAt: "2037-04-01 09:05:00",
-  });
-
-  try {
-    await insertResumeWithHash({
-      resId: firstResId,
-      recruiterRid,
-      jobJid: firstJobJid,
-      fileHash: sharedHash,
-    });
-    await insertResumeWithHash({
-      resId: secondResId,
-      recruiterRid,
-      jobJid: secondJobJid,
-      fileHash: sharedHash,
-    });
-
-    const [rows] = await pool.query(
-      "SELECT res_id AS resId, job_jid AS jobJid FROM resumes_data WHERE res_id IN (?, ?)",
-      [firstResId, secondResId],
-    );
-    assert.equal(rows.length, 2);
-  } finally {
-    await cleanupTempResume(firstResId);
-    await cleanupTempResume(secondResId);
-    await pool.query("DELETE FROM jobs WHERE jid IN (?, ?)", [firstJobJid, secondJobJid]);
-    await pool.query("DELETE FROM recruiter WHERE rid = ?", [recruiterRid]);
-  }
-});
-
-test("same resume hash is rejected for the same job", async () => {
-  const recruiterRid = buildTempId("rdups");
-  const jobJid = buildTempId("jobdup");
-  const firstResId = buildTempResumeId("samea");
-  const secondResId = buildTempResumeId("sameb");
-  const sharedHash = "b".repeat(64);
-
-  await createTempRecruiter({
-    rid: recruiterRid,
-    name: "Same Job Recruiter",
-    email: `${recruiterRid}@example.com`,
-    role: "recruiter",
-  });
-  await createTempJob({
-    jid: jobJid,
-    recruiterRid,
-    companyName: "Same Job Co",
-    roleName: "Analyst",
-    createdAt: "2037-04-01 10:00:00",
-  });
-
-  try {
-    await insertResumeWithHash({
-      resId: firstResId,
-      recruiterRid,
-      jobJid,
-      fileHash: sharedHash,
-    });
-
-    await assert.rejects(
-      insertResumeWithHash({
-        resId: secondResId,
-        recruiterRid,
-        jobJid,
-        fileHash: sharedHash,
-      }),
-      (error) => error && error.code === "ER_DUP_ENTRY",
-    );
-  } finally {
-    await cleanupTempResume(firstResId);
-    await cleanupTempResume(secondResId);
-    await pool.query("DELETE FROM jobs WHERE jid = ?", [jobJid]);
-    await pool.query("DELETE FROM recruiter WHERE rid = ?", [recruiterRid]);
-  }
-});
 
 after(async () => {
   await new Promise((resolve, reject) => {
