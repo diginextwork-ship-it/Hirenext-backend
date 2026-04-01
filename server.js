@@ -9,6 +9,17 @@ const PORT = process.env.PORT || 5000;
 const BILLING_CHECK_INTERVAL_MS =
   Number(process.env.BILLING_CHECK_INTERVAL_MS) || 3600000; // default 1 hour
 
+const normalizeOrigin = (value) => {
+  const origin = String(value || "").trim();
+  if (!origin) return "";
+
+  try {
+    return new URL(origin).origin.toLowerCase();
+  } catch (_error) {
+    return origin.replace(/\/+$/, "").toLowerCase();
+  }
+};
+
 const startServer = async () => {
   // Start server IMMEDIATELY - don't wait for database
   const server = app.listen(PORT, "0.0.0.0", () => {
@@ -20,7 +31,9 @@ const startServer = async () => {
         .split(",")
         .map((origin) => origin.trim())
         .filter(Boolean),
-    ].filter(Boolean);
+    ]
+      .map(normalizeOrigin)
+      .filter(Boolean);
     console.log(
       `Allowed origins: ${configuredOrigins.join(", ") || "localhost only"}`,
     );

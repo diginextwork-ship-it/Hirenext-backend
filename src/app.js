@@ -10,8 +10,21 @@ const { createRateLimiter } = require("./middleware/rateLimiter");
 
 const app = express();
 
+const normalizeOrigin = (value) => {
+  const origin = String(value || "").trim();
+  if (!origin) return "";
+
+  try {
+    const url = new URL(origin);
+    return url.origin.toLowerCase();
+  } catch (_error) {
+    return origin.replace(/\/+$/, "").toLowerCase();
+  }
+};
+
 // CORS Configuration - CRITICAL FOR PRODUCTION
-const allowedOrigins = [
+const allowedOrigins = new Set(
+  [
   "http://localhost:3000",
   "http://localhost:5173",
   "http://localhost:5174", // Vite sometimes uses this
@@ -20,7 +33,10 @@ const allowedOrigins = [
     .split(",")
     .map((origin) => origin.trim())
     .filter(Boolean), // Comma-separated URLs for multiple deployments
-].filter(Boolean); // Remove undefined values
+  ]
+    .map(normalizeOrigin)
+    .filter(Boolean),
+); // Remove undefined values
 
 const allowVercelPreviews =
   String(process.env.ALLOW_VERCEL_PREVIEWS || "false").toLowerCase() === "true";
@@ -31,10 +47,11 @@ app.use(
       // Allow requests with no origin (mobile apps, curl, Postman)
       if (!origin) return callback(null, true);
 
-      let isAllowed = allowedOrigins.includes(origin);
+      const normalizedOrigin = normalizeOrigin(origin);
+      let isAllowed = allowedOrigins.has(normalizedOrigin);
       if (!isAllowed && allowVercelPreviews) {
         try {
-          const hostname = new URL(origin).hostname.toLowerCase();
+          const hostname = new URL(normalizedOrigin).hostname.toLowerCase();
           isAllowed = hostname.endsWith(".vercel.app");
         } catch (_error) {
           isAllowed = false;
