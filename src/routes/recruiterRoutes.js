@@ -1240,6 +1240,38 @@ router.post(
         );
         const sequenceValue = Number(sequenceResult.insertId);
         const resId = `res_${sequenceValue}`;
+        const cid = buildCandidateId(sequenceValue);
+
+        const requestParsedData = parseJsonField(
+          req.body?.parsedData ?? req.body?.parsed_data,
+        );
+        const requestAtsRawJson = parseJsonField(
+          req.body?.atsRawJson ?? req.body?.ats_raw_json,
+        );
+        const candidateSnapshot = extractCandidateSnapshot({
+          source: req.body,
+          parsedData: requestParsedData,
+          fallback: {
+            name: resumeAts.applicantName || "",
+            jobJid: safeJobId,
+            recruiterRid: rid,
+            location:
+              String(
+                candidate_location ?? candidateLocation ?? location ?? "",
+              ).trim() || null,
+          },
+        });
+        const storedAtsRawJson =
+          requestAtsRawJson !== null
+            ? {
+                ...(requestAtsRawJson &&
+                typeof requestAtsRawJson === "object" &&
+                !Array.isArray(requestAtsRawJson)
+                  ? requestAtsRawJson
+                  : {}),
+                parsed_data: requestParsedData ?? null,
+              }
+            : resumeAts.atsRawJson ?? null;
 
         const insertColumns = ["res_id", "rid"];
         const insertValues = [resId, rid];
@@ -1273,7 +1305,9 @@ router.post(
 
         if (hasApplicantNameColumn) {
           insertColumns.push("applicant_name");
-          insertValues.push(resumeAts.applicantName || null);
+          insertValues.push(
+            candidateSnapshot.name || resumeAts.applicantName || null,
+          );
         }
 
         if (hasAtsScoreColumn) {
@@ -1289,9 +1323,7 @@ router.post(
         if (hasAtsRawColumn) {
           insertColumns.push("ats_raw_json");
           insertValues.push(
-            resumeAts.atsRawJson === undefined || resumeAts.atsRawJson === null
-              ? null
-              : JSON.stringify(resumeAts.atsRawJson),
+            storedAtsRawJson === null ? null : JSON.stringify(storedAtsRawJson),
           );
         }
 
@@ -1306,11 +1338,15 @@ router.post(
           resId,
           jobJid: safeJobId,
           recruiterRid: rid,
-          name: resumeAts.applicantName || "Unknown Candidate",
-          location:
-            String(
-              candidate_location ?? candidateLocation ?? location ?? "",
-            ).trim() || null,
+          name:
+            candidateSnapshot.name || resumeAts.applicantName || "Unknown Candidate",
+          phone: candidateSnapshot.phone || undefined,
+          email: candidateSnapshot.email || undefined,
+          levelOfEdu: candidateSnapshot.levelOfEdu || undefined,
+          boardUni: candidateSnapshot.boardUni || undefined,
+          institutionName: candidateSnapshot.institutionName || undefined,
+          location: candidateSnapshot.location || undefined,
+          age: candidateSnapshot.age,
         });
 
         await connection.commit();
