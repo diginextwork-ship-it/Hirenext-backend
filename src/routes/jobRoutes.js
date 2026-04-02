@@ -819,6 +819,11 @@ router.get(
         `SELECT
           rd.res_id AS resId,
           rd.rid AS rid,
+          rd.job_jid AS jobJid,
+          rd.ats_raw_json AS atsRawJson,
+          c.name AS candidateName,
+          c.phone AS candidatePhone,
+          c.email AS candidateEmail,
           r.name AS recruiterName,
           r.email AS recruiterEmail,
           rd.resume_filename AS resumeFilename,
@@ -855,32 +860,69 @@ router.get(
           roleName: jobRows[0]?.roleName || null,
           city: jobRows[0]?.city || null,
         },
-        resumes: rows.map((row) => ({
-          ...(extraInfoByResumeId.get(String(row.resId || "").trim()) || {}),
-          resId: row.resId,
-          rid: row.rid,
-          recruiterName: row.recruiterName || "Unknown",
-          recruiterEmail: row.recruiterEmail || null,
-          resumeFilename: row.resumeFilename || null,
-          resumeType: row.resumeType || null,
-          atsScore: row.atsScore === null ? null : Number(row.atsScore),
-          atsMatchPercentage:
-            row.atsMatchPercentage === null
-              ? null
-              : Number(row.atsMatchPercentage),
-          uploadedAt: row.uploadedAt || null,
-          status: row.workflowStatus || "pending",
-          note: row.workflowNote || null,
-          updatedBy: row.updatedBy || null,
-          updatedAt: row.updatedAt || null,
-          walkInDate: row.walkInDate || null,
-          job: {
-            jobJid: req.ownedJob.jid,
-            companyName: jobRows[0]?.companyName || null,
-            roleName: jobRows[0]?.roleName || null,
-            city: jobRows[0]?.city || null,
-          },
-        })),
+        resumes: rows.map((row) => {
+          const extraInfo =
+            extraInfoByResumeId.get(String(row.resId || "").trim()) || {};
+          const parsedResumePayload = parseJsonField(row.atsRawJson);
+          const candidateSnapshot = extractCandidateSnapshot({
+            source: {
+              candidate_name: row.candidateName,
+              candidate_phone: row.candidatePhone,
+              candidate_email: row.candidateEmail,
+              job_jid: row.jobJid,
+              recruiter_rid: row.rid,
+            },
+            parsedData:
+              parsedResumePayload?.parsed_data ||
+              parsedResumePayload?.parsedData ||
+              parsedResumePayload,
+            fallback: {
+              jobJid: row.jobJid || req.ownedJob.jid,
+              recruiterRid: row.rid,
+            },
+          });
+
+          return {
+            ...extraInfo,
+            resId: row.resId,
+            rid: row.rid,
+            recruiterRid: row.rid,
+            jobJid: row.jobJid || req.ownedJob.jid,
+            name: candidateSnapshot.name || row.candidateName || null,
+            candidateName: candidateSnapshot.name || row.candidateName || null,
+            candidatePhone:
+              candidateSnapshot.phone || row.candidatePhone || null,
+            candidate_phone:
+              candidateSnapshot.phone || row.candidatePhone || null,
+            phone: candidateSnapshot.phone || row.candidatePhone || null,
+            candidateEmail:
+              candidateSnapshot.email || row.candidateEmail || null,
+            candidate_email:
+              candidateSnapshot.email || row.candidateEmail || null,
+            email: candidateSnapshot.email || row.candidateEmail || null,
+            recruiterName: row.recruiterName || "Unknown",
+            recruiterEmail: row.recruiterEmail || null,
+            resumeFilename: row.resumeFilename || null,
+            resumeType: row.resumeType || null,
+            atsScore: row.atsScore === null ? null : Number(row.atsScore),
+            atsMatchPercentage:
+              row.atsMatchPercentage === null
+                ? null
+                : Number(row.atsMatchPercentage),
+            uploadedAt: row.uploadedAt || null,
+            status: row.workflowStatus || "pending",
+            note: row.workflowNote || null,
+            updatedBy: row.updatedBy || null,
+            updatedAt: row.updatedAt || null,
+            walkInDate: row.walkInDate || null,
+            job: {
+              jobJid: req.ownedJob.jid,
+              companyName: jobRows[0]?.companyName || null,
+              roleName: jobRows[0]?.roleName || null,
+              city: jobRows[0]?.city || null,
+            },
+          };
+        }),
       });
     } catch (error) {
       return res.status(500).json({
