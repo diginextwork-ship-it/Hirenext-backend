@@ -731,6 +731,13 @@ router.post(
           error: "Resume file size must be 5MB or less.",
         });
       }
+      if (error?.code === "LIMIT_FIELD_VALUE") {
+        return res.status(400).json({
+          success: false,
+          error:
+            "Resume upload payload is too large. Submit the file directly without an oversized text payload.",
+        });
+      }
       return res.status(400).json({
         success: false,
         error: "Invalid resume upload payload.",
