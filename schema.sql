@@ -162,7 +162,8 @@ CREATE TABLE IF NOT EXISTS extra_info (
   rid VARCHAR(50) NULL,
   submitted_reason TEXT NULL,
   verified_reason TEXT NULL,
-  pending_joining_reason TEXT NULL,
+  shortlisted_reason TEXT NULL,
+  shortlisted_at TIMESTAMP NULL DEFAULT NULL,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (res_id),
   UNIQUE KEY uniq_extra_info_resume_id (resume_id),
@@ -172,7 +173,9 @@ CREATE TABLE IF NOT EXISTS extra_info (
 );
 
 ALTER TABLE extra_info
-  ADD COLUMN IF NOT EXISTS walk_in_reason TEXT NULL;\nALTER TABLE extra_info\n  ADD COLUMN IF NOT EXISTS further_reason TEXT NULL;
+  ADD COLUMN IF NOT EXISTS walk_in_reason TEXT NULL;
+ALTER TABLE extra_info
+  ADD COLUMN IF NOT EXISTS further_reason TEXT NULL;
 ALTER TABLE extra_info
   DROP COLUMN IF EXISTS candidate_name;
 ALTER TABLE extra_info
@@ -188,7 +191,15 @@ ALTER TABLE extra_info
 ALTER TABLE extra_info
   ADD COLUMN IF NOT EXISTS select_reason TEXT NULL;
 ALTER TABLE extra_info
-  ADD COLUMN IF NOT EXISTS pending_joining_reason TEXT NULL;
+  DROP COLUMN IF EXISTS pending_joining;
+ALTER TABLE extra_info
+  DROP COLUMN IF EXISTS pending_joining_at;
+ALTER TABLE extra_info
+  DROP COLUMN IF EXISTS pending_joining_reason;
+ALTER TABLE extra_info
+  ADD COLUMN IF NOT EXISTS shortlisted_reason TEXT NULL;
+ALTER TABLE extra_info
+  ADD COLUMN IF NOT EXISTS shortlisted_at TIMESTAMP NULL DEFAULT NULL;
 ALTER TABLE extra_info
   ADD COLUMN IF NOT EXISTS joined_reason TEXT NULL;
 ALTER TABLE extra_info
@@ -377,6 +388,7 @@ CREATE TABLE IF NOT EXISTS status (
   verified INT NULL,
   walk_in INT NULL,
   further INT NULL,
+  shortlisted INT NULL,
   `select` INT NULL,
   reject INT NULL,
   joined INT NULL,
@@ -391,6 +403,8 @@ CREATE TABLE IF NOT EXISTS status (
     ON UPDATE CASCADE ON DELETE CASCADE
 );
 
+ALTER TABLE status ADD COLUMN IF NOT EXISTS shortlisted INT NULL;
+ALTER TABLE status DROP COLUMN IF EXISTS pending_joining;
 ALTER TABLE status ADD COLUMN IF NOT EXISTS billed INT NULL;
 ALTER TABLE status ADD COLUMN IF NOT EXISTS `left` INT NULL;
 
