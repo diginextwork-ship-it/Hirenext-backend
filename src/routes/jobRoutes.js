@@ -974,15 +974,15 @@ router.post(
       });
     }
 
-    if (normalizedStatus === "pending_joining") {
+    if (normalizedStatus === "selected") {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(joiningDate || "")) {
         return res.status(400).json({
           message: "joining_date is required in YYYY-MM-DD format.",
         });
       }
-    } else if (normalizedStatus === "selected" && joiningDate) {
+    } else if (normalizedStatus === "shortlisted" && joiningDate) {
       return res.status(400).json({
-        message: "joining_date should only be provided for pending_joining.",
+        message: "joining_date should only be provided for selected.",
       });
     } else if (joiningDate && !/^\d{4}-\d{2}-\d{2}$/.test(joiningDate)) {
       return res.status(400).json({
@@ -1059,11 +1059,10 @@ router.post(
           existingSelectionRows[0]?.selectionStatus,
         );
         const currentDerivedStatus =
-          previousStatus === "selected" && resumeRows[0]?.currentJoiningDate
-            ? "pending_joining"
+          previousStatus === "shortlisted" && resumeRows[0]?.currentJoiningDate
+            ? "selected"
             : previousStatus;
-        const persistedStatus =
-          normalizedStatus === "pending_joining" ? "selected" : normalizedStatus;
+        const persistedStatus = normalizedStatus;
         const effectiveJoiningDate = /^\d{4}-\d{2}-\d{2}$/.test(joiningDate || "")
           ? joiningDate
           : resumeRows[0]?.currentJoiningDate || null;
@@ -1110,7 +1109,7 @@ router.post(
           walk_in: "walkInAt",
           further: "furtherAt",
           selected: "selectedAt",
-          pending_joining: "pendingJoiningAt",
+          shortlisted: "shortlistedAt",
           rejected: "rejectedAt",
           joined: "joinedAt",
           dropout: "dropoutAt",
@@ -1142,9 +1141,9 @@ router.post(
 
         if (statusCandidateSnapshot.name) {
           let candidateJoiningDateValue = resumeRows[0]?.currentJoiningDate || null;
-          if (normalizedStatus === "selected") {
+          if (normalizedStatus === "shortlisted") {
             candidateJoiningDateValue = null;
-          } else if (normalizedStatus === "pending_joining") {
+          } else if (normalizedStatus === "selected") {
             candidateJoiningDateValue = joiningDate;
           } else if (normalizedStatus === "joined" && effectiveJoiningDate) {
             candidateJoiningDateValue = effectiveJoiningDate;
@@ -1261,7 +1260,7 @@ router.post(
           reason: normalizedNote || null,
           note: normalizedNote || null,
           joiningDate:
-            normalizedStatus === "pending_joining" ? joiningDate : effectiveJoiningDate,
+            normalizedStatus === "selected" ? joiningDate : effectiveJoiningDate,
           jobJid: req.ownedJob.jid,
         });
         await connection.commit();
@@ -1274,7 +1273,7 @@ router.post(
             status: normalizedStatus,
             note: normalizedNote || null,
             joining_date:
-              normalizedStatus === "pending_joining" ? joiningDate : null,
+              normalizedStatus === "selected" ? joiningDate : null,
             verifiedReason:
               reasonField === "verifiedReason"
                 ? (statusReasonValue ?? null)

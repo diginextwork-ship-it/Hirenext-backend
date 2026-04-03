@@ -895,7 +895,8 @@ const ensureExtraInfoTable = async () => {
       rid VARCHAR(50) NULL,
       submitted_reason TEXT NULL,
       verified_reason TEXT NULL,
-      pending_joining_reason TEXT NULL,
+      shortlisted_reason TEXT NULL,
+      shortlisted_at TIMESTAMP NULL DEFAULT NULL,
       updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (res_id),
       UNIQUE KEY uniq_extra_info_resume_id (resume_id),
@@ -938,9 +939,19 @@ const ensureExtraInfoTable = async () => {
       "ALTER TABLE extra_info ADD COLUMN verified_reason TEXT NULL",
     );
   }
-  if (!(await columnExists("extra_info", "pending_joining_reason"))) {
+  if (!(await columnExists("extra_info", "shortlisted_reason"))) {
     await pool.query(
-      "ALTER TABLE extra_info ADD COLUMN pending_joining_reason TEXT NULL",
+      "ALTER TABLE extra_info ADD COLUMN shortlisted_reason TEXT NULL",
+    );
+  }
+  if (await columnExists("extra_info", "pending_joining_reason")) {
+    await pool.query(
+      `UPDATE extra_info
+       SET shortlisted_reason = COALESCE(shortlisted_reason, pending_joining_reason)
+       WHERE pending_joining_reason IS NOT NULL`,
+    );
+    await pool.query(
+      "ALTER TABLE extra_info DROP COLUMN pending_joining_reason",
     );
   }
   if (!(await columnExists("extra_info", "walk_in_reason"))) {
@@ -987,7 +998,7 @@ const ensureExtraInfoTable = async () => {
     "walk_in_at",
     "further_at",
     "selected_at",
-    "pending_joining_at",
+    "shortlisted_at",
     "joined_at",
     "dropout_at",
     "rejected_at",
@@ -1209,6 +1220,7 @@ const ensureJobResumeSelectionTable = async () => {
     "walk_in",
     "further",
     "selected",
+    "shortlisted",
     "pending_joining",
     "rejected",
     "joined",
@@ -1225,7 +1237,7 @@ const ensureJobResumeSelectionTable = async () => {
     await pool.query(
       `ALTER TABLE job_resume_selection
        MODIFY COLUMN selection_status
-       ENUM('submitted','verified','walk_in','further','selected','pending_joining','rejected','joined','dropout','on_hold','billed','left')
+       ENUM('submitted','verified','walk_in','further','selected','shortlisted','pending_joining','rejected','joined','dropout','on_hold','billed','left')
        NOT NULL DEFAULT 'selected'`,
     );
   }
@@ -1422,6 +1434,7 @@ const ensureStatusTable = async () => {
       submitted INT NOT NULL DEFAULT 0,
       verified INT NULL,
       walk_in INT NULL,
+      shortlisted INT NULL,
       \`select\` INT NULL,
       reject INT NULL,
       joined INT NULL,
@@ -1447,6 +1460,10 @@ const ensureStatusTable = async () => {
 
   if (!(await columnExists("status", "walk_in"))) {
     await pool.query("ALTER TABLE status ADD COLUMN walk_in INT NULL");
+  }
+
+  if (!(await columnExists("status", "shortlisted"))) {
+    await pool.query("ALTER TABLE status ADD COLUMN shortlisted INT NULL");
   }
 
   if (!(await columnExists("status", "select"))) {

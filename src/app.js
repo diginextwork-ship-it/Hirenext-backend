@@ -49,28 +49,37 @@ const isPrivateNetworkOrigin = (origin) => {
   }
 };
 
-// CORS Configuration - CRITICAL FOR PRODUCTION
+const isProduction = String(process.env.NODE_ENV || "").trim() === "production";
+
+// In local development, only allow localhost frontends so local work cannot
+// accidentally modify production through a server URL configured in env files.
 const allowedOrigins = new Set(
-  [
-  "http://localhost:3000",
-  "http://localhost:5173",
-  "http://localhost:5174", // Vite sometimes uses this
-  process.env.FRONTEND_URL, // Single frontend URL
-  ...String(process.env.FRONTEND_URLS || "")
-    .split(",")
-    .map((origin) => origin.trim())
-    .filter(Boolean), // Comma-separated URLs for multiple deployments
-  ]
+  (
+    isProduction
+      ? [
+          process.env.FRONTEND_URL,
+          ...String(process.env.FRONTEND_URLS || "")
+            .split(",")
+            .map((origin) => origin.trim())
+            .filter(Boolean),
+        ]
+      : [
+          "http://localhost:3000",
+          "http://localhost:5173",
+          "http://localhost:5174",
+        ]
+  )
     .map(normalizeOrigin)
     .filter(Boolean),
-); // Remove undefined values
+);
 
 const allowVercelPreviews =
+  isProduction &&
   String(process.env.ALLOW_VERCEL_PREVIEWS || "false").toLowerCase() === "true";
 const allowPrivateNetworkOrigins =
   String(
     process.env.ALLOW_PRIVATE_NETWORK_ORIGINS ||
-      (process.env.NODE_ENV === "production" ? "false" : "true"),
+      "false",
   ).toLowerCase() === "true";
 
 app.use(

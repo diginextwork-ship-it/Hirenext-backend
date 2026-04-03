@@ -93,6 +93,7 @@ const recruiterStatsSubquery = `
     SUM(CASE WHEN jrs.selection_status = 'walk_in' THEN 1 ELSE 0 END) AS walk_in,
     SUM(CASE WHEN jrs.selection_status = 'further' THEN 1 ELSE 0 END) AS further,
     SUM(CASE WHEN jrs.selection_status = 'selected' THEN 1 ELSE 0 END) AS selected,
+    SUM(CASE WHEN jrs.selection_status IN ('shortlisted', 'pending_joining') THEN 1 ELSE 0 END) AS shortlisted,
     SUM(CASE WHEN jrs.selection_status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
     SUM(CASE WHEN jrs.selection_status = 'joined' THEN 1 ELSE 0 END) AS joined,
     SUM(CASE WHEN jrs.selection_status = 'dropout' THEN 1 ELSE 0 END) AS dropout,
@@ -139,6 +140,7 @@ const buildCalculatedMetrics = (stats) => {
   const submitted = toNullableNumber(stats.submitted);
   const verified = toNullableNumber(stats.verified);
   const selected = toNullableNumber(stats.select);
+  const shortlisted = toNullableNumber(stats.shortlisted);
   const joined = toNullableNumber(stats.joined);
   const dropout = toNullableNumber(stats.dropout);
   const billed = toNullableNumber(stats.billed);
@@ -150,8 +152,8 @@ const buildCalculatedMetrics = (stats) => {
         ? Number(((verified / submitted) * 100).toFixed(2))
         : null,
     selectionRate:
-      verified && verified > 0 && selected !== null
-        ? Number(((selected / verified) * 100).toFixed(2))
+      verified && verified > 0 && shortlisted !== null
+        ? Number(((shortlisted / verified) * 100).toFixed(2))
         : null,
     joiningRate:
       selected && selected > 0 && joined !== null
@@ -177,6 +179,7 @@ const mapStats = (row) => ({
   verified: Number(row.verified) || 0,
   walk_in: Number(row.walk_in) || 0,
   further: Number(row.further) || 0,
+  shortlisted: Number(row.shortlisted) || 0,
   select: Number(row.select) || 0,
   reject: Number(row.reject) || 0,
   joined: Number(row.joined) || 0,
@@ -208,6 +211,7 @@ router.get(
           COALESCE(rs.verified, 0) AS verified,
           COALESCE(rs.walk_in, 0) AS walk_in,
           COALESCE(rs.further, 0) AS further,
+          COALESCE(rs.shortlisted, 0) AS shortlisted,
           COALESCE(rs.selected, 0) AS \`select\`,
           COALESCE(rs.rejected, 0) AS reject,
           COALESCE(rs.joined, 0) AS joined,
@@ -271,6 +275,7 @@ router.get(
       submitted: "COALESCE(rs.submitted, 0)",
       verified: "COALESCE(rs.verified, 0)",
       walk_in: "COALESCE(rs.walk_in, 0)",
+      shortlisted: "COALESCE(rs.shortlisted, 0)",
       select: "COALESCE(rs.selected, 0)",
       reject: "COALESCE(rs.rejected, 0)",
       joined: "COALESCE(rs.joined, 0)",
@@ -308,6 +313,7 @@ router.get(
           COALESCE(rs.verified, 0) AS verified,
           COALESCE(rs.walk_in, 0) AS walk_in,
           COALESCE(rs.further, 0) AS further,
+          COALESCE(rs.shortlisted, 0) AS shortlisted,
           COALESCE(rs.selected, 0) AS \`select\`,
           COALESCE(rs.rejected, 0) AS reject,
           COALESCE(rs.joined, 0) AS joined,
@@ -505,6 +511,7 @@ router.get(
           COALESCE(rs.verified, 0) AS verified,
           COALESCE(rs.walk_in, 0) AS walk_in,
           COALESCE(rs.further, 0) AS further,
+          COALESCE(rs.shortlisted, 0) AS shortlisted,
           COALESCE(rs.selected, 0) AS \`select\`,
           COALESCE(rs.rejected, 0) AS reject,
           COALESCE(rs.joined, 0) AS joined,
@@ -521,6 +528,7 @@ router.get(
             SUM(CASE WHEN jrs.selection_status = 'walk_in' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS walk_in,
             SUM(CASE WHEN jrs.selection_status = 'further' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS further,
             SUM(CASE WHEN jrs.selection_status = 'selected' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS selected,
+            SUM(CASE WHEN jrs.selection_status IN ('shortlisted', 'pending_joining') AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS shortlisted,
             SUM(CASE WHEN jrs.selection_status = 'rejected' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS rejected,
             SUM(CASE WHEN jrs.selection_status = 'joined' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS joined,
             SUM(CASE WHEN jrs.selection_status = 'dropout' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS dropout,

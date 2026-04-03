@@ -112,7 +112,8 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
   const hasWalkInReason = columns.has("walk_in_reason");
   const hasFurtherReason = columns.has("further_reason");
   const hasSelectReason = columns.has("select_reason");
-  const hasPendingJoiningReason = columns.has("pending_joining_reason");
+  const hasShortlistedReason =
+    columns.has("shortlisted_reason") || columns.has("pending_joining_reason");
   const hasJoinedReason = columns.has("joined_reason");
   const hasDropoutReason = columns.has("dropout_reason");
   const hasRejectReason = columns.has("reject_reason");
@@ -125,7 +126,7 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
     hasWalkInReason ||
     hasFurtherReason ||
     hasSelectReason ||
-    hasPendingJoiningReason ||
+    hasShortlistedReason ||
     hasJoinedReason ||
     hasDropoutReason ||
     hasRejectReason ||
@@ -142,8 +143,10 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
   if (hasWalkInReason) selectColumns.push("walk_in_reason AS walkInReason");
   if (hasFurtherReason) selectColumns.push("further_reason AS furtherReason");
   if (hasSelectReason) selectColumns.push("select_reason AS selectReason");
-  if (hasPendingJoiningReason) {
-    selectColumns.push("pending_joining_reason AS pendingJoiningReason");
+  if (columns.has("shortlisted_reason")) {
+    selectColumns.push("shortlisted_reason AS shortlistedReason");
+  } else if (columns.has("pending_joining_reason")) {
+    selectColumns.push("pending_joining_reason AS shortlistedReason");
   }
   if (hasJoinedReason) selectColumns.push("joined_reason AS joinedReason");
   if (hasDropoutReason) selectColumns.push("dropout_reason AS dropoutReason");
@@ -168,7 +171,7 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
           walkInReason: row.walkInReason || null,
           furtherReason: row.furtherReason || null,
           selectReason: row.selectReason || null,
-          pendingJoiningReason: row.pendingJoiningReason || null,
+          shortlistedReason: row.shortlistedReason || null,
           joinedReason: row.joinedReason || null,
           joiningNote: row.joinedReason || null,
           dropoutReason: row.dropoutReason || null,
@@ -250,11 +253,19 @@ const upsertExtraInfoFields = async (connection, payload) => {
   }
 
   if (
-    payload.pendingJoiningReason !== undefined &&
+    payload.shortlistedReason !== undefined &&
+    columns.has("shortlisted_reason")
+  ) {
+    insertColumns.push("shortlisted_reason");
+    insertValues.push(payload.shortlistedReason);
+    placeholders.push("?");
+    updates.push("shortlisted_reason = VALUES(shortlisted_reason)");
+  } else if (
+    payload.shortlistedReason !== undefined &&
     columns.has("pending_joining_reason")
   ) {
     insertColumns.push("pending_joining_reason");
-    insertValues.push(payload.pendingJoiningReason);
+    insertValues.push(payload.shortlistedReason);
     placeholders.push("?");
     updates.push("pending_joining_reason = VALUES(pending_joining_reason)");
   }
@@ -300,7 +311,9 @@ const upsertExtraInfoFields = async (connection, payload) => {
     walkInAt: "walk_in_at",
     furtherAt: "further_at",
     selectedAt: "selected_at",
-    pendingJoiningAt: "pending_joining_at",
+    shortlistedAt: columns.has("shortlisted_at")
+      ? "shortlisted_at"
+      : "pending_joining_at",
     joinedAt: "joined_at",
     dropoutAt: "dropout_at",
     rejectedAt: "rejected_at",

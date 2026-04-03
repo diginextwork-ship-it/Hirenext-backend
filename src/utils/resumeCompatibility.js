@@ -7,7 +7,7 @@ const STATUS_REASON_FIELD_MAP = Object.freeze({
   further: "furtherReason",
   selected: "selectReason",
   rejected: "rejectReason",
-  pending_joining: "pendingJoiningReason",
+  shortlisted: "shortlistedReason",
   joined: "joinedReason",
   dropout: "dropoutReason",
   billed: "billedReason",
@@ -26,7 +26,12 @@ const STATUS_REASON_INPUT_KEYS = Object.freeze({
     "selection_reason",
   ],
   rejected: ["rejectReason", "reject_reason"],
-  pending_joining: ["pendingJoiningReason", "pending_joining_reason"],
+  shortlisted: [
+    "shortlistedReason",
+    "shortlisted_reason",
+    "pendingJoiningReason",
+    "pending_joining_reason",
+  ],
   joined: ["joinedReason", "joined_reason", "joiningNote", "joining_note"],
   dropout: ["dropoutReason", "dropout_reason"],
   billed: ["billedReason", "billed_reason"],
@@ -74,8 +79,8 @@ const resolveResumeWorkflowStatus = (record = {}) => {
         record.status,
     ) || "pending";
 
-  return workflowStatus === "selected" && joiningDate
-    ? "pending_joining"
+  return workflowStatus === "shortlisted" && joiningDate
+    ? "selected"
     : workflowStatus;
 };
 
@@ -149,7 +154,7 @@ const buildResumeCompatibilityFields = (record = {}) => {
     record.select_reason,
     record.selectionReason,
     record.selection_reason,
-    workflowStatus === "selected" || workflowStatus === "pending_joining"
+    workflowStatus === "selected"
       ? genericReason
       : null,
   );
@@ -164,12 +169,12 @@ const buildResumeCompatibilityFields = (record = {}) => {
     record.joinedReason,
     record.joined_reason,
   );
-  const pendingJoiningReason = firstPresent(
+  const shortlistedReason = firstPresent(
+    record.shortlistedReason,
+    record.shortlisted_reason,
     record.pendingJoiningReason,
     record.pending_joining_reason,
-    workflowStatus === "pending_joining" ? genericReason : null,
-    joiningNote,
-    selectReason,
+    workflowStatus === "shortlisted" ? genericReason : null,
   );
   const joinedReason = firstPresent(
     record.joinedReason,
@@ -215,8 +220,10 @@ const buildResumeCompatibilityFields = (record = {}) => {
     selection_reason: selectReason,
     rejectReason,
     reject_reason: rejectReason,
-    pendingJoiningReason,
-    pending_joining_reason: pendingJoiningReason,
+    shortlistedReason,
+    shortlisted_reason: shortlistedReason,
+    pendingJoiningReason: shortlistedReason,
+    pending_joining_reason: shortlistedReason,
     joinedReason,
     joined_reason: joinedReason,
     dropoutReason,

@@ -5,14 +5,16 @@ const LEGACY_STATUS_ALIASES = new Map([
   ["verify", CANONICAL_VERIFY_STATUS],
   ["verfied", CANONICAL_VERIFY_STATUS],
   ["pending", DEFAULT_WORKFLOW_STATUS],
+  ["pending_joining", "shortlisted"],
+  ["pending joining", "shortlisted"],
 ]);
 
 const CANONICAL_WORKFLOW_STATUSES = [
   DEFAULT_WORKFLOW_STATUS,
   CANONICAL_VERIFY_STATUS,
   "walk_in",
+  "shortlisted",
   "selected",
-  "pending_joining",
   "joined",
   "billed",
   "left",
@@ -46,9 +48,9 @@ const isSupportedResumeStatus = (value) =>
 const ADMIN_STATUS_TRANSITIONS = {
   [DEFAULT_WORKFLOW_STATUS]: new Set([CANONICAL_VERIFY_STATUS, "rejected"]),
   [CANONICAL_VERIFY_STATUS]: new Set(["walk_in", "rejected"]),
-  walk_in: new Set(["selected", "rejected"]),
-  selected: new Set(["pending_joining", "dropout"]),
-  pending_joining: new Set(["joined", "dropout"]),
+  walk_in: new Set(["shortlisted", "rejected"]),
+  shortlisted: new Set(["selected", "dropout"]),
+  selected: new Set(["joined", "dropout"]),
   joined: new Set(["billed", "left"]),
   billed: new Set(),
   left: new Set(),
@@ -58,7 +60,8 @@ const ADMIN_STATUS_TRANSITIONS = {
 
 const RECRUITER_STATUS_TRANSITIONS = {
   [CANONICAL_VERIFY_STATUS]: ["walk_in", "rejected"],
-  walk_in: ["selected", "rejected"],
+  walk_in: ["shortlisted", "rejected"],
+  shortlisted: ["selected", "dropout", "rejected"],
   selected: ["joined", "dropout", "rejected"],
   joined: ["billed", "left"],
 };
@@ -66,9 +69,9 @@ const RECRUITER_STATUS_TRANSITIONS = {
 const WORKFLOW_PREVIOUS_STATUS = {
   [CANONICAL_VERIFY_STATUS]: DEFAULT_WORKFLOW_STATUS,
   walk_in: CANONICAL_VERIFY_STATUS,
-  selected: "walk_in",
-  pending_joining: "selected",
-  joined: "pending_joining",
+  shortlisted: "walk_in",
+  selected: "shortlisted",
+  joined: "selected",
   billed: "joined",
   left: "joined",
 };

@@ -2134,9 +2134,9 @@ const PERFORMANCE_EVENT_META = {
   walk_in: { recruiterField: "walk_in", summaryField: "totalWalkIn" },
   selected: { recruiterField: "selected", summaryField: "totalSelected" },
   rejected: { recruiterField: "rejected", summaryField: "totalRejected" },
-  pending_joining: {
-    recruiterField: "pending_joining",
-    summaryField: "totalPendingJoining",
+  shortlisted: {
+    recruiterField: "shortlisted",
+    summaryField: "totalShortlisted",
   },
   joined: { recruiterField: "joined", summaryField: "totalJoined" },
   dropout: { recruiterField: "dropout", summaryField: "totalDropout" },
@@ -2159,12 +2159,12 @@ const resolveCanonicalWorkflowStatus = ({
   status,
   joiningDate,
 } = {}) => {
-  const candidates = [workflowStatus, selectionStatus, status];
+    const candidates = [workflowStatus, selectionStatus, status];
   for (const candidate of candidates) {
     const normalized = normalizeResumeStatusInput(candidate);
     if (CANONICAL_WORKFLOW_STATUSES.includes(normalized)) {
-      if (normalized === "selected" && hasNonEmptyValue(joiningDate)) {
-        return "pending_joining";
+      if (normalized === "shortlisted" && hasNonEmptyValue(joiningDate)) {
+        return "selected";
       }
       return normalized;
     }
@@ -2196,9 +2196,10 @@ const resolveRollbackSourceStatus = (resume) => {
 
   if (currentStatus === "dropout") {
     return hasNonEmptyValue(resume.currentJoiningDate) ||
-      hasNonEmptyValue(resume.pendingJoiningAt)
-      ? "pending_joining"
-      : "selected";
+      hasNonEmptyValue(resume.selectedAtHistory) ||
+      hasNonEmptyValue(resume.selectedAt)
+      ? "selected"
+      : "shortlisted";
   }
 
   return getPreviousWorkflowStatus(currentStatus);
@@ -2237,9 +2238,9 @@ const buildStatusHistory = (row = {}) => {
       changedBy: row.selectedByAdmin || null,
     },
     {
-      status: "pending_joining",
-      changedAt: normalizePerformanceTimestamp(row.pendingJoiningAt),
-      changedBy: row.pendingJoiningBy || row.selectedByAdmin || null,
+      status: "shortlisted",
+      changedAt: normalizePerformanceTimestamp(row.shortlistedAt),
+      changedBy: row.shortlistedBy || row.selectedByAdmin || null,
     },
     {
       status: "joined",
@@ -2385,7 +2386,7 @@ const fetchAdminResumeWorkflowPayload = async (connection, resId) => {
       ei.verified_reason AS verifiedReason,
       ei.walk_in_reason AS walkInReason,
       ei.select_reason AS selectReason,
-      ei.pending_joining_reason AS pendingJoiningReason,
+      ei.shortlisted_reason AS shortlistedReason,
       ei.reject_reason AS rejectReason,
       ei.joined_reason AS joinedReason,
       ei.dropout_reason AS dropoutReason,
@@ -2394,7 +2395,7 @@ const fetchAdminResumeWorkflowPayload = async (connection, resId) => {
       ei.verified_at AS verifiedAt,
       ei.walk_in_at AS walkInAt,
       ei.selected_at AS selectedAtHistory,
-      ei.pending_joining_at AS pendingJoiningAt,
+      ei.shortlisted_at AS shortlistedAt,
       ei.joined_at AS joinedAt,
       ei.billed_at AS billedAt,
       ei.left_at AS leftAt,
@@ -2493,7 +2494,7 @@ router.post(
     "verified",
     "walk_in",
     "selected",
-    "pending_joining",
+    "shortlisted",
     "rejected",
     "joined",
     "dropout",
@@ -2506,7 +2507,7 @@ router.post(
 
   const effectiveReason = reason;
 
-  const joiningDateRequiredStatuses = new Set(["pending_joining"]);
+  const joiningDateRequiredStatuses = new Set(["selected"]);
 
   if (joiningDateRequiredStatuses.has(newStatus)) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(joiningDate)) {
@@ -2514,9 +2515,9 @@ router.post(
         message: "joining_date is required in YYYY-MM-DD format.",
       });
     }
-  } else if (newStatus === "selected" && joiningDate) {
+  } else if (newStatus === "shortlisted" && joiningDate) {
     return res.status(400).json({
-      message: "joining_date should only be provided for pending_joining.",
+      message: "joining_date should only be provided for selected.",
     });
   } else if (joiningDate && !/^\d{4}-\d{2}-\d{2}$/.test(joiningDate)) {
     return res.status(400).json({
@@ -2594,7 +2595,7 @@ router.post(
     const currentStatus = normalizeWorkflowStatus(resume.currentStatus);
     const currentDerivedStatus =
       currentStatus === "selected" && resume.currentJoiningDate
-        ? "pending_joining"
+        ? "shortlisted"
         : currentStatus;
     const resolvedRevenueAmount = resolveRevenueAmount(
       resume.candidateRevenue,
@@ -2652,7 +2653,7 @@ router.post(
       ? joiningDate
       : resume.currentJoiningDate || null;
     const joiningDateValue =
-      newStatus === "pending_joining" || newStatus === "joined"
+      newStatus === "selected" || newStatus === "joined"
         ? effectiveJoiningDate
         : null;
     const selectionNoteValue =
@@ -2677,9 +2678,9 @@ router.post(
     }
 
     let candidateJoiningDateValue = resume.currentJoiningDate || null;
-    if (newStatus === "selected") {
+    if (newStatus === "shortlisted") {
       candidateJoiningDateValue = null;
-    } else if (newStatus === "pending_joining") {
+    } else if (newStatus === "selected") {
       candidateJoiningDateValue = joiningDate;
     } else if (newStatus === "joined" && effectiveJoiningDate) {
       candidateJoiningDateValue = effectiveJoiningDate;
@@ -2715,7 +2716,7 @@ router.post(
       walk_in: "walkInAt",
       further: "furtherAt",
       selected: "selectedAt",
-      pending_joining: "pendingJoiningAt",
+      shortlisted: "shortlistedAt",
       joined: "joinedAt",
       rejected: "rejectedAt",
       dropout: "dropoutAt",
@@ -2844,7 +2845,7 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
         ei.verified_reason AS verifiedReason,
         ei.verified_at AS verifiedAt,
         ei.walk_in_at AS walkInAt,
-        ei.pending_joining_at AS pendingJoiningAt
+        ei.shortlisted_at AS shortlistedAt
       FROM resumes_data rd
       LEFT JOIN job_resume_selection jrs
         ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
@@ -2944,7 +2945,7 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
       });
     }
 
-    if (currentDerivedStatus === "pending_joining") {
+    if (currentDerivedStatus === "shortlisted") {
       await upsertCandidateFields(connection, {
         resId: normalizedResId,
         joiningDate: null,
@@ -3176,7 +3177,7 @@ router.get("/api/admin/performance", async (req, res) => {
         ) AS rejectedAt,
         DATE_FORMAT(
           COALESCE(
-            ei.pending_joining_at,
+            ei.shortlisted_at,
             CASE
               WHEN jrs.selection_status = 'selected' AND c.joining_date IS NOT NULL
                 THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6))
@@ -3184,7 +3185,7 @@ router.get("/api/admin/performance", async (req, res) => {
             END
           ),
           '%Y-%m-%d %H:%i:%s.%f'
-        ) AS pendingJoiningAt,
+        ) AS shortlistedAt,
         DATE_FORMAT(
           COALESCE(
             ei.joined_at,
@@ -3281,7 +3282,7 @@ router.get("/api/admin/performance", async (req, res) => {
       verified: [],
       walk_in: [],
       selected: [],
-      pending_joining: [],
+      shortlisted: [],
       joined: [],
       dropout: [],
       rejected: [],
@@ -3302,7 +3303,7 @@ router.get("/api/admin/performance", async (req, res) => {
           walk_in: 0,
           further: 0,
           selected: 0,
-          pending_joining: 0,
+          shortlisted: 0,
           rejected: 0,
           joined: 0,
           dropout: 0,
@@ -3325,7 +3326,7 @@ router.get("/api/admin/performance", async (req, res) => {
         walkInAt: normalizePerformanceTimestamp(rawRow.walkInAt),
         selectedAt: normalizePerformanceTimestamp(rawRow.selectedAt),
         rejectedAt: normalizePerformanceTimestamp(rawRow.rejectedAt),
-        pendingJoiningAt: normalizePerformanceTimestamp(rawRow.pendingJoiningAt),
+        shortlistedAt: normalizePerformanceTimestamp(rawRow.shortlistedAt),
         joinedAt: normalizePerformanceTimestamp(rawRow.joinedAt),
         dropoutAt: normalizePerformanceTimestamp(rawRow.dropoutAt),
         billedAt: normalizePerformanceTimestamp(rawRow.billedAt),
@@ -3349,7 +3350,7 @@ router.get("/api/admin/performance", async (req, res) => {
         walk_in: row.walkInAt,
         selected: row.selectedAt,
         rejected: row.rejectedAt,
-        pending_joining: row.pendingJoiningAt,
+        shortlisted: row.shortlistedAt,
         joined: row.joinedAt,
         dropout: row.dropoutAt,
         billed: row.billedAt,
@@ -3378,7 +3379,7 @@ router.get("/api/admin/performance", async (req, res) => {
         const submitted = row.submitted;
         const verified = row.verified;
         const selected = row.selected;
-        const pendingJoining = row.pending_joining;
+        const shortlisted = row.shortlisted;
         const joined = row.joined;
         const dropout = row.dropout;
         const billed = row.billed;
@@ -3392,15 +3393,15 @@ router.get("/api/admin/performance", async (req, res) => {
               : 0,
           selectionRate:
             verified > 0
-              ? Number((((selected + pendingJoining) / verified) * 100).toFixed(1))
+              ? Number(((shortlisted / verified) * 100).toFixed(1))
               : 0,
           joiningRate:
-            pendingJoining > 0
-              ? Number(((joined / pendingJoining) * 100).toFixed(1))
+            selected > 0
+              ? Number(((joined / selected) * 100).toFixed(1))
               : 0,
           dropoutRate:
-            pendingJoining > 0
-              ? Number(((dropout / pendingJoining) * 100).toFixed(1))
+            selected > 0
+              ? Number(((dropout / selected) * 100).toFixed(1))
               : 0,
           billingRate:
             joined > 0 ? Number(((billed / joined) * 100).toFixed(1)) : 0,
@@ -3420,7 +3421,7 @@ router.get("/api/admin/performance", async (req, res) => {
       totalVerified: 0,
       totalWalkIn: 0,
       totalSelected: 0,
-      totalPendingJoining: 0,
+      totalShortlisted: 0,
       totalJoined: 0,
       totalDropout: 0,
       totalRejected: 0,
