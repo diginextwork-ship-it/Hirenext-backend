@@ -6,6 +6,7 @@ const {
   decodeResumeBuffer,
   parseResumeWithAts,
   extractApplicantName,
+  isImageResumeType,
 } = require("../resumeparser/service");
 const {
   normalizeRoleAlias,
@@ -42,6 +43,11 @@ const {
   normalizeResumeStatusInput,
   normalizeWorkflowStatus,
 } = require("../utils/resumeStatusFlow");
+const {
+  STATUS_REASON_FIELD_MAP,
+  buildResumeCompatibilityFields,
+  resolveStatusReasonInput,
+} = require("../utils/resumeCompatibility");
 const { getCurrentDateOnlyInBusinessTimeZone } = require("../utils/dateTime");
 
 const router = express.Router();
@@ -665,9 +671,9 @@ router.post("/api/applications/parse-resume", async (req, res) => {
     }
 
     const extension = getResumeExtension(resumeFilename);
-    if (!SUPPORTED_RESUME_TYPES.has(extension)) {
+    if (!SUPPORTED_RESUME_TYPES.has(extension) && !isImageResumeType(extension)) {
       return res.status(400).json({
-        message: "Only PDF and DOCX resumes are supported.",
+        message: "Only PDF, DOCX, JPG, JPEG, PNG, and WEBP resumes are supported.",
       });
     }
 
@@ -714,15 +720,23 @@ router.post("/api/applications/parse-resume", async (req, res) => {
       return res.status(503).json({ message: parsed.message });
     }
 
+    const isImageResume = isImageResumeType(validation.extension);
+
     return res.status(200).json({
-      message: "Resume parsed successfully.",
+      message: isImageResume
+        ? "Image resume uploaded successfully. Fill candidate details manually."
+        : "Resume parsed successfully.",
       parsedData: parsed.parsedData,
       autofill: buildAutofillFromParsedData(parsed.parsedData),
       atsScore: parsed.atsScore ?? null,
       atsMatchPercentage: parsed.atsMatchPercentage ?? null,
       atsRawJson: parsed.atsRawJson ?? null,
       parser_meta: parsed.parserMeta || null,
-      processing: buildResumeProcessingState(),
+      processing: buildResumeProcessingState({
+        status: isImageResume ? "manual_entry_required" : "completed",
+        resumeParsed: !isImageResume,
+        atsCalculated: !isImageResume,
+      }),
     });
   } catch (error) {
     return res.status(500).json({
@@ -944,16 +958,7 @@ router.post(
     const joiningDate = req.body?.joining_date
       ? String(req.body.joining_date).trim()
       : null;
-    const rawNote =
-      req.body?.note !== undefined
-        ? req.body.note
-        : normalizedStatus === "verified"
-          ? (req.body?.verifiedReason ?? req.body?.verified_reason)
-          : normalizedStatus === "left"
-            ? (req.body?.leftReason ?? req.body?.left_reason)
-            : normalizedStatus === "billed"
-              ? (req.body?.billedReason ?? req.body?.billed_reason)
-              : undefined;
+    const rawNote = resolveStatusReasonInput(req.body, normalizedStatus);
     const normalizedNote =
       rawNote === undefined || rawNote === null
         ? null
@@ -1039,17 +1044,7 @@ router.post(
             recruiterRid,
           },
         });
-        const statusReasonMap = {
-          verified: "verifiedReason",
-          walk_in: "walkInReason",
-          selected: "selectReason",
-          rejected: "rejectReason",
-          joined: "joinedReason",
-          dropout: "dropoutReason",
-          billed: "billedReason",
-          left: "leftReason",
-        };
-        const reasonField = statusReasonMap[normalizedStatus];
+        const reasonField = STATUS_REASON_FIELD_MAP[normalizedStatus];
         const statusReasonValue = reasonField
           ? normalizedNote || null
           : undefined;
@@ -1256,10 +1251,24 @@ router.post(
           });
         }
 
+        const responseFields = buildResumeCompatibilityFields({
+          resId: normalizedResId,
+          candidateName:
+            statusCandidateSnapshot.name ||
+            toTrimmedString(resumeRows[0].candidateName) ||
+            null,
+          workflowStatus: normalizedStatus,
+          reason: normalizedNote || null,
+          note: normalizedNote || null,
+          joiningDate:
+            normalizedStatus === "pending_joining" ? joiningDate : effectiveJoiningDate,
+          jobJid: req.ownedJob.jid,
+        });
         await connection.commit();
         return res.status(200).json({
           message: "Resume status updated successfully.",
           data: {
+            ...responseFields,
             jobId: req.ownedJob.jid,
             resId: normalizedResId,
             status: normalizedStatus,
@@ -1678,9 +1687,9 @@ router.post("/api/applications", async (req, res) => {
     }
 
     const extension = getResumeExtension(resumeFilename);
-    if (!SUPPORTED_RESUME_TYPES.has(extension)) {
+    if (!SUPPORTED_RESUME_TYPES.has(extension) && !isImageResumeType(extension)) {
       return res.status(400).json({
-        message: "Only PDF and DOCX resumes are supported.",
+        message: "Only PDF, DOCX, JPG, JPEG, PNG, and WEBP resumes are supported.",
       });
     }
 

@@ -461,6 +461,179 @@ test("legacy verify aliases are normalized to canonical verified on admin and te
   }
 });
 
+test("recruiter resumes endpoint returns recruiter frontend compatibility fields with legacy fallbacks", async () => {
+  const resId = buildTempResumeId("compat");
+  await createTempResume(resId);
+
+  try {
+    await pool.query(
+      `INSERT INTO candidate (cid, res_id, job_jid, recruiter_rid, name, phone, joining_date, walk_in)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+        name = VALUES(name),
+        phone = VALUES(phone),
+        joining_date = VALUES(joining_date),
+        walk_in = VALUES(walk_in)`,
+      [
+        `c_${resId.replace(/^res_/, "").slice(0, 16)}`,
+        resId,
+        "JID-5",
+        "hnr-2",
+        "Compat Candidate",
+        "9998887776",
+        "2026-04-18",
+        "2026-04-10",
+      ],
+    );
+    await pool.query(
+      `INSERT INTO job_resume_selection
+        (job_jid, res_id, selected_by_admin, selection_status, selection_note, selected_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+        selection_status = VALUES(selection_status),
+        selection_note = VALUES(selection_note),
+        selected_at = VALUES(selected_at)`,
+      ["JID-5", resId, "compat-suite", "selected", "legacy pending note", "2026-04-11 10:00:00"],
+    );
+    await pool.query(
+      `INSERT INTO extra_info
+        (res_id, resume_id, job_jid, recruiter_rid, submitted_reason, verified_reason, select_reason)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+        submitted_reason = VALUES(submitted_reason),
+        verified_reason = VALUES(verified_reason),
+        select_reason = VALUES(select_reason)`,
+      [
+        resId,
+        resId,
+        "JID-5",
+        "hnr-2",
+        "submitted from recruiter frontend",
+        "verified by TL",
+        "selected by client",
+      ],
+    );
+
+    const response = await requestJson("/api/recruiters/hnr-2/resumes", {
+      headers: {
+        Authorization: `Bearer ${recruiterToken}`,
+      },
+    });
+
+    assert.equal(response.status, 200);
+    const resume = response.body?.resumes?.find((item) => item.resId === resId);
+    assert.ok(resume);
+    assert.equal(resume?.candidateName, "Compat Candidate");
+    assert.equal(resume?.candidate_name, "Compat Candidate");
+    assert.equal(resume?.candidatePhone, "9998887776");
+    assert.equal(resume?.candidate_phone, "9998887776");
+    assert.equal(resume?.workflowStatus, "pending_joining");
+    assert.equal(resume?.workflow_status, "pending_joining");
+    assert.equal(resume?.status, "pending_joining");
+    assert.equal(resume?.submittedReason, "submitted from recruiter frontend");
+    assert.equal(resume?.verifiedReason, "verified by TL");
+    assert.equal(resume?.selectReason, "selected by client");
+    assert.equal(resume?.selectionReason, "selected by client");
+    assert.equal(resume?.pendingJoiningReason, "selected by client");
+    assert.equal(resume?.pending_joining_reason, "selected by client");
+    assert.equal(resume?.walkInDate, "2026-04-10");
+    assert.equal(resume?.walk_in_date, "2026-04-10");
+    assert.equal(resume?.joiningDate, "2026-04-18");
+    assert.equal(resume?.joining_date, "2026-04-18");
+    assert.equal(resume?.jobJid, "JID-5");
+    assert.equal(resume?.job_jid, "JID-5");
+    assert.equal(resume?.companyName, resume?.company_name);
+    assert.equal(resume?.roleName, resume?.role_name);
+    assert.equal(resume?.city, resume?.job?.city);
+  } finally {
+    await cleanupTempResume(resId);
+  }
+});
+
+test("admin selected and pending_joining transitions persist stage-specific reason fields", async () => {
+  const resId = buildTempResumeId("stage");
+  await createTempResume(resId);
+  await setCandidateRevenue(resId, 5500);
+
+  try {
+    for (const payload of [
+      { status: "verified", verifiedReason: "verified in stage test" },
+      { status: "walk_in", walkInReason: "walk-in confirmed" },
+      { status: "selected", selectionReason: "client shortlisted" },
+      {
+        status: "pending_joining",
+        pending_joining_reason: "joining documents pending",
+        joining_date: "2026-04-21",
+      },
+    ]) {
+      const response = await requestJson(`/api/admin/resumes/${resId}/advance-status`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify(payload),
+      });
+      assert.equal(response.status, 200);
+    }
+
+    const pendingResponse = await requestJson(`/api/admin/resumes/${resId}/advance-status`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({
+        status: "joined",
+        joined_reason: "joined with documents complete",
+        company_rev: 5500,
+      }),
+    });
+
+    assert.equal(pendingResponse.status, 200);
+    assert.equal(pendingResponse.body?.data?.selectionReason, "client shortlisted");
+    assert.equal(pendingResponse.body?.data?.selectReason, "client shortlisted");
+    assert.equal(
+      pendingResponse.body?.data?.pendingJoiningReason,
+      "joining documents pending",
+    );
+    assert.equal(
+      pendingResponse.body?.data?.joinedReason,
+      "joined with documents complete",
+    );
+    assert.equal(
+      pendingResponse.body?.data?.joiningNote,
+      "joined with documents complete",
+    );
+
+    const [extraRows] = await pool.query(
+      `SELECT
+         select_reason AS selectReason,
+         pending_joining_reason AS pendingJoiningReason,
+         joined_reason AS joinedReason
+       FROM extra_info
+       WHERE res_id = ?
+       LIMIT 1`,
+      [resId],
+    );
+    assert.equal(extraRows[0]?.selectReason, "client shortlisted");
+    assert.equal(extraRows[0]?.pendingJoiningReason, "joining documents pending");
+    assert.equal(extraRows[0]?.joinedReason, "joined with documents complete");
+
+    const [selectionRows] = await pool.query(
+      `SELECT selection_status AS status, selection_note AS note
+       FROM job_resume_selection
+       WHERE res_id = ?
+       LIMIT 1`,
+      [resId],
+    );
+    assert.equal(selectionRows[0]?.status, "joined");
+    assert.equal(selectionRows[0]?.note, "joined with documents complete");
+  } finally {
+    await cleanupTempResume(resId);
+  }
+});
+
 test("team leader billed update creates admin intake entry from candidate revenue", async () => {
   const resId = buildTempResumeId("billed");
   const previousMoneySumId = await getLatestMoneySumId();

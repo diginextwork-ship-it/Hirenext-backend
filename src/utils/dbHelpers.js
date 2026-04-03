@@ -1,4 +1,5 @@
 const pool = require("../config/db");
+const { buildResumeCompatibilityFields } = require("./resumeCompatibility");
 
 const tableExists = async (tableName) => {
   try {
@@ -111,6 +112,7 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
   const hasWalkInReason = columns.has("walk_in_reason");
   const hasFurtherReason = columns.has("further_reason");
   const hasSelectReason = columns.has("select_reason");
+  const hasPendingJoiningReason = columns.has("pending_joining_reason");
   const hasJoinedReason = columns.has("joined_reason");
   const hasDropoutReason = columns.has("dropout_reason");
   const hasRejectReason = columns.has("reject_reason");
@@ -123,6 +125,7 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
     hasWalkInReason ||
     hasFurtherReason ||
     hasSelectReason ||
+    hasPendingJoiningReason ||
     hasJoinedReason ||
     hasDropoutReason ||
     hasRejectReason ||
@@ -139,6 +142,9 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
   if (hasWalkInReason) selectColumns.push("walk_in_reason AS walkInReason");
   if (hasFurtherReason) selectColumns.push("further_reason AS furtherReason");
   if (hasSelectReason) selectColumns.push("select_reason AS selectReason");
+  if (hasPendingJoiningReason) {
+    selectColumns.push("pending_joining_reason AS pendingJoiningReason");
+  }
   if (hasJoinedReason) selectColumns.push("joined_reason AS joinedReason");
   if (hasDropoutReason) selectColumns.push("dropout_reason AS dropoutReason");
   if (hasRejectReason) selectColumns.push("reject_reason AS rejectReason");
@@ -156,17 +162,21 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
     rows.map((row) => [
       String(row.resumeId || "").trim(),
       {
-        submittedReason: row.submittedReason || null,
-        verifiedReason: row.verifiedReason || null,
-        walkInReason: row.walkInReason || null,
+        ...buildResumeCompatibilityFields({
+          submittedReason: row.submittedReason || null,
+          verifiedReason: row.verifiedReason || null,
+          walkInReason: row.walkInReason || null,
+          furtherReason: row.furtherReason || null,
+          selectReason: row.selectReason || null,
+          pendingJoiningReason: row.pendingJoiningReason || null,
+          joinedReason: row.joinedReason || null,
+          joiningNote: row.joinedReason || null,
+          dropoutReason: row.dropoutReason || null,
+          rejectReason: row.rejectReason || null,
+          leftReason: row.leftReason || null,
+          billedReason: row.billedReason || null,
+        }),
         furtherReason: row.furtherReason || null,
-        selectReason: row.selectReason || null,
-        joinedReason: row.joinedReason || null,
-        joiningNote: row.joinedReason || null,
-        dropoutReason: row.dropoutReason || null,
-        rejectReason: row.rejectReason || null,
-        leftReason: row.leftReason || null,
-        billedReason: row.billedReason || null,
       },
     ]),
   );
@@ -237,6 +247,16 @@ const upsertExtraInfoFields = async (connection, payload) => {
     insertValues.push(payload.selectReason);
     placeholders.push("?");
     updates.push("select_reason = VALUES(select_reason)");
+  }
+
+  if (
+    payload.pendingJoiningReason !== undefined &&
+    columns.has("pending_joining_reason")
+  ) {
+    insertColumns.push("pending_joining_reason");
+    insertValues.push(payload.pendingJoiningReason);
+    placeholders.push("?");
+    updates.push("pending_joining_reason = VALUES(pending_joining_reason)");
   }
 
   if (payload.joinedReason !== undefined && columns.has("joined_reason")) {
@@ -557,4 +577,5 @@ module.exports = {
   upsertExtraInfoFields,
   upsertCandidateFields,
   addCandidateBillIntakeEntry,
+  buildResumeCompatibilityFields,
 };

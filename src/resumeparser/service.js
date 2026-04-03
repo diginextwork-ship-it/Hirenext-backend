@@ -3,6 +3,9 @@ const { extractTextFromBuffer } = require("../utils/textExtractor");
 const { toNumberOrNull } = require("../utils/formatters");
 
 const SUPPORTED_RESUME_TYPES = new Set(["pdf", "docx"]);
+const IMAGE_RESUME_TYPES = new Set(["jpg", "jpeg", "png", "webp"]);
+
+const isImageResumeType = (extension) => IMAGE_RESUME_TYPES.has(String(extension || "").toLowerCase());
 
 const toPercentageNumber = (value) => {
   if (value === undefined || value === null || value === "") return null;
@@ -299,10 +302,27 @@ const parseResumeWithAts = async ({
 }) => {
   try {
     const extension = getResumeExtension(resumeFilename);
+    if (isImageResumeType(extension)) {
+      return {
+        ok: true,
+        message: "",
+        parsedData: null,
+        applicantName: null,
+        atsScore: null,
+        atsMatchPercentage: null,
+        atsRawJson: null,
+        parserMeta: {
+          parsedDataSource: "skipped_image_resume",
+          atsSource: "skipped_image_resume",
+          manualEntryRequired: true,
+        },
+      };
+    }
+
     if (!SUPPORTED_RESUME_TYPES.has(extension)) {
       return {
         ok: false,
-        message: "Only PDF and DOCX resumes are supported.",
+        message: "Only PDF, DOCX, JPG, JPEG, PNG, and WEBP resumes are supported.",
         parsedData: null,
         atsScore: null,
         atsMatchPercentage: null,
@@ -380,6 +400,16 @@ const extractResumeAts = async ({
   jobDescription,
 }) => {
   const extension = getResumeExtension(resumeFilename);
+  if (isImageResumeType(extension)) {
+    return {
+      atsScore: null,
+      atsMatchPercentage: null,
+      atsRawJson: null,
+      applicantName: null,
+      atsStatus: "manual_entry_required",
+    };
+  }
+
   if (!SUPPORTED_RESUME_TYPES.has(extension)) {
     return {
       atsScore: null,
@@ -422,4 +452,5 @@ module.exports = {
   parseResumeWithAts,
   extractResumeAts,
   extractApplicantName,
+  isImageResumeType,
 };

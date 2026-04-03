@@ -31,6 +31,11 @@ const {
   normalizeResumeStatusInput,
   normalizeWorkflowStatus,
 } = require("../utils/resumeStatusFlow");
+const {
+  STATUS_REASON_FIELD_MAP,
+  buildResumeCompatibilityFields,
+  resolveStatusReasonInput,
+} = require("../utils/resumeCompatibility");
 const { parseInclusiveDateRange } = require("../utils/dateTime");
 
 const router = express.Router();
@@ -2376,9 +2381,16 @@ const fetchAdminResumeWorkflowPayload = async (connection, resId) => {
       jrs.selection_note AS selectionNote,
       jrs.selected_by_admin AS selectedByAdmin,
       jrs.selected_at AS selectedAt,
+      ei.submitted_reason AS submittedReason,
       ei.verified_reason AS verifiedReason,
+      ei.walk_in_reason AS walkInReason,
+      ei.select_reason AS selectReason,
+      ei.pending_joining_reason AS pendingJoiningReason,
+      ei.reject_reason AS rejectReason,
       ei.joined_reason AS joinedReason,
       ei.dropout_reason AS dropoutReason,
+      ei.billed_reason AS billedReason,
+      ei.left_reason AS leftReason,
       ei.verified_at AS verifiedAt,
       ei.walk_in_at AS walkInAt,
       ei.selected_at AS selectedAtHistory,
@@ -2425,22 +2437,22 @@ const fetchAdminResumeWorkflowPayload = async (connection, resId) => {
     workflowStatus: row.selectionStatus,
     selectedAt: row.selectedAt,
   });
+  const compatibilityFields = buildResumeCompatibilityFields({
+    ...row,
+    ...workflowFields,
+    candidateName: candidateSnapshot.name || row.candidateName || null,
+    candidatePhone: candidateSnapshot.phone || row.candidatePhone || null,
+    reason: row.selectionNote || null,
+    note: row.selectionNote || null,
+  });
 
   return {
-    resId: row.resId,
-    jobJid: row.jobJid ? String(row.jobJid).trim() : null,
+    ...compatibilityFields,
     recruiterRid: row.recruiterRid || null,
-    candidateName: candidateSnapshot.name || row.candidateName || null,
     candidateEmail: candidateSnapshot.email || row.candidateEmail || null,
-    candidatePhone: candidateSnapshot.phone || row.candidatePhone || null,
-    name: candidateSnapshot.name || row.candidateName || null,
+    name: compatibilityFields.candidateName,
     email: candidateSnapshot.email || row.candidateEmail || null,
-    phone: candidateSnapshot.phone || row.candidatePhone || null,
-    walkInDate: row.walkInDate || null,
-    joiningDate: row.joiningDate || null,
-    joinedReason: row.joinedReason || null,
-    joiningNote: row.joinedReason || null,
-    dropoutReason: row.dropoutReason || null,
+    phone: compatibilityFields.candidatePhone,
     ...workflowFields,
   };
 };
@@ -2457,16 +2469,7 @@ router.post(
   }
 
   const newStatus = normalizeResumeStatusInput(req.body?.status);
-  const rawReasonSource =
-    req.body?.reason ??
-    req.body?.note ??
-    (newStatus === CANONICAL_VERIFY_STATUS
-      ? (req.body?.verifiedReason ?? req.body?.verified_reason)
-      : undefined);
-  const reason =
-    rawReasonSource === undefined || rawReasonSource === null
-      ? ""
-      : String(rawReasonSource).trim();
+  const reason = resolveStatusReasonInput(req.body, newStatus);
   const joiningDate = String(req.body?.joining_date || "").trim();
   const joinedReasonSource =
     req.body?.joinedReason ??
@@ -2501,8 +2504,7 @@ router.post(
     return res.status(400).json({ message: "Invalid target status." });
   }
 
-  const shouldCaptureReason = newStatus !== "pending_joining";
-  const effectiveReason = shouldCaptureReason ? reason : "";
+  const effectiveReason = reason;
 
   const joiningDateRequiredStatuses = new Set(["pending_joining"]);
 
@@ -2653,6 +2655,8 @@ router.post(
       newStatus === "pending_joining" || newStatus === "joined"
         ? effectiveJoiningDate
         : null;
+    const selectionNoteValue =
+      newStatus === "joined" ? joinedReason || effectiveReason || null : effectiveReason || null;
 
     if (resume.jobJid) {
       await connection.query(
@@ -2667,7 +2671,7 @@ router.post(
           resume.jobJid,
           normalizedResId,
           newStatus,
-          effectiveReason || null,
+          selectionNoteValue,
         ],
       );
     }
@@ -2703,18 +2707,7 @@ router.post(
             : undefined,
     });
 
-    const statusReasonFieldMap = {
-      verified: "verifiedReason",
-      walk_in: "walkInReason",
-      further: "furtherReason",
-      selected: "selectReason",
-      rejected: "rejectReason",
-      joined: "joinedReason",
-      dropout: "dropoutReason",
-      billed: "billedReason",
-      left: "leftReason",
-    };
-    const reasonField = statusReasonFieldMap[newStatus];
+    const reasonField = STATUS_REASON_FIELD_MAP[newStatus];
     const statusReasonValue =
       newStatus === "joined" ? joinedReason : effectiveReason || null;
     const statusTimestampFieldMap = {
@@ -2789,18 +2782,24 @@ router.post(
       connection,
       normalizedResId,
     );
+    const responseFields = buildResumeCompatibilityFields({
+      ...updatedResumePayload,
+      reason: newStatus === "joined" ? joinedReason : effectiveReason || null,
+      note: newStatus === "joined" ? joinedReason : effectiveReason || null,
+    });
 
     await connection.commit();
     return res.status(200).json({
       message: "Status updated successfully.",
       data: {
         ...updatedResumePayload,
+        ...responseFields,
         reason: newStatus === "joined" ? joinedReason : effectiveReason || null,
         verifiedReason:
           newStatus === CANONICAL_VERIFY_STATUS
-            ? effectiveReason || null
-            : null,
-        joining_date: updatedResumePayload?.joiningDate ?? joiningDateValue,
+            ? responseFields.verifiedReason
+            : updatedResumePayload?.verifiedReason ?? null,
+        joining_date: responseFields.joiningDate ?? joiningDateValue,
         revenue:
           newStatus === "joined"
             ? joinedRevenueAmount
@@ -3044,6 +3043,10 @@ router.get("/api/admin/resumes/:resId/file", async (req, res) => {
       pdf: "application/pdf",
       doc: "application/msword",
       docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      png: "image/png",
+      webp: "image/webp",
     };
     const mimeType =
       mimeTypeByResumeType[String(row.resumeType || "").toLowerCase()] ||

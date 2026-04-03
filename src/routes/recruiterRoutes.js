@@ -5,6 +5,7 @@ const {
   extractResumeAts,
   parseResumeWithAts,
   extractApplicantName,
+  isImageResumeType,
 } = require("../resumeparser/service");
 const {
   createAuthToken,
@@ -42,6 +43,11 @@ const {
   normalizeResumeStatusInput,
   normalizeWorkflowStatus,
 } = require("../utils/resumeStatusFlow");
+const {
+  STATUS_REASON_FIELD_MAP,
+  buildResumeCompatibilityFields,
+  resolveStatusReasonInput,
+} = require("../utils/resumeCompatibility");
 const { getCurrentDateOnlyInBusinessTimeZone } = require("../utils/dateTime");
 
 const router = express.Router();
@@ -50,6 +56,12 @@ const uploadResume = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
 });
+const RESUME_UPLOAD_FIELD_NAMES = [
+  "resume_file",
+  "resume",
+  "resumeFile",
+  "file",
+];
 
 // normalizeAccessMode from shared utils returns "" for invalid; this wrapper defaults to "open"
 const normalizeAccessMode = (value) => _normalizeAccessMode(value) || "open";
@@ -211,10 +223,34 @@ const checkJobAccess = async (recruiterId, jobId) => {
   };
 };
 
+const pickUploadedResumeFile = (req) => {
+  if (req.file?.buffer?.length) {
+    return req.file;
+  }
+
+  const groupedFiles =
+    req.files && typeof req.files === "object" && !Array.isArray(req.files)
+      ? req.files
+      : {};
+
+  for (const fieldName of RESUME_UPLOAD_FIELD_NAMES) {
+    const candidates = Array.isArray(groupedFiles[fieldName])
+      ? groupedFiles[fieldName]
+      : [];
+    const match = candidates.find((file) => file?.buffer?.length);
+    if (match) return match;
+  }
+
+  return null;
+};
+
 const runResumeUpload = (req, res) =>
   new Promise((resolve, reject) => {
-    uploadResume.single("resume_file")(req, res, (error) => {
+    uploadResume.fields(
+      RESUME_UPLOAD_FIELD_NAMES.map((name) => ({ name, maxCount: 1 })),
+    )(req, res, (error) => {
       if (error) return reject(error);
+      req.file = pickUploadedResumeFile(req);
       return resolve();
     });
   });
@@ -741,7 +777,7 @@ router.post(
       if (!resumeFile || !resumeFile.buffer || resumeFile.buffer.length === 0) {
         return res.status(400).json({
           success: false,
-          error: "resume_file is required.",
+          error: "A resume file is required.",
         });
       }
 
@@ -800,6 +836,7 @@ router.post(
         clientAtsRawJson ||
         clientAtsScore !== null ||
         clientAtsMatch !== null;
+      const isImageResume = isImageResumeType(validation.extension);
 
       const parsed = shouldSkipParsing
         ? {
@@ -1350,8 +1387,21 @@ router.post(
         });
 
         await connection.commit();
+        const manualEntryRequired =
+          isImageResume || resumeAts.atsStatus === "manual_entry_required";
         return res.status(201).json({
-          message: "Resume added successfully.",
+          message: manualEntryRequired
+            ? "Image resume added successfully. Fill candidate details manually."
+            : "Resume added successfully.",
+          parsedData: manualEntryRequired ? null : requestParsedData ?? null,
+          atsScore: manualEntryRequired ? null : resumeAts.atsScore,
+          atsMatchPercentage: manualEntryRequired
+            ? null
+            : resumeAts.atsMatchPercentage,
+          atsRawJson: manualEntryRequired ? null : storedAtsRawJson,
+          parserStatus: manualEntryRequired
+            ? "manual_entry_required"
+            : resumeAts.atsStatus,
           resume: {
             resId,
             rid,
@@ -1364,7 +1414,9 @@ router.post(
             atsStatus: resumeAts.atsStatus,
           },
           processing: buildResumeProcessingState({
-            atsCalculated: resumeAts.atsStatus === "scored",
+            status: manualEntryRequired ? "manual_entry_required" : "completed",
+            resumeParsed: !manualEntryRequired,
+            atsCalculated: !manualEntryRequired && resumeAts.atsStatus === "scored",
             submitAllowed: true,
           }),
         });
@@ -1411,15 +1463,16 @@ router.get(
         rd.ats_raw_json AS atsRawJson,
         c.name AS candidateName,
         c.phone AS candidatePhone,
-        c.walk_in AS walkInDate,
+        DATE_FORMAT(c.walk_in, '%Y-%m-%d') AS walkInDate,
         rd.resume_filename AS resumeFilename,
         rd.resume_type AS resumeType,
         ${atsScoreSelection}
         ${atsMatchSelection}
         rd.uploaded_at AS uploadedAt,
         COALESCE(jrs.selection_status, 'pending') AS workflowStatus,
+        jrs.selection_note AS workflowNote,
         jrs.selected_at AS workflowUpdatedAt,
-        c.joining_date AS joiningDate,
+        DATE_FORMAT(c.joining_date, '%Y-%m-%d') AS joiningDate,
         j.company_name AS companyName,
         j.role_name AS roleName,
         j.city AS city
@@ -1457,31 +1510,32 @@ router.get(
               jobJid: row.jobJid,
             },
           });
+          const compatibilityFields = buildResumeCompatibilityFields({
+            ...extraInfo,
+            ...row,
+            candidateName: candidateSnapshot.name || row.candidateName || null,
+            candidatePhone: candidateSnapshot.phone || row.candidatePhone || null,
+            reason: row.workflowNote || null,
+            note: row.workflowNote || null,
+          });
           return {
             ...row,
-            name: candidateSnapshot.name || row.candidateName || null,
-            candidateName: candidateSnapshot.name || row.candidateName || null,
-            candidatePhone:
-              candidateSnapshot.phone || row.candidatePhone || null,
-            phone: candidateSnapshot.phone || row.candidatePhone || null,
+            ...extraInfo,
+            ...compatibilityFields,
+            name: compatibilityFields.candidateName,
+            phone: compatibilityFields.candidatePhone,
             atsScore: row.atsScore === null ? null : Number(row.atsScore),
             atsMatchPercentage:
               row.atsMatchPercentage === null
                 ? null
                 : Number(row.atsMatchPercentage),
-            walkInDate: row.walkInDate || null,
-            workflowStatus: row.workflowStatus || "pending",
             workflowUpdatedAt: row.workflowUpdatedAt || null,
-            joiningDate: row.joiningDate || null,
-            joinedReason: extraInfo.joinedReason || null,
-            joiningNote: extraInfo.joiningNote || null,
             job: {
-              jobJid: row.jobJid ? String(row.jobJid).trim() : null,
-              companyName: row.companyName || null,
-              roleName: row.roleName || null,
-              city: row.city || null,
+              jobJid: compatibilityFields.jobJid,
+              companyName: compatibilityFields.companyName,
+              roleName: compatibilityFields.roleName,
+              city: compatibilityFields.city,
             },
-            ...extraInfo,
           };
         }),
       });
@@ -1523,6 +1577,10 @@ router.get(
         pdf: "application/pdf",
         doc: "application/msword",
         docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        jpg: "image/jpeg",
+        jpeg: "image/jpeg",
+        png: "image/png",
+        webp: "image/webp",
       };
       const mimeType =
         mimeTypeByResumeType[String(row.resumeType || "").toLowerCase()] ||
@@ -1823,6 +1881,7 @@ const statusReasonColumnMap = {
   further: "further_reason",
   selected: "select_reason",
   rejected: "reject_reason",
+  pending_joining: "pending_joining_reason",
   joined: "joined_reason",
   dropout: "dropout_reason",
   billed: "billed_reason",
@@ -1837,7 +1896,8 @@ router.post(
   async (req, res) => {
     const { rid, resId } = req.params;
     const targetStatus = normalizeResumeStatusInput(req.body?.status);
-    const reason = String(req.body?.reason || "").trim() || null;
+    const statusReason = resolveStatusReasonInput(req.body, targetStatus);
+    const reason = statusReason || null;
     const joiningDate = req.body?.joining_date
       ? String(req.body.joining_date).trim()
       : null;
@@ -1926,6 +1986,8 @@ router.post(
               resume.companyRevenue,
             )
           : null;
+      const selectionNoteValue =
+        targetStatus === "joined" ? joinedReason || reason : reason;
       const allowed = allowedRecruiterTransitions[currentStatus];
 
       if (!allowed || !allowed.includes(targetStatus)) {
@@ -1952,7 +2014,7 @@ router.post(
             resId,
             rid,
             targetStatus,
-            reason,
+            selectionNoteValue,
           ],
         );
 
@@ -1991,17 +2053,7 @@ router.post(
           });
         }
 
-        const statusReasonFieldMap = {
-          walk_in: "walkInReason",
-          further: "furtherReason",
-          selected: "selectReason",
-          rejected: "rejectReason",
-          joined: "joinedReason",
-          dropout: "dropoutReason",
-          billed: "billedReason",
-          left: "leftReason",
-        };
-        const reasonField = statusReasonFieldMap[targetStatus];
+        const reasonField = STATUS_REASON_FIELD_MAP[targetStatus];
         const statusReasonValue =
           targetStatus === "joined" ? joinedReason : reason;
         if (reasonField) {
@@ -2010,6 +2062,7 @@ router.post(
             walk_in: "walkInAt",
             further: "furtherAt",
             selected: "selectedAt",
+            pending_joining: "pendingJoiningAt",
             rejected: "rejectedAt",
             joined: "joinedAt",
             dropout: "dropoutAt",
@@ -2073,16 +2126,30 @@ router.post(
         }
 
         await connection.commit();
+        const responseFields = buildResumeCompatibilityFields({
+          resId,
+          candidateName: statusCandidateSnapshot.name || resume.candidateName || null,
+          candidatePhone:
+            statusCandidateSnapshot.phone || resume.candidatePhone || null,
+          workflowStatus: targetStatus,
+          reason: selectionNoteValue,
+          note: selectionNoteValue,
+          joinedReason: targetStatus === "joined" ? joinedReason : null,
+          joiningNote: targetStatus === "joined" ? joinedReason : null,
+          joiningDate: targetStatus === "joined" ? joiningDate : null,
+          jobJid: resume.jobJid || null,
+        });
         return res.status(200).json({
           message: "Resume status advanced successfully.",
           data: {
+            ...responseFields,
             resId,
             previousStatus: currentStatus,
             status: targetStatus,
             reason,
-            joining_date: targetStatus === "joined" ? joiningDate : undefined,
-            joinedReason: targetStatus === "joined" ? joinedReason : undefined,
-            joiningNote: targetStatus === "joined" ? joinedReason : undefined,
+            joining_date: responseFields.joiningDate || undefined,
+            joinedReason: responseFields.joinedReason || undefined,
+            joiningNote: responseFields.joiningNote || undefined,
             revenue:
               targetStatus === "billed" ? billedRevenueAmount : undefined,
             company_rev:

@@ -162,6 +162,7 @@ CREATE TABLE IF NOT EXISTS extra_info (
   rid VARCHAR(50) NULL,
   submitted_reason TEXT NULL,
   verified_reason TEXT NULL,
+  pending_joining_reason TEXT NULL,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (res_id),
   UNIQUE KEY uniq_extra_info_resume_id (resume_id),
@@ -186,6 +187,8 @@ ALTER TABLE extra_info
   DROP COLUMN IF EXISTS phone;
 ALTER TABLE extra_info
   ADD COLUMN IF NOT EXISTS select_reason TEXT NULL;
+ALTER TABLE extra_info
+  ADD COLUMN IF NOT EXISTS pending_joining_reason TEXT NULL;
 ALTER TABLE extra_info
   ADD COLUMN IF NOT EXISTS joined_reason TEXT NULL;
 ALTER TABLE extra_info

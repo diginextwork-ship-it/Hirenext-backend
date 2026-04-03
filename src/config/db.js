@@ -895,6 +895,7 @@ const ensureExtraInfoTable = async () => {
       rid VARCHAR(50) NULL,
       submitted_reason TEXT NULL,
       verified_reason TEXT NULL,
+      pending_joining_reason TEXT NULL,
       updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (res_id),
       UNIQUE KEY uniq_extra_info_resume_id (resume_id),
@@ -935,6 +936,11 @@ const ensureExtraInfoTable = async () => {
   if (!(await columnExists("extra_info", "verified_reason"))) {
     await pool.query(
       "ALTER TABLE extra_info ADD COLUMN verified_reason TEXT NULL",
+    );
+  }
+  if (!(await columnExists("extra_info", "pending_joining_reason"))) {
+    await pool.query(
+      "ALTER TABLE extra_info ADD COLUMN pending_joining_reason TEXT NULL",
     );
   }
   if (!(await columnExists("extra_info", "walk_in_reason"))) {

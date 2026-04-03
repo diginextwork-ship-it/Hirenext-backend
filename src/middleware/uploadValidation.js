@@ -2,9 +2,12 @@ const ALLOWED_MIME_TYPES = new Set([
   "application/pdf",
   "application/msword",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
 ]);
 
-const ALLOWED_EXTENSIONS = new Set(["pdf", "doc", "docx"]);
+const ALLOWED_EXTENSIONS = new Set(["pdf", "doc", "docx", "jpg", "jpeg", "png", "webp"]);
 
 const getExtension = (filename) => {
   const match = String(filename || "").trim().toLowerCase().match(/\.([a-z0-9]+)$/);
@@ -37,11 +40,41 @@ const looksLikeDoc = (buffer) => {
   );
 };
 
+const looksLikeJpeg = (buffer) => {
+  if (buffer.length < 3) return false;
+  return buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+};
+
+const looksLikePng = (buffer) => {
+  if (buffer.length < 8) return false;
+  return (
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47 &&
+    buffer[4] === 0x0d &&
+    buffer[5] === 0x0a &&
+    buffer[6] === 0x1a &&
+    buffer[7] === 0x0a
+  );
+};
+
+const looksLikeWebp = (buffer) => {
+  if (buffer.length < 12) return false;
+  return (
+    buffer.subarray(0, 4).toString() === "RIFF" &&
+    buffer.subarray(8, 12).toString() === "WEBP"
+  );
+};
+
 const validateFileSignature = (extension, buffer) => {
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) return false;
   if (extension === "pdf") return looksLikePdf(buffer);
   if (extension === "docx") return looksLikeDocx(buffer);
   if (extension === "doc") return looksLikeDoc(buffer);
+  if (extension === "jpg" || extension === "jpeg") return looksLikeJpeg(buffer);
+  if (extension === "png") return looksLikePng(buffer);
+  if (extension === "webp") return looksLikeWebp(buffer);
   return false;
 };
 
@@ -50,7 +83,10 @@ const validateResumeFile = ({ filename, mimetype, buffer, maxBytes = 5 * 1024 * 
   const normalizedMime = String(mimetype || "").trim().toLowerCase();
 
   if (!ALLOWED_EXTENSIONS.has(extension)) {
-    return { ok: false, message: "Only PDF, DOC, or DOCX files are allowed." };
+    return {
+      ok: false,
+      message: "Only PDF, DOC, DOCX, JPG, JPEG, PNG, or WEBP files are allowed.",
+    };
   }
 
   if (normalizedMime && !ALLOWED_MIME_TYPES.has(normalizedMime)) {
