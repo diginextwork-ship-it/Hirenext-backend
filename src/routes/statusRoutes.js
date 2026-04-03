@@ -3,6 +3,7 @@ const pool = require("../config/db");
 const { requireAuth, requireRoles } = require("../middleware/auth");
 const { escapeLike } = require("../utils/formatters");
 const { tableExists } = require("../utils/dbHelpers");
+const { parseInclusiveDateRange } = require("../utils/dateTime");
 
 const router = express.Router();
 
@@ -189,6 +190,60 @@ const mapStats = (row) => ({
   last_updated: row.last_updated || null,
   created_at: row.created_at || null,
 });
+
+const TEAM_LEADER_PERFORMANCE_EVENT_KEYS = [
+  "submitted",
+  "verified",
+  "walk_in",
+  "shortlisted",
+  "selected",
+  "rejected",
+  "joined",
+  "dropout",
+  "billed",
+  "left",
+];
+
+const TEAM_LEADER_PERFORMANCE_EVENT_META = {
+  submitted: { summaryField: "totalSubmitted" },
+  verified: { summaryField: "totalVerified" },
+  walk_in: { summaryField: "totalWalkIn" },
+  shortlisted: { summaryField: "totalShortlisted" },
+  selected: { summaryField: "totalSelected" },
+  rejected: { summaryField: "totalRejected" },
+  joined: { summaryField: "totalJoined" },
+  dropout: { summaryField: "totalDropout" },
+  billed: { summaryField: "totalBilled" },
+  left: { summaryField: "totalLeft" },
+};
+
+const normalizePerformanceTimestamp = (value) =>
+  value == null ? null : String(value).trim() || null;
+
+const normalizeWorkflowStatus = (value, joiningDate = null) => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+
+  if (!normalized) return "submitted";
+  if (normalized === "walkin") return "walk_in";
+  if (normalized === "select") return "selected";
+  if (normalized === "pendingjoining" || normalized === "pending_joining") {
+    return "shortlisted";
+  }
+  if (normalized === "shortlisted" && joiningDate) return "selected";
+
+  return TEAM_LEADER_PERFORMANCE_EVENT_KEYS.includes(normalized)
+    ? normalized
+    : "submitted";
+};
+
+const isTimestampWithinInclusiveRange = (value, range) => {
+  if (!value) return false;
+  if (!range?.hasDateRange) return true;
+  return value >= range.startDateTime && value <= range.endDateTime;
+};
 
 router.get(
   "/api/status/recruiter/:rid",
@@ -460,6 +515,299 @@ router.get(
   requireAuth,
   requireRoles("team leader", "team_leader"),
   getTeamLeaderDashboard,
+);
+
+router.get(
+  "/api/dashboard/team-leader/performance",
+  requireAuth,
+  requireRoles("team leader", "team_leader"),
+  async (req, res) => {
+    const teamLeaderRid = toRid(req.auth?.rid);
+    if (!teamLeaderRid) {
+      return res.status(400).json({ error: "Authenticated team leader RID is required." });
+    }
+
+    try {
+      const dateRange = parseInclusiveDateRange(
+        req.query?.startDate,
+        req.query?.endDate,
+      );
+      if (dateRange.error) {
+        return res.status(400).json({ error: dateRange.error });
+      }
+
+      const [[jobsOverview]] = await pool.query(
+        `SELECT
+          COUNT(*) AS totalJobs,
+          SUM(CASE WHEN access_mode = 'open' THEN 1 ELSE 0 END) AS openJobs,
+          SUM(CASE WHEN access_mode = 'restricted' THEN 1 ELSE 0 END) AS restrictedJobs
+        FROM jobs
+        WHERE recruiter_rid = ?`,
+        [teamLeaderRid],
+      );
+
+      const [[recruiterOverview]] = await pool.query(
+        `SELECT
+          COUNT(DISTINCT rd.rid) AS totalRecruiters
+        FROM resumes_data rd
+        INNER JOIN jobs j ON j.jid = rd.job_jid
+        WHERE j.recruiter_rid = ?
+          AND COALESCE(rd.submitted_by_role, 'recruiter') = 'recruiter'`,
+        [teamLeaderRid],
+      );
+
+      const [performanceRows] = await pool.query(
+        `SELECT
+          rd.res_id AS resId,
+          rd.job_jid AS jobJid,
+          rd.resume_filename AS resumeFilename,
+          DATE_FORMAT(rd.uploaded_at, '%Y-%m-%d %H:%i:%s.%f') AS submittedAt,
+          DATE_FORMAT(
+            CASE WHEN jrs.selection_status = 'verified' THEN jrs.selected_at ELSE NULL END,
+            '%Y-%m-%d %H:%i:%s.%f'
+          ) AS verifiedAt,
+          DATE_FORMAT(
+            CASE
+              WHEN c.walk_in IS NOT NULL THEN CAST(CONCAT(c.walk_in, ' 00:00:00.000000') AS DATETIME(6))
+              WHEN jrs.selection_status = 'walk_in' THEN jrs.selected_at
+              ELSE NULL
+            END,
+            '%Y-%m-%d %H:%i:%s.%f'
+          ) AS walkInAt,
+          DATE_FORMAT(
+            CASE
+              WHEN jrs.selection_status = 'selected' AND c.joining_date IS NULL THEN jrs.selected_at
+              ELSE NULL
+            END,
+            '%Y-%m-%d %H:%i:%s.%f'
+          ) AS selectedAt,
+          DATE_FORMAT(
+            CASE WHEN jrs.selection_status = 'rejected' THEN jrs.selected_at ELSE NULL END,
+            '%Y-%m-%d %H:%i:%s.%f'
+          ) AS rejectedAt,
+          DATE_FORMAT(
+            CASE
+              WHEN jrs.selection_status = 'selected' AND c.joining_date IS NOT NULL
+                THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6))
+              WHEN jrs.selection_status IN ('shortlisted', 'pending_joining') THEN jrs.selected_at
+              ELSE NULL
+            END,
+            '%Y-%m-%d %H:%i:%s.%f'
+          ) AS shortlistedAt,
+          DATE_FORMAT(
+            CASE WHEN jrs.selection_status = 'joined' THEN jrs.selected_at ELSE NULL END,
+            '%Y-%m-%d %H:%i:%s.%f'
+          ) AS joinedAt,
+          DATE_FORMAT(
+            CASE WHEN jrs.selection_status = 'dropout' THEN jrs.selected_at ELSE NULL END,
+            '%Y-%m-%d %H:%i:%s.%f'
+          ) AS dropoutAt,
+          DATE_FORMAT(
+            CASE WHEN jrs.selection_status = 'billed' THEN jrs.selected_at ELSE NULL END,
+            '%Y-%m-%d %H:%i:%s.%f'
+          ) AS billedAt,
+          DATE_FORMAT(
+            CASE WHEN jrs.selection_status = 'left' THEN jrs.selected_at ELSE NULL END,
+            '%Y-%m-%d %H:%i:%s.%f'
+          ) AS leftAt,
+          DATE_FORMAT(c.walk_in, '%Y-%m-%d') AS walkInDate,
+          DATE_FORMAT(c.joining_date, '%Y-%m-%d') AS joiningDate,
+          COALESCE(jrs.selection_status, 'submitted') AS workflowStatus,
+          recruiter.rid AS recruiterRid,
+          recruiter.name AS recruiterName,
+          teamLeader.name AS teamLeaderName,
+          c.name AS candidateName,
+          c.phone AS candidatePhone,
+          j.company_name AS companyName,
+          j.city AS city
+        FROM resumes_data rd
+        INNER JOIN jobs j
+          ON j.jid = rd.job_jid
+         AND j.recruiter_rid = ?
+        LEFT JOIN candidate c ON c.res_id = rd.res_id
+        INNER JOIN recruiter recruiter ON recruiter.rid = rd.rid
+        LEFT JOIN recruiter teamLeader ON teamLeader.rid = j.recruiter_rid
+        LEFT JOIN job_resume_selection jrs
+          ON jrs.job_jid = rd.job_jid
+         AND jrs.res_id = rd.res_id
+        WHERE COALESCE(rd.submitted_by_role, 'recruiter') = 'recruiter'
+        ORDER BY rd.uploaded_at DESC, rd.res_id DESC`,
+        [teamLeaderRid],
+      );
+
+      const statusDrilldown = {
+        submitted: [],
+        verified: [],
+        walk_in: [],
+        shortlisted: [],
+        selected: [],
+        rejected: [],
+        joined: [],
+        dropout: [],
+        billed: [],
+        left: [],
+      };
+
+      for (const rawRow of performanceRows) {
+        const row = {
+          ...rawRow,
+          submittedAt: normalizePerformanceTimestamp(rawRow.submittedAt),
+          verifiedAt: normalizePerformanceTimestamp(rawRow.verifiedAt),
+          walkInAt: normalizePerformanceTimestamp(rawRow.walkInAt),
+          shortlistedAt: normalizePerformanceTimestamp(rawRow.shortlistedAt),
+          selectedAt: normalizePerformanceTimestamp(rawRow.selectedAt),
+          rejectedAt: normalizePerformanceTimestamp(rawRow.rejectedAt),
+          joinedAt: normalizePerformanceTimestamp(rawRow.joinedAt),
+          dropoutAt: normalizePerformanceTimestamp(rawRow.dropoutAt),
+          billedAt: normalizePerformanceTimestamp(rawRow.billedAt),
+          leftAt: normalizePerformanceTimestamp(rawRow.leftAt),
+        };
+
+        const workflowStatus = normalizeWorkflowStatus(
+          row.workflowStatus,
+          row.joiningDate,
+        );
+        const eventAtMap = {
+          submitted: row.submittedAt,
+          verified: row.verifiedAt,
+          walk_in: row.walkInAt,
+          shortlisted: row.shortlistedAt,
+          selected: row.selectedAt,
+          rejected: row.rejectedAt,
+          joined: row.joinedAt,
+          dropout: row.dropoutAt,
+          billed: row.billedAt,
+          left: row.leftAt,
+        };
+
+        for (const metricKey of TEAM_LEADER_PERFORMANCE_EVENT_KEYS) {
+          const eventAt = eventAtMap[metricKey];
+          if (!isTimestampWithinInclusiveRange(eventAt, dateRange)) continue;
+
+          statusDrilldown[metricKey].push({
+            resId: row.resId || null,
+            recruiterName: row.recruiterName || null,
+            recruiterRid: row.recruiterRid || null,
+            teamLeaderName: row.teamLeaderName || null,
+            candidateName: row.candidateName || null,
+            candidatePhone: row.candidatePhone || null,
+            phone: row.candidatePhone || null,
+            jobJid:
+              row.jobJid === null || row.jobJid === undefined
+                ? null
+                : String(row.jobJid).trim(),
+            companyName: row.companyName || null,
+            city: row.city || null,
+            resumeFilename: row.resumeFilename || null,
+            walkInDate: row.walkInDate || null,
+            joiningDate: row.joiningDate || null,
+            status: workflowStatus,
+            workflowStatus,
+            eventAt,
+          });
+        }
+      }
+
+      const summary = {
+        totalJobs: Number(jobsOverview?.totalJobs) || 0,
+        openJobs: Number(jobsOverview?.openJobs) || 0,
+        restrictedJobs: Number(jobsOverview?.restrictedJobs) || 0,
+        totalRecruiters: Number(recruiterOverview?.totalRecruiters) || 0,
+        totalSubmitted: 0,
+        totalVerified: 0,
+        totalWalkIn: 0,
+        totalShortlisted: 0,
+        totalSelected: 0,
+        totalRejected: 0,
+        totalJoined: 0,
+        totalDropout: 0,
+        totalBilled: 0,
+        totalLeft: 0,
+      };
+
+      for (const metricKey of TEAM_LEADER_PERFORMANCE_EVENT_KEYS) {
+        summary[TEAM_LEADER_PERFORMANCE_EVENT_META[metricKey].summaryField] =
+          statusDrilldown[metricKey].length;
+      }
+
+      return res.status(200).json({
+        teamLeader: { rid: teamLeaderRid },
+        dateRange: dateRange.hasDateRange
+          ? { startDate: dateRange.startDate, endDate: dateRange.endDate }
+          : null,
+        summary,
+        statusDrilldown,
+      });
+    } catch (error) {
+      return res.status(500).json({
+        error: "Failed to fetch team leader performance dashboard.",
+        details: error.message,
+      });
+    }
+  },
+);
+
+router.get(
+  "/api/dashboard/team-leader/resumes/:resId/file",
+  requireAuth,
+  requireRoles("team leader", "team_leader"),
+  async (req, res) => {
+    const teamLeaderRid = toRid(req.auth?.rid);
+    const resId = String(req.params?.resId || "").trim();
+
+    if (!teamLeaderRid) {
+      return res.status(400).json({ message: "Authenticated team leader RID is required." });
+    }
+    if (!resId) {
+      return res.status(400).json({ message: "resId is required." });
+    }
+
+    try {
+      const [rows] = await pool.query(
+        `SELECT
+          rd.resume,
+          rd.resume_filename AS resumeFilename,
+          rd.resume_type AS resumeType
+        FROM resumes_data rd
+        INNER JOIN jobs j
+          ON j.jid = rd.job_jid
+         AND j.recruiter_rid = ?
+        WHERE rd.res_id = ?
+        LIMIT 1`,
+        [teamLeaderRid, resId],
+      );
+
+      if (rows.length === 0) {
+        return res.status(404).json({ message: "Resume not found." });
+      }
+
+      const row = rows[0];
+      const mimeTypeByResumeType = {
+        pdf: "application/pdf",
+        doc: "application/msword",
+        docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        jpg: "image/jpeg",
+        jpeg: "image/jpeg",
+        png: "image/png",
+        webp: "image/webp",
+      };
+      const mimeType =
+        mimeTypeByResumeType[String(row.resumeType || "").toLowerCase()] ||
+        "application/octet-stream";
+
+      res.setHeader("Content-Type", mimeType);
+      res.setHeader(
+        "Content-Disposition",
+        `inline; filename="${String(row.resumeFilename || "resume").replace(/"/g, "")}"`,
+      );
+      return res.send(row.resume);
+    } catch (error) {
+      return res.status(500).json({
+        message: "Failed to fetch resume file.",
+        error: error.message,
+      });
+    }
+  },
 );
 
 router.get(

@@ -40,6 +40,7 @@ const {
 } = require("../utils/formatters");
 const {
   CANONICAL_RESUME_STATUSES,
+  getPreviousWorkflowStatus,
   normalizeResumeStatusInput,
   normalizeWorkflowStatus,
 } = require("../utils/resumeStatusFlow");
@@ -280,6 +281,31 @@ const allowedManualResumeStatuses = new Set(
     (status) => status !== "further",
   ),
 );
+
+const resolveManualRollbackTarget = (resume = {}) => {
+  const currentStatus = normalizeWorkflowStatus(
+    resume.currentStatus,
+    "submitted",
+  );
+  const currentDerivedStatus =
+    currentStatus === "shortlisted" && resume.currentJoiningDate
+      ? "selected"
+      : currentStatus;
+
+  if (currentDerivedStatus === "rejected") {
+    if (resume.currentWalkInDate || resume.walkInAt) return "walk_in";
+    if (resume.verifiedAt || resume.verifiedReason) return "verified";
+    return "submitted";
+  }
+
+  if (currentDerivedStatus === "dropout") {
+    return resume.currentJoiningDate || resume.selectedAt
+      ? "selected"
+      : "shortlisted";
+  }
+
+  return getPreviousWorkflowStatus(currentDerivedStatus) || null;
+};
 
 router.get("/api/jobs", async (_req, res) => {
   try {
@@ -1467,6 +1493,216 @@ router.post(
     } catch (error) {
       return res.status(500).json({
         message: "Failed to update candidate status to left.",
+        error: error.message,
+      });
+    }
+  },
+);
+
+router.post(
+  "/api/jobs/:jid/resume-statuses/:resId/rollback",
+  requireAuth,
+  requireRoles("job creator", "team leader", "team_leader"),
+  requireOwnedJob,
+  async (req, res) => {
+    const normalizedResId = toTrimmedString(req.params?.resId);
+    if (!normalizedResId) {
+      return res.status(400).json({ message: "resId is required." });
+    }
+
+    try {
+      const connection = await pool.getConnection();
+      try {
+        await connection.beginTransaction();
+
+        const [resumeRows] = await connection.query(
+          `SELECT
+            rd.res_id AS resId,
+            rd.rid AS recruiterRid,
+            rd.job_jid AS jobJid,
+            COALESCE(jrs.selection_status, 'submitted') AS currentStatus,
+            c.joining_date AS currentJoiningDate,
+            c.walk_in AS currentWalkInDate,
+            ei.verified_reason AS verifiedReason,
+            ei.verified_at AS verifiedAt,
+            ei.walk_in_at AS walkInAt,
+            ei.selected_at AS selectedAt
+          FROM resumes_data rd
+          LEFT JOIN job_resume_selection jrs
+            ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
+          LEFT JOIN candidate c ON c.res_id = rd.res_id
+          LEFT JOIN extra_info ei
+            ON ei.res_id = rd.res_id OR (ei.resume_id = rd.res_id AND ei.res_id IS NULL)
+          WHERE rd.res_id = ?
+          LIMIT 1
+          FOR UPDATE`,
+          [normalizedResId],
+        );
+
+        if (resumeRows.length === 0) {
+          await connection.rollback();
+          return res.status(404).json({ message: "Resume not found." });
+        }
+
+        const resume = resumeRows[0];
+        if (toTrimmedString(resume.jobJid) !== req.ownedJob.jid) {
+          await connection.rollback();
+          return res.status(400).json({
+            message: "The provided resume does not belong to this job.",
+          });
+        }
+
+        const currentStatus = normalizeWorkflowStatus(
+          resume.currentStatus,
+          "submitted",
+        );
+        const currentDerivedStatus =
+          currentStatus === "shortlisted" && resume.currentJoiningDate
+            ? "selected"
+            : currentStatus;
+        const rollbackTarget = resolveManualRollbackTarget(resume);
+
+        if (!rollbackTarget) {
+          await connection.rollback();
+          return res.status(400).json({
+            message: `Rollback is not supported for '${currentDerivedStatus}'.`,
+          });
+        }
+
+        if (rollbackTarget === "submitted") {
+          await connection.query(
+            `DELETE FROM job_resume_selection
+             WHERE job_jid = ? AND res_id = ?`,
+            [req.ownedJob.jid, normalizedResId],
+          );
+        } else {
+          await connection.query(
+            `INSERT INTO job_resume_selection
+              (job_jid, res_id, selected_by_admin, selection_status, selection_note)
+             VALUES (?, ?, ?, ?, NULL)
+             ON DUPLICATE KEY UPDATE
+              selected_by_admin = VALUES(selected_by_admin),
+              selection_status = VALUES(selection_status),
+              selection_note = VALUES(selection_note),
+              selected_at = CURRENT_TIMESTAMP`,
+            [
+              req.ownedJob.jid,
+              normalizedResId,
+              toTrimmedString(req.auth?.rid) || "team-leader-rollback",
+              rollbackTarget,
+            ],
+          );
+        }
+
+        if (currentDerivedStatus === "verified") {
+          await upsertExtraInfoFields(connection, {
+            resId: normalizedResId,
+            jobJid: req.ownedJob.jid,
+            recruiterRid: resume.recruiterRid || undefined,
+            verifiedReason: null,
+          });
+        }
+
+        if (currentDerivedStatus === "walk_in") {
+          await upsertCandidateFields(connection, {
+            resId: normalizedResId,
+            walkIn: null,
+          });
+          await upsertExtraInfoFields(connection, {
+            resId: normalizedResId,
+            jobJid: req.ownedJob.jid,
+            recruiterRid: resume.recruiterRid || undefined,
+            walkInReason: null,
+          });
+        }
+
+        if (currentDerivedStatus === "selected") {
+          await upsertCandidateFields(connection, {
+            resId: normalizedResId,
+            joiningDate: null,
+            revenue: null,
+          });
+          await upsertExtraInfoFields(connection, {
+            resId: normalizedResId,
+            jobJid: req.ownedJob.jid,
+            recruiterRid: resume.recruiterRid || undefined,
+            selectReason: null,
+          });
+        }
+
+        if (currentDerivedStatus === "rejected") {
+          await upsertExtraInfoFields(connection, {
+            resId: normalizedResId,
+            jobJid: req.ownedJob.jid,
+            recruiterRid: resume.recruiterRid || undefined,
+            rejectReason: null,
+          });
+        }
+
+        if (currentDerivedStatus === "shortlisted") {
+          await upsertCandidateFields(connection, {
+            resId: normalizedResId,
+            joiningDate: null,
+            revenue: null,
+          });
+        }
+
+        if (currentDerivedStatus === "joined") {
+          await upsertExtraInfoFields(connection, {
+            resId: normalizedResId,
+            jobJid: req.ownedJob.jid,
+            recruiterRid: resume.recruiterRid || undefined,
+            joinedReason: null,
+          });
+        }
+
+        if (currentDerivedStatus === "dropout") {
+          await upsertExtraInfoFields(connection, {
+            resId: normalizedResId,
+            jobJid: req.ownedJob.jid,
+            recruiterRid: resume.recruiterRid || undefined,
+            dropoutReason: null,
+          });
+        }
+
+        if (currentDerivedStatus === "left") {
+          await upsertExtraInfoFields(connection, {
+            resId: normalizedResId,
+            jobJid: req.ownedJob.jid,
+            recruiterRid: resume.recruiterRid || undefined,
+            leftReason: null,
+          });
+        }
+
+        if (currentDerivedStatus === "billed") {
+          await upsertExtraInfoFields(connection, {
+            resId: normalizedResId,
+            jobJid: req.ownedJob.jid,
+            recruiterRid: resume.recruiterRid || undefined,
+            billedReason: null,
+          });
+        }
+
+        await connection.commit();
+        return res.status(200).json({
+          message: "Resume rolled back successfully.",
+          data: {
+            resId: normalizedResId,
+            jobId: req.ownedJob.jid,
+            previousStatus: currentDerivedStatus,
+            status: rollbackTarget,
+            updatedBy: toTrimmedString(req.auth?.rid) || "team-leader-rollback",
+          },
+        });
+      } catch (innerError) {
+        await connection.rollback();
+        throw innerError;
+      } finally {
+        connection.release();
+      }
+    } catch (error) {
+      return res.status(500).json({
+        message: "Failed to rollback resume status.",
         error: error.message,
       });
     }
