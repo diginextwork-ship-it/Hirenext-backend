@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const express = require("express");
 const multer = require("multer");
 const pool = require("../config/db");
@@ -281,6 +282,15 @@ const ensureAdminAuthorized = (req, res) => {
   if (isAdminAuthorized(req)) return true;
   res.status(403).json({ message: "Admin authorization required." });
   return false;
+};
+
+const ensureRecruiterAccountStatusColumn = async () => {
+  const hasColumn = await columnExists("recruiter", "account_status");
+  if (!hasColumn) {
+    await pool.query(
+      "ALTER TABLE recruiter ADD COLUMN account_status VARCHAR(20) NOT NULL DEFAULT 'active'",
+    );
+  }
 };
 
 const toPositiveMoney = (value) => {
@@ -3075,6 +3085,7 @@ router.get("/api/admin/resumes/:resId/file", async (req, res) => {
 
 router.get("/api/admin/performance", async (req, res) => {
   try {
+    await ensureRecruiterAccountStatusColumn();
     const dateRange = parseInclusiveDateRange(
       req.query?.startDate,
       req.query?.endDate,
@@ -3096,6 +3107,7 @@ router.get("/api/admin/performance", async (req, res) => {
         r.rid,
         r.name,
         r.email,
+        COALESCE(NULLIF(TRIM(r.account_status), ''), 'active') AS accountStatus,
         COALESCE(r.points, 0) AS points,
         COALESCE(jc.jobs_created, 0) AS jobsCreated,
         COALESCE(jc.total_positions, 0) AS totalPositions,
@@ -3122,6 +3134,10 @@ router.get("/api/admin/performance", async (req, res) => {
       rid: row.rid,
       name: row.name,
       email: row.email,
+      accountStatus:
+        String(row.accountStatus || "active").trim().toLowerCase() === "inactive"
+          ? "inactive"
+          : "active",
       points: Number(row.points) || 0,
       jobsCreated: Number(row.jobsCreated) || 0,
       totalPositions: Number(row.totalPositions) || 0,
@@ -3134,6 +3150,7 @@ router.get("/api/admin/performance", async (req, res) => {
         r.rid,
         r.name,
         r.email,
+        COALESCE(NULLIF(TRIM(r.account_status), ''), 'active') AS accountStatus,
         COALESCE(r.points, 0) AS points
       FROM recruiter r
       WHERE LOWER(TRIM(COALESCE(r.role, 'recruiter'))) = 'recruiter'
@@ -3303,6 +3320,11 @@ router.get("/api/admin/performance", async (req, res) => {
           rid: row.rid,
           name: row.name,
           email: row.email,
+          accountStatus:
+            String(row.accountStatus || "active").trim().toLowerCase() ===
+            "inactive"
+              ? "inactive"
+              : "active",
           points: Number(row.points) || 0,
           submitted: 0,
           verified: 0,
@@ -3459,6 +3481,83 @@ router.get("/api/admin/performance", async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // DELETE /api/admin/recruiters/:rid — Cascade-delete recruiter & all data
 // ═══════════════════════════════════════════════════════════════════════════
+router.patch("/api/admin/recruiters/:rid/account-status", async (req, res) => {
+  if (!ensureAdminAuthorized(req, res)) return;
+
+  const rid = String(req.params?.rid || "").trim();
+  const requestedStatus = String(req.body?.status || "")
+    .trim()
+    .toLowerCase();
+
+  if (!rid) {
+    return res.status(400).json({ message: "Recruiter ID is required." });
+  }
+
+  if (!["active", "inactive"].includes(requestedStatus)) {
+    return res.status(400).json({
+      message: "status must be either 'active' or 'inactive'.",
+    });
+  }
+
+  try {
+    await ensureRecruiterAccountStatusColumn();
+    const hasPasswordChangedColumn = await columnExists(
+      "recruiter",
+      "password_changed",
+    );
+    const [recruiterRows] = await pool.query(
+      `SELECT rid, name, email, role,
+              COALESCE(NULLIF(TRIM(account_status), ''), 'active') AS accountStatus
+       FROM recruiter
+       WHERE rid = ?
+       LIMIT 1`,
+      [rid],
+    );
+
+    if (recruiterRows.length === 0) {
+      return res.status(404).json({ message: "Recruiter not found." });
+    }
+
+    const nextPassword =
+      requestedStatus === "inactive"
+        ? crypto.randomBytes(24).toString("hex")
+        : "12345678";
+    const updateFields = ["password = ?", "account_status = ?"];
+    const updateParams = [nextPassword, requestedStatus];
+
+    if (hasPasswordChangedColumn) {
+      updateFields.push("password_changed = ?");
+      updateParams.push(requestedStatus === "active" ? false : true);
+    }
+
+    updateParams.push(rid);
+
+    await pool.query(
+      `UPDATE recruiter SET ${updateFields.join(", ")} WHERE rid = ?`,
+      updateParams,
+    );
+
+    return res.status(200).json({
+      message:
+        requestedStatus === "inactive"
+          ? "Account deactivated successfully."
+          : "Account activated successfully.",
+      recruiter: {
+        rid: recruiterRows[0].rid,
+        name: recruiterRows[0].name,
+        email: recruiterRows[0].email,
+        role: recruiterRows[0].role,
+        accountStatus: requestedStatus,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to update recruiter account status.",
+      error: error.message,
+    });
+  }
+});
+
 router.delete(
   "/api/admin/recruiters/:rid",
   requireAuth,

@@ -481,14 +481,21 @@ router.post("/api/recruiters/login", async (req, res) => {
       "recruiter",
       "password_changed",
     );
+    const hasAccountStatusColumn = await columnExists(
+      "recruiter",
+      "account_status",
+    );
     const selectRole = hasRoleColumn ? "role" : "NULL AS role";
     const selectAddJob = hasAddJobColumn ? "addjob" : "0 AS addjob";
     const selectPasswordChanged = hasPasswordChangedColumn
       ? "password_changed"
       : "1 AS password_changed";
+    const selectAccountStatus = hasAccountStatusColumn
+      ? "COALESCE(NULLIF(TRIM(account_status), ''), 'active') AS account_status"
+      : "'active' AS account_status";
 
     const [rows] = await pool.query(
-      `SELECT rid, name, email, ${selectRole}, ${selectAddJob}, ${selectPasswordChanged}
+      `SELECT rid, name, email, ${selectRole}, ${selectAddJob}, ${selectPasswordChanged}, ${selectAccountStatus}
        FROM recruiter
        WHERE email = ? AND password = ?
        LIMIT 1`,
@@ -500,6 +507,11 @@ router.post("/api/recruiters/login", async (req, res) => {
     }
 
     const recruiter = rows[0];
+    if (String(recruiter.account_status || "active").trim().toLowerCase() === "inactive") {
+      return res.status(403).json({
+        message: "This account is deactivated. Please contact the admin.",
+      });
+    }
     const recruiterRole = normalizeRecruiterRole(
       recruiter.role,
       recruiter.addjob,
