@@ -39,7 +39,7 @@ const {
 const { parseInclusiveDateRange } = require("../utils/dateTime");
 
 const router = express.Router();
-const ADMIN_API_KEY = String(process.env.ADMIN_API_KEY || "admin123");
+const ADMIN_API_KEY = String(process.env.ADMIN_API_KEY || "").trim();
 const ALLOWED_REVENUE_UPLOAD_MIME_TYPES = new Set([
   "image/jpeg",
   "image/jpg",
@@ -450,6 +450,12 @@ const recomputeMoneyProfit = async (connection) => {
 };
 
 router.post("/api/admin/login", (req, res) => {
+  if (!ADMIN_API_KEY) {
+    return res.status(503).json({
+      message: "Admin login is not configured on the server.",
+    });
+  }
+
   const providedKey = String(req.body?.adminKey || "").trim();
   if (!providedKey || providedKey !== ADMIN_API_KEY) {
     return res.status(401).json({ message: "Invalid admin credentials." });
