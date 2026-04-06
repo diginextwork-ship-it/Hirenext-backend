@@ -38,6 +38,7 @@ const startServer = async () => {
       `Allowed origins: ${configuredOrigins.join(", ") || "localhost only"}`,
     );
   });
+  server.requestTimeout = 0;
 
   // Initialize database in background (non-blocking)
   try {
