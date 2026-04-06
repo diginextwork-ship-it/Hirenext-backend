@@ -260,10 +260,15 @@ router.get(
 
     try {
       const [rows] = await pool.query(
-        `SELECT
+      `SELECT
           r.rid,
           r.name,
           r.email,
+          CASE
+            WHEN LOWER(TRIM(COALESCE(r.role, 'recruiter'))) IN ('team leader', 'team_leader', 'job creator')
+              THEN 'team leader'
+            ELSE 'recruiter'
+          END AS member_role,
           COALESCE(r.points, 0) AS points,
           COALESCE(rs.submitted, 0) AS submitted,
           COALESCE(rs.verified, 0) AS verified,
@@ -346,7 +351,7 @@ router.get(
 
     const orderBySql = sortMap[sortBy] || sortMap.submitted;
     const whereClauses = [
-      "LOWER(TRIM(COALESCE(r.role, 'recruiter'))) = 'recruiter'",
+      "LOWER(TRIM(COALESCE(r.role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')",
     ];
     const params = [];
 
@@ -366,6 +371,11 @@ router.get(
           r.rid,
           r.name,
           r.email,
+          CASE
+            WHEN LOWER(TRIM(COALESCE(r.role, 'recruiter'))) IN ('team leader', 'team_leader', 'job creator')
+              THEN 'team leader'
+            ELSE 'recruiter'
+          END AS member_role,
           COALESCE(r.points, 0) AS points,
           COALESCE(rs.submitted, 0) AS submitted,
           COALESCE(rs.verified, 0) AS verified,
@@ -392,6 +402,7 @@ router.get(
           rid: row.rid,
           name: row.name,
           email: row.email,
+          role: row.member_role || "recruiter",
           points: Number(row.points) || 0,
           stats,
           calculatedMetrics: buildCalculatedMetrics(stats),
