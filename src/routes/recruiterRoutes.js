@@ -168,19 +168,41 @@ const authorizeRecruiterResourceView = (req, res, rid) => {
   return true;
 };
 
-const checkJobAccess = async (recruiterId, jobId) => {
+const isTeamLeaderRole = (role) => {
+  const normalized = normalizeRoleAlias(role);
+  return normalized === "team leader" || normalized === "team_leader";
+};
+
+const isTeamLeaderCreatedRole = (role) => {
+  const normalized = normalizeRoleAlias(role);
+  return (
+    normalized === "team leader" ||
+    normalized === "team_leader" ||
+    normalized === "job creator"
+  );
+};
+
+const checkJobAccess = async (recruiterId, jobId, role = "recruiter") => {
   const safeJobId = normalizeJobJid(jobId);
   if (!safeJobId) {
     return { canAccess: false, reason: "job_jid is required." };
   }
 
   const hasAccessModeColumn = await columnExists("jobs", "access_mode");
+  const hasRecruiterRoleColumn = await columnExists("recruiter", "role");
   const [jobRows] = await pool.query(
     `SELECT
-      jid,
-      company_name,
-      ${hasAccessModeColumn ? "access_mode" : "'open'"} AS access_mode
-    FROM jobs
+      j.jid,
+      j.company_name,
+      ${hasAccessModeColumn ? "j.access_mode" : "'open'"} AS access_mode,
+      ${
+        hasRecruiterRoleColumn
+          ? "creator.role AS creatorRole"
+          : "NULL AS creatorRole"
+      }
+    FROM jobs j
+    LEFT JOIN recruiter creator
+      ON creator.rid = j.recruiter_rid
     WHERE jid = ?
     LIMIT 1`,
     [safeJobId],
@@ -192,11 +214,24 @@ const checkJobAccess = async (recruiterId, jobId) => {
 
   const job = jobRows[0];
   const accessMode = normalizeAccessMode(job.access_mode);
+  const normalizedRole = normalizeRoleAlias(role);
+  const creatorRole = normalizeRoleAlias(job.creatorRole);
   const jobDetails = {
     jid: String(job.jid || "").trim(),
     company_name: job.company_name || "",
     access_mode: accessMode,
   };
+
+  if (
+    isTeamLeaderRole(normalizedRole) &&
+    (!hasRecruiterRoleColumn || isTeamLeaderCreatedRole(creatorRole))
+  ) {
+    return {
+      canAccess: true,
+      reason: "Team leaders can access all jobs created by team leaders",
+      jobDetails,
+    };
+  }
 
   if (accessMode === "open") {
     return {
@@ -613,12 +648,24 @@ router.get(
 
     try {
       const hasAccessModeColumn = await columnExists("jobs", "access_mode");
+      const hasRecruiterRoleColumn = await columnExists("recruiter", "role");
+      const authRole = normalizeRoleAlias(req.auth?.role);
+      const teamLeaderScope = isTeamLeaderRole(authRole);
 
-      const whereClauses = [
-        hasAccessModeColumn
-          ? "(j.access_mode = 'open' OR (j.access_mode = 'restricted' AND jra.id IS NOT NULL))"
-          : "1 = 1",
-      ];
+      const whereClauses = [];
+      if (teamLeaderScope) {
+        whereClauses.push(
+          hasRecruiterRoleColumn
+            ? "LOWER(TRIM(COALESCE(creator.role, ''))) IN ('team leader', 'team_leader', 'job creator')"
+            : "1 = 1",
+        );
+      } else {
+        whereClauses.push(
+          hasAccessModeColumn
+            ? "(j.access_mode = 'open' OR (j.access_mode = 'restricted' AND jra.id IS NOT NULL))"
+            : "1 = 1",
+        );
+      }
       const whereParams = [rid];
 
       if (locationFilter) {
@@ -661,6 +708,8 @@ router.get(
           j.benefits,
           j.created_at
         FROM jobs j
+        LEFT JOIN recruiter creator
+          ON creator.rid = j.recruiter_rid
         LEFT JOIN job_recruiter_access jra
           ON j.jid = jra.job_jid
          AND jra.recruiter_rid = ?
@@ -674,6 +723,8 @@ router.get(
       const [countRows] = await pool.query(
         `SELECT COUNT(DISTINCT j.jid) AS total
          FROM jobs j
+         LEFT JOIN recruiter creator
+           ON creator.rid = j.recruiter_rid
          LEFT JOIN job_recruiter_access jra
            ON j.jid = jra.job_jid
           AND jra.recruiter_rid = ?
@@ -730,7 +781,7 @@ router.get(
     if (!authorizeRecruiterResourceView(req, res, rid)) return;
 
     try {
-      const access = await checkJobAccess(rid, safeJobId);
+      const access = await checkJobAccess(rid, safeJobId, req.auth?.role);
       return res.status(200).json({
         canAccess: Boolean(access.canAccess),
         reason: access.reason,
@@ -748,7 +799,7 @@ router.get(
 router.post(
   "/api/resumes/submit",
   requireAuth,
-  requireRoles("recruiter"),
+  requireRoles("recruiter", "team leader", "team_leader"),
   async (req, res) => {
     try {
       await runResumeUpload(req, res);
@@ -774,6 +825,7 @@ router.post(
 
     const recruiterRid = String(req.body?.recruiter_rid || "").trim();
     const authRid = String(req.auth?.rid || "").trim();
+    const submitterRole = normalizeRoleAlias(req.auth?.role);
     const safeJobId = normalizeJobJid(req.body?.job_jid ?? req.body?.jid);
     const resumeSource = normalizeResumeSource(req.body?.source);
 
@@ -799,7 +851,7 @@ router.post(
     }
 
     try {
-      const access = await checkJobAccess(recruiterRid, safeJobId);
+      const access = await checkJobAccess(recruiterRid, safeJobId, submitterRole);
       if (!access.canAccess) {
         return res.status(403).json({
           success: false,
@@ -1367,7 +1419,9 @@ router.post(
 
         if (hasSubmittedByRoleColumn) {
           insertColumns.push("submitted_by_role");
-          insertValues.push("recruiter");
+          insertValues.push(
+            isTeamLeaderRole(submitterRole) ? "team leader" : "recruiter",
+          );
         }
 
         if (hasSourceColumn) {
@@ -1473,10 +1527,10 @@ router.post(
 router.get(
   "/api/recruiters/:rid/resumes",
   requireAuth,
-  requireRoles("recruiter"),
-  requireRecruiterOwner,
+  requireRoles("recruiter", "team leader", "team_leader"),
   async (req, res) => {
     const { rid } = req.params;
+    if (!authorizeRecruiterResourceView(req, res, rid)) return;
 
     try {
       const hasAtsScoreColumn = await columnExists("resumes_data", "ats_score");
@@ -1586,10 +1640,10 @@ router.get(
 router.get(
   "/api/recruiters/:rid/resumes/:resId/file",
   requireAuth,
-  requireRoles("recruiter"),
-  requireRecruiterOwner,
+  requireRoles("recruiter", "team leader", "team_leader"),
   async (req, res) => {
     const { rid, resId } = req.params;
+    if (!authorizeRecruiterResourceView(req, res, rid)) return;
 
     try {
       const [rows] = await pool.query(
@@ -1840,9 +1894,9 @@ router.get(
   "/api/recruiters/:rid/applications",
   requireAuth,
   requireRoles("recruiter", "job creator", "team leader", "team_leader"),
-  requireRecruiterOwner,
   async (req, res) => {
     const { rid } = req.params;
+    if (!authorizeRecruiterResourceView(req, res, rid)) return;
 
     try {
       const hasApplicationsTable = await tableExists("applications");
@@ -1850,10 +1904,21 @@ router.get(
       const jobsRecruiterIdColumn = hasJobsTable
         ? await getRecruiterIdColumn("jobs")
         : null;
+      const hasRecruiterRoleColumn = hasJobsTable
+        ? await columnExists("recruiter", "role")
+        : false;
+      const teamLeaderScope = isTeamLeaderRole(req.auth?.role);
 
       if (!hasApplicationsTable || !hasJobsTable || !jobsRecruiterIdColumn) {
         return res.status(200).json({ applications: [] });
       }
+
+      const whereClause = teamLeaderScope
+        ? hasRecruiterRoleColumn
+          ? "LOWER(TRIM(COALESCE(creator.role, ''))) IN ('team leader', 'team_leader', 'job creator')"
+          : "1 = 1"
+        : `j.${jobsRecruiterIdColumn} = ?`;
+      const queryParams = teamLeaderScope ? [] : [rid];
 
       const [rows] = await pool.query(
         `SELECT
@@ -1873,9 +1938,10 @@ router.get(
       FROM applications a
       LEFT JOIN candidate c ON c.res_id = a.res_id
       INNER JOIN jobs j ON j.jid = a.job_jid
-      WHERE j.${jobsRecruiterIdColumn} = ?
+      LEFT JOIN recruiter creator ON creator.rid = j.${jobsRecruiterIdColumn}
+      WHERE ${whereClause}
       ORDER BY a.created_at DESC`,
-        [rid],
+        queryParams,
       );
 
       return res.status(200).json({
@@ -1926,10 +1992,10 @@ const statusReasonColumnMap = {
 router.post(
   "/api/recruiters/:rid/resumes/:resId/advance-status",
   requireAuth,
-  requireRoles("recruiter"),
-  requireRecruiterOwner,
+  requireRoles("recruiter", "team leader", "team_leader"),
   async (req, res) => {
     const { rid, resId } = req.params;
+    if (!authorizeRecruiterResourceView(req, res, rid)) return;
     const targetStatus = normalizeResumeStatusInput(req.body?.status);
     const statusReason = resolveStatusReasonInput(req.body, targetStatus);
     const reason = statusReason || null;

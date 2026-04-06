@@ -106,7 +106,7 @@ const recruiterStatsSubquery = `
   LEFT JOIN job_resume_selection jrs
     ON jrs.job_jid = rd.job_jid
    AND jrs.res_id = rd.res_id
-  WHERE COALESCE(rd.submitted_by_role, 'recruiter') = 'recruiter'
+  WHERE LOWER(TRIM(COALESCE(rd.submitted_by_role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')
   GROUP BY rd.rid
 `;
 
@@ -116,6 +116,9 @@ const isTeamLeaderRole = (role) => {
 };
 
 const isRecruiterRole = (role) => toRole(role) === "recruiter";
+
+const teamLeaderCreatedJobsCondition =
+  "LOWER(TRIM(COALESCE(teamLeader.role, ''))) IN ('team leader', 'team_leader', 'job creator')";
 
 const assertOwnRidOrTeamLeader = (req, res) => {
   const authRole = toRole(req.auth?.role);
@@ -463,7 +466,7 @@ const getTeamLeaderDashboard = async (_req, res) => {
       FROM (
         SELECT rd.rid, COUNT(*) AS submitted
         FROM resumes_data rd
-        WHERE COALESCE(rd.submitted_by_role, 'recruiter') = 'recruiter'
+        WHERE LOWER(TRIM(COALESCE(rd.submitted_by_role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')
         GROUP BY rd.rid
       ) stats`,
     );
@@ -478,7 +481,7 @@ const getTeamLeaderDashboard = async (_req, res) => {
       LEFT JOIN (
         SELECT rd.rid, COUNT(*) AS submitted
         FROM resumes_data rd
-        WHERE COALESCE(rd.submitted_by_role, 'recruiter') = 'recruiter'
+        WHERE LOWER(TRIM(COALESCE(rd.submitted_by_role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')
         GROUP BY rd.rid
       ) stats ON stats.rid = r.rid
       WHERE LOWER(TRIM(COALESCE(r.role, 'recruiter'))) = 'recruiter'
@@ -541,9 +544,10 @@ router.get(
           COUNT(*) AS totalJobs,
           SUM(CASE WHEN access_mode = 'open' THEN 1 ELSE 0 END) AS openJobs,
           SUM(CASE WHEN access_mode = 'restricted' THEN 1 ELSE 0 END) AS restrictedJobs
-        FROM jobs
-        WHERE recruiter_rid = ?`,
-        [teamLeaderRid],
+        FROM jobs j
+        LEFT JOIN recruiter teamLeader
+          ON teamLeader.rid = j.recruiter_rid
+        WHERE ${teamLeaderCreatedJobsCondition}`,
       );
 
       const [[recruiterOverview]] = await pool.query(
@@ -551,9 +555,10 @@ router.get(
           COUNT(DISTINCT rd.rid) AS totalRecruiters
         FROM resumes_data rd
         INNER JOIN jobs j ON j.jid = rd.job_jid
-        WHERE j.recruiter_rid = ?
-          AND COALESCE(rd.submitted_by_role, 'recruiter') = 'recruiter'`,
-        [teamLeaderRid],
+        LEFT JOIN recruiter teamLeader
+          ON teamLeader.rid = j.recruiter_rid
+        WHERE ${teamLeaderCreatedJobsCondition}
+          AND LOWER(TRIM(COALESCE(rd.submitted_by_role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')`,
       );
 
       const [performanceRows] = await pool.query(
@@ -623,16 +628,15 @@ router.get(
         FROM resumes_data rd
         INNER JOIN jobs j
           ON j.jid = rd.job_jid
-         AND j.recruiter_rid = ?
         LEFT JOIN candidate c ON c.res_id = rd.res_id
         INNER JOIN recruiter recruiter ON recruiter.rid = rd.rid
         LEFT JOIN recruiter teamLeader ON teamLeader.rid = j.recruiter_rid
         LEFT JOIN job_resume_selection jrs
           ON jrs.job_jid = rd.job_jid
          AND jrs.res_id = rd.res_id
-        WHERE COALESCE(rd.submitted_by_role, 'recruiter') = 'recruiter'
+        WHERE ${teamLeaderCreatedJobsCondition}
+          AND LOWER(TRIM(COALESCE(rd.submitted_by_role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')
         ORDER BY rd.uploaded_at DESC, rd.res_id DESC`,
-        [teamLeaderRid],
       );
 
       const statusDrilldown = {
@@ -771,10 +775,12 @@ router.get(
         FROM resumes_data rd
         INNER JOIN jobs j
           ON j.jid = rd.job_jid
-         AND j.recruiter_rid = ?
+        LEFT JOIN recruiter teamLeader
+          ON teamLeader.rid = j.recruiter_rid
         WHERE rd.res_id = ?
+          AND ${teamLeaderCreatedJobsCondition}
         LIMIT 1`,
-        [teamLeaderRid, resId],
+        [resId],
       );
 
       if (rows.length === 0) {
@@ -832,6 +838,8 @@ router.get(
     }
 
     try {
+      const showAllTeamLeaderJobs =
+        isTeamLeaderRole(req.auth?.role) && toRid(req.auth?.rid) === rid;
       const submittedRangeCondition = hasDateRange
         ? "rd.uploaded_at >= ? AND rd.uploaded_at < ?"
         : "1=1";
@@ -888,11 +896,10 @@ router.get(
           LEFT JOIN job_resume_selection jrs
             ON jrs.job_jid = rd.job_jid
            AND jrs.res_id = rd.res_id
-          WHERE COALESCE(rd.submitted_by_role, 'recruiter') = 'recruiter'
+          WHERE LOWER(TRIM(COALESCE(rd.submitted_by_role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')
           GROUP BY rd.rid
         ) rs ON rs.recruiter_rid = r.rid
         WHERE r.rid = ?
-          AND LOWER(TRIM(COALESCE(r.role, 'recruiter'))) = 'recruiter'
         LIMIT 1`,
         statsQueryParams,
       );
@@ -903,17 +910,25 @@ router.get(
 
       const recruiterRow = recruiterRows[0];
 
-      const [[accessibleJobsCountRow]] = await pool.query(
-        `SELECT COUNT(DISTINCT j.jid) AS total
-         FROM jobs j
-         LEFT JOIN job_recruiter_access jra
-           ON j.jid = jra.job_jid
-          AND jra.recruiter_rid = ?
-          AND jra.is_active = TRUE
-         WHERE j.access_mode = 'open'
-            OR (j.access_mode = 'restricted' AND jra.id IS NOT NULL)`,
-        [rid],
-      );
+      const [[accessibleJobsCountRow]] = showAllTeamLeaderJobs
+        ? await pool.query(
+            `SELECT COUNT(DISTINCT j.jid) AS total
+             FROM jobs j
+             LEFT JOIN recruiter teamLeader
+               ON teamLeader.rid = j.recruiter_rid
+             WHERE ${teamLeaderCreatedJobsCondition}`,
+          )
+        : await pool.query(
+            `SELECT COUNT(DISTINCT j.jid) AS total
+             FROM jobs j
+             LEFT JOIN job_recruiter_access jra
+               ON j.jid = jra.job_jid
+              AND jra.recruiter_rid = ?
+              AND jra.is_active = TRUE
+             WHERE j.access_mode = 'open'
+                OR (j.access_mode = 'restricted' AND jra.id IS NOT NULL)`,
+            [rid],
+          );
 
       const stats = mapStats(recruiterRow);
 

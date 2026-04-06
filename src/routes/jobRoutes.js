@@ -199,6 +199,15 @@ const getActiveAccessCount = async (jobId) => {
   return Number(rows?.[0]?.total) || 0;
 };
 
+const isTeamLeaderLikeRole = (role) => {
+  const normalized = normalizeRoleAlias(role);
+  return (
+    normalized === "team leader" ||
+    normalized === "team_leader" ||
+    normalized === "job creator"
+  );
+};
+
 const requireOwnedJob = async (req, res, next) => {
   const safeJobId = normalizeJobJid(req.params.jid);
   if (!safeJobId) {
@@ -207,12 +216,20 @@ const requireOwnedJob = async (req, res, next) => {
 
   try {
     const hasAccessModeColumn = await columnExists("jobs", "access_mode");
+    const hasRecruiterRoleColumn = await columnExists("recruiter", "role");
     const [rows] = await pool.query(
       `SELECT
-        jid,
-        recruiter_rid AS recruiterRid,
-        ${hasAccessModeColumn ? "access_mode" : "'open'"} AS accessMode
-      FROM jobs
+        j.jid,
+        j.recruiter_rid AS recruiterRid,
+        ${hasAccessModeColumn ? "j.access_mode" : "'open'"} AS accessMode,
+        ${
+          hasRecruiterRoleColumn
+            ? "creator.role AS creatorRole"
+            : "NULL AS creatorRole"
+        }
+      FROM jobs j
+      LEFT JOIN recruiter creator
+        ON creator.rid = j.recruiter_rid
       WHERE jid = ?
       LIMIT 1`,
       [safeJobId],
@@ -223,15 +240,22 @@ const requireOwnedJob = async (req, res, next) => {
     }
 
     const authRid = toTrimmedString(req.auth?.rid);
-    if (!authRid || toTrimmedString(rows[0].recruiterRid) !== authRid) {
+    const authRole = normalizeRoleAlias(req.auth?.role);
+    const recruiterRid = toTrimmedString(rows[0].recruiterRid);
+    const creatorRole = normalizeRoleAlias(rows[0].creatorRole);
+    const canManageAsTeamLeader =
+      isTeamLeaderLikeRole(authRole) &&
+      (!hasRecruiterRoleColumn || isTeamLeaderLikeRole(creatorRole));
+
+    if (!authRid || (recruiterRid !== authRid && !canManageAsTeamLeader)) {
       return res
         .status(403)
-        .json({ message: "You can only manage access for your own jobs." });
+        .json({ message: "You do not have permission to manage this job." });
     }
 
     req.ownedJob = {
       jid: safeJobId,
-      recruiterRid: toTrimmedString(rows[0].recruiterRid),
+      recruiterRid,
       accessMode: normalizeAccessMode(rows[0].accessMode) || "open",
     };
     return next();
@@ -779,11 +803,20 @@ router.get(
   async (req, res) => {
     try {
       const authRid = toTrimmedString(req.auth?.rid);
+      const authRole = normalizeRoleAlias(req.auth?.role);
       if (!authRid) {
         return res.status(401).json({ message: "Authentication required." });
       }
 
       const hasAccessModeColumn = await columnExists("jobs", "access_mode");
+      const hasRecruiterRoleColumn = await columnExists("recruiter", "role");
+      const isTeamLeader = isTeamLeaderLikeRole(authRole);
+      const whereClause = isTeamLeader
+        ? hasRecruiterRoleColumn
+          ? `LOWER(TRIM(COALESCE(creator.role, ''))) IN ('team leader', 'team_leader', 'job creator')`
+          : "1 = 1"
+        : "j.recruiter_rid = ?";
+      const queryParams = isTeamLeader ? [] : [authRid];
       const [rows] = await pool.query(
         `SELECT
           j.jid,
@@ -797,15 +830,17 @@ router.get(
           ${hasAccessModeColumn ? "j.access_mode" : "'open' AS access_mode"},
           COUNT(jra.id) AS recruiterCount
         FROM jobs j
+        LEFT JOIN recruiter creator
+          ON creator.rid = j.recruiter_rid
         LEFT JOIN job_recruiter_access jra
           ON j.jid = jra.job_jid
          AND jra.is_active = TRUE
-        WHERE j.recruiter_rid = ?
+        WHERE ${whereClause}
         GROUP BY
           j.jid, j.recruiter_rid, j.company_name, j.role_name, j.city, j.state, j.pincode, j.created_at
           ${hasAccessModeColumn ? ", j.access_mode" : ""}
         ORDER BY j.created_at DESC, j.jid DESC`,
-        [authRid],
+        queryParams,
       );
 
       return res.status(200).json({
@@ -883,7 +918,7 @@ router.get(
           ON jrs.job_jid = rd.job_jid
          AND jrs.res_id = rd.res_id
         WHERE rd.job_jid = ?
-          AND COALESCE(rd.submitted_by_role, 'recruiter') = 'recruiter'
+          AND LOWER(TRIM(COALESCE(rd.submitted_by_role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')
         ORDER BY rd.uploaded_at DESC, rd.res_id ASC`,
         [req.ownedJob.jid],
       );
