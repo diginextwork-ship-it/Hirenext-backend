@@ -1071,6 +1071,91 @@ test("admin pending_joining requires joining_date without revenue", async () => 
   }
 });
 
+test("admin joined transition accepts a selected candidate that already has a joining date", async () => {
+  const resId = buildTempResumeId("admjoinsel");
+
+  await createTempResume(resId);
+
+  try {
+    const verifyResponse = await requestJson(
+      `/api/admin/resumes/${resId}/advance-status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({ status: "verified" }),
+      },
+    );
+    assert.equal(verifyResponse.status, 200);
+
+    const walkInResponse = await requestJson(
+      `/api/admin/resumes/${resId}/advance-status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({ status: "walk_in" }),
+      },
+    );
+    assert.equal(walkInResponse.status, 200);
+
+    const shortlistedResponse = await requestJson(
+      `/api/admin/resumes/${resId}/advance-status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({ status: "shortlisted" }),
+      },
+    );
+    assert.equal(shortlistedResponse.status, 200);
+
+    const selectedResponse = await requestJson(
+      `/api/admin/resumes/${resId}/advance-status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({
+          status: "selected",
+          joining_date: "2026-04-06",
+        }),
+      },
+    );
+    assert.equal(selectedResponse.status, 200);
+
+    const joinedResponse = await requestJson(
+      `/api/admin/resumes/${resId}/advance-status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({
+          status: "joined",
+          joining_date: "2026-04-06",
+          joined_reason: "candidate joined successfully",
+          revenue: 1,
+        }),
+      },
+    );
+
+    assert.equal(joinedResponse.status, 200);
+    assert.equal(joinedResponse.body?.data?.status, "joined");
+  } finally {
+    await cleanupTempResume(resId);
+  }
+});
+
 test("team leader pending_joining accepts joining_date without revenue", async () => {
   const resId = buildTempResumeId("tlpend");
 

@@ -2609,10 +2609,10 @@ router.post(
       },
     });
     const currentStatus = normalizeWorkflowStatus(resume.currentStatus);
-    const currentDerivedStatus =
-      currentStatus === "selected" && resume.currentJoiningDate
-        ? "shortlisted"
-        : currentStatus;
+    const currentDerivedStatus = resolveCanonicalWorkflowStatus({
+      workflowStatus: currentStatus,
+      joiningDate: resume.currentJoiningDate,
+    });
     const resolvedRevenueAmount = resolveRevenueAmount(
       resume.candidateRevenue,
       resume.companyRevenue,
