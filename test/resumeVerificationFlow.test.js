@@ -1073,6 +1073,7 @@ test("admin pending_joining requires joining_date without revenue", async () => 
 
 test("admin joined transition accepts a selected candidate that already has a joining date", async () => {
   const resId = buildTempResumeId("admjoinsel");
+  const previousMoneySumId = await getLatestMoneySumId();
 
   await createTempResume(resId);
 
@@ -1151,7 +1152,21 @@ test("admin joined transition accepts a selected candidate that already has a jo
 
     assert.equal(joinedResponse.status, 200);
     assert.equal(joinedResponse.body?.data?.status, "joined");
+
+    const [moneyRows] = await pool.query(
+      `SELECT res_id AS resId, company_rev AS companyRev, entry_type AS entryType
+       FROM money_sum
+       WHERE id > ?
+       ORDER BY id DESC
+       LIMIT 1`,
+      [previousMoneySumId],
+    );
+
+    assert.equal(moneyRows[0]?.resId, resId);
+    assert.equal(Number(moneyRows[0]?.companyRev), 1);
+    assert.equal(moneyRows[0]?.entryType, "intake");
   } finally {
+    await cleanupMoneySumAfter(previousMoneySumId);
     await cleanupTempResume(resId);
   }
 });

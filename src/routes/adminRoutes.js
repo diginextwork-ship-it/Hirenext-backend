@@ -178,6 +178,9 @@ const ensureMoneySumTable = async () => {
       "ALTER TABLE money_sum ADD COLUMN entry_type VARCHAR(20) NOT NULL DEFAULT 'expense'",
     );
   }
+  if (!(await columnExists("money_sum", "res_id"))) {
+    await pool.query("ALTER TABLE money_sum ADD COLUMN res_id VARCHAR(30) NULL");
+  }
   if (!(await columnExists("money_sum", "created_at"))) {
     await pool.query(
       "ALTER TABLE money_sum ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP",
@@ -2755,6 +2758,25 @@ router.post(
         recruiterRid: resume.rid || undefined,
         [statusTimestampFieldMap[newStatus]]: "__CURRENT_TIMESTAMP__",
       });
+    }
+
+    if (newStatus === "joined") {
+      const intakeEntry = await addCandidateBillIntakeEntry(
+        connection,
+        normalizedResId,
+        {
+          amount: joinedRevenueAmount,
+          reason:
+            joinedReason ||
+            effectiveReason ||
+            "candidate joined revenue",
+        },
+      );
+      if (!intakeEntry) {
+        throw new Error(
+          "Failed to create joined intake entry in money_sum for this candidate.",
+        );
+      }
     }
 
     // Credit points_per_joining to the recruiter when candidate reaches billed status

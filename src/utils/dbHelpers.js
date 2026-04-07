@@ -525,6 +525,31 @@ const addCandidateBillIntakeEntry = async (
   }
 
   const moneySumColumns = await getTableColumns("money_sum", connection);
+  const hasMoneySumResId = moneySumColumns.has("res_id");
+  const normalizedMoneySumId = Number(moneySumId);
+  let existingEntry = null;
+
+  if (Number.isInteger(normalizedMoneySumId) && normalizedMoneySumId > 0) {
+    const [existingRows] = await connection.query(
+      `SELECT id, company_rev AS companyRev, profit, photo
+       FROM money_sum
+       WHERE id = ?
+       LIMIT 1`,
+      [normalizedMoneySumId],
+    );
+    existingEntry = existingRows?.[0] || null;
+  } else if (hasMoneySumResId) {
+    const [existingRows] = await connection.query(
+      `SELECT id, company_rev AS companyRev, profit, photo
+       FROM money_sum
+       WHERE res_id = ?
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1`,
+      [normalizedResId],
+    );
+    existingEntry = existingRows?.[0] || null;
+  }
+
   const [profitRows] = moneySumColumns.has("profit")
     ? await connection.query(
         `SELECT COALESCE(profit, 0) AS lastProfit
@@ -539,9 +564,21 @@ const addCandidateBillIntakeEntry = async (
   const safeReason = String(reason || "").trim() || "candidate's bill";
   const safePhoto =
     photo === undefined || photo === null || photo === "" ? null : String(photo);
-  const normalizedMoneySumId = Number(moneySumId);
+  const storedPhoto =
+    safePhoto === null && existingEntry?.photo ? String(existingEntry.photo) : safePhoto;
 
-  if (Number.isInteger(normalizedMoneySumId) && normalizedMoneySumId > 0) {
+  if (existingEntry?.id) {
+    const existingAmount = Number(existingEntry.companyRev);
+    const existingProfit = Number(existingEntry.profit);
+    const finalAmount =
+      Number.isFinite(existingAmount) && existingAmount > 0
+        ? existingAmount
+        : normalizedAmount;
+    const finalProfit =
+      Number.isFinite(existingProfit) && existingProfit >= 0
+        ? existingProfit
+        : nextProfit;
+
     await connection.query(
       `UPDATE money_sum
        SET company_rev = ?,
@@ -549,25 +586,37 @@ const addCandidateBillIntakeEntry = async (
            profit = ?,
            reason = ?,
            photo = ?,
-           entry_type = 'intake',
+           entry_type = 'intake'
+           ${hasMoneySumResId ? ", res_id = ?" : ""},
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-      [normalizedAmount, nextProfit, safeReason, safePhoto, normalizedMoneySumId],
+      hasMoneySumResId
+        ? [
+            finalAmount,
+            finalProfit,
+            safeReason,
+            storedPhoto,
+            normalizedResId,
+            existingEntry.id,
+          ]
+        : [finalAmount, finalProfit, safeReason, storedPhoto, existingEntry.id],
     );
 
     return {
-      id: normalizedMoneySumId,
-      amount: normalizedAmount,
-      profit: nextProfit,
+      id: existingEntry.id,
+      amount: finalAmount,
+      profit: finalProfit,
       reason: safeReason,
-      photo: safePhoto,
+      photo: storedPhoto,
     };
   }
 
   const [insertResult] = await connection.query(
-    `INSERT INTO money_sum (company_rev, expense, profit, reason, photo, entry_type)
-     VALUES (?, 0, ?, ?, ?, 'intake')`,
-    [normalizedAmount, nextProfit, safeReason, safePhoto],
+    `INSERT INTO money_sum (${hasMoneySumResId ? "res_id, " : ""}company_rev, expense, profit, reason, photo, entry_type)
+     VALUES (${hasMoneySumResId ? "?, " : ""}?, 0, ?, ?, ?, 'intake')`,
+    hasMoneySumResId
+      ? [normalizedResId, normalizedAmount, nextProfit, safeReason, safePhoto]
+      : [normalizedAmount, nextProfit, safeReason, safePhoto],
   );
 
   return {

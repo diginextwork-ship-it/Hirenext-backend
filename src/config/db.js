@@ -1313,6 +1313,10 @@ const ensureMoneySumTable = async () => {
     );
   }
 
+  if (!(await columnExists("money_sum", "res_id"))) {
+    await pool.query("ALTER TABLE money_sum ADD COLUMN res_id VARCHAR(30) NULL");
+  }
+
   if (!(await columnExists("money_sum", "created_at"))) {
     await pool.query(
       "ALTER TABLE money_sum ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP",
