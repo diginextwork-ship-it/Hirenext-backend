@@ -67,6 +67,7 @@ const RESUME_UPLOAD_FIELD_NAMES = [
 const normalizeAccessMode = (value) => _normalizeAccessMode(value) || "open";
 const resumeSourceMap = new Map([
   ["naukri", "Naukri"],
+  ["indeed", "Indeed"],
   ["shine", "Shine"],
   ["reference", "Reference"],
   ["apna job", "Apna Job"],
@@ -81,6 +82,7 @@ const resumeSourceMap = new Map([
 ]);
 const resumeSourceOptions = [
   "Naukri",
+  "Indeed",
   "Shine",
   "Reference",
   "Apna Job",
