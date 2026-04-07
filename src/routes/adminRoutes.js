@@ -3304,7 +3304,13 @@ router.get("/api/admin/performance", async (req, res) => {
       LEFT JOIN recruiter teamLeader ON teamLeader.rid = j.recruiter_rid
       LEFT JOIN extra_info ei
         ON ei.res_id = rd.res_id OR ei.resume_id = rd.res_id
-      WHERE COALESCE(rd.submitted_by_role, 'recruiter') = 'recruiter'
+      WHERE COALESCE(LOWER(TRIM(rd.submitted_by_role)), 'recruiter') <> 'candidate'
+        AND LOWER(TRIM(COALESCE(recruiter.role, 'recruiter'))) IN (
+          'recruiter',
+          'team leader',
+          'team_leader',
+          'job creator'
+        )
       ORDER BY rd.uploaded_at DESC, rd.res_id DESC`,
     );
 
@@ -3380,7 +3386,6 @@ router.get("/api/admin/performance", async (req, res) => {
 
     for (const rawRow of performanceRows) {
       const recruiterStats = recruiterMap.get(rawRow.recruiterRid);
-      if (!recruiterStats) continue;
 
       const row = {
         ...rawRow,
@@ -3424,15 +3429,17 @@ router.get("/api/admin/performance", async (req, res) => {
         const eventAt = currentEventAtMap[metricKey];
         if (!isTimestampWithinInclusiveRange(eventAt, dateRange)) continue;
 
-        recruiterStats[PERFORMANCE_EVENT_META[metricKey].recruiterField] += 1;
         statusDrilldown[metricKey].push(
           normalizePerformanceDrilldownItem({
             ...row,
             eventAt,
           }),
         );
-        if (!recruiterStats.lastUpdated || eventAt > recruiterStats.lastUpdated) {
-          recruiterStats.lastUpdated = eventAt;
+        if (recruiterStats) {
+          recruiterStats[PERFORMANCE_EVENT_META[metricKey].recruiterField] += 1;
+          if (!recruiterStats.lastUpdated || eventAt > recruiterStats.lastUpdated) {
+            recruiterStats.lastUpdated = eventAt;
+          }
         }
       }
     }
@@ -3492,11 +3499,9 @@ router.get("/api/admin/performance", async (req, res) => {
       totalLeft: 0,
     };
 
-    for (const recruiter of recruiters) {
-      for (const metricKey of PERFORMANCE_EVENT_KEYS) {
-        summary[PERFORMANCE_EVENT_META[metricKey].summaryField] +=
-          recruiter[PERFORMANCE_EVENT_META[metricKey].recruiterField];
-      }
+    for (const metricKey of PERFORMANCE_EVENT_KEYS) {
+      summary[PERFORMANCE_EVENT_META[metricKey].summaryField] =
+        statusDrilldown[metricKey].length;
     }
 
     return res.status(200).json({
