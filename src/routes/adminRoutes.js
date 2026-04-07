@@ -563,10 +563,12 @@ router.get("/api/admin/dashboard", async (_req, res) => {
           teamLeader.name AS teamLeaderName,
           c.name AS candidateName,
           c.phone AS candidatePhone,
+          c.joining_date AS joiningDate,
           j.company_name AS companyName,
           j.city AS city,
           j.points_per_joining AS pointsPerJoining,
           j.revenue AS revenue,
+          COALESCE(jrs.selection_status, 'submitted') AS workflowStatus,
           rd.resume_filename AS resumeFilename,
           rd.resume_type AS resumeType,
           ${acceptedSelect}
@@ -576,43 +578,54 @@ router.get("/api/admin/dashboard", async (_req, res) => {
         FROM resumes_data rd
         INNER JOIN recruiter r ON r.rid = rd.rid
         LEFT JOIN candidate c ON c.res_id = rd.res_id
+        LEFT JOIN job_resume_selection jrs
+          ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
         LEFT JOIN jobs j ON j.jid = rd.job_jid
         LEFT JOIN recruiter teamLeader ON teamLeader.rid = j.recruiter_rid
         ORDER BY rd.uploaded_at DESC`,
       );
 
-      recruiterResumeUploads = rows.map((row) => ({
-        resId: row.resId || null,
-        rid: row.rid || null,
-        recruiterName: row.recruiterName || null,
-        recruiterEmail: row.recruiterEmail || null,
-        jobJid:
-          row.jobJid === null || row.jobJid === undefined
-            ? null
-            : String(row.jobJid).trim(),
-        teamLeaderRid: row.teamLeaderRid || null,
-        teamLeaderName: row.teamLeaderName || null,
-        name: row.candidateName || null,
-        candidateName: row.candidateName || null,
-        candidatePhone: row.candidatePhone || null,
-        phone: row.candidatePhone || null,
-        companyName: row.companyName || null,
-        city: row.city || null,
-        pointsPerJoining:
-          row.pointsPerJoining === null || row.pointsPerJoining === undefined
-            ? null
-            : Number(row.pointsPerJoining),
-        revenue:
-          row.revenue === null || row.revenue === undefined
-            ? null
-            : Number(row.revenue),
-        resumeFilename: row.resumeFilename || null,
-        resumeType: row.resumeType || null,
-        isAccepted: Boolean(row.isAccepted),
-        acceptedAt: row.acceptedAt || null,
-        acceptedByAdmin: row.acceptedByAdmin || null,
-        uploadedAt: row.uploadedAt || null,
-      }));
+      recruiterResumeUploads = rows.map((row) => {
+        const workflowFields = buildWorkflowResponseFields(row, {
+          includeSelection: false,
+          includeStatusHistory: false,
+        });
+
+        return {
+          resId: row.resId || null,
+          rid: row.rid || null,
+          recruiterName: row.recruiterName || null,
+          recruiterEmail: row.recruiterEmail || null,
+          jobJid:
+            row.jobJid === null || row.jobJid === undefined
+              ? null
+              : String(row.jobJid).trim(),
+          teamLeaderRid: row.teamLeaderRid || null,
+          teamLeaderName: row.teamLeaderName || null,
+          name: row.candidateName || null,
+          candidateName: row.candidateName || null,
+          candidatePhone: row.candidatePhone || null,
+          phone: row.candidatePhone || null,
+          companyName: row.companyName || null,
+          city: row.city || null,
+          joiningDate: row.joiningDate || null,
+          pointsPerJoining:
+            row.pointsPerJoining === null || row.pointsPerJoining === undefined
+              ? null
+              : Number(row.pointsPerJoining),
+          revenue:
+            row.revenue === null || row.revenue === undefined
+              ? null
+              : Number(row.revenue),
+          resumeFilename: row.resumeFilename || null,
+          resumeType: row.resumeType || null,
+          isAccepted: Boolean(row.isAccepted),
+          acceptedAt: row.acceptedAt || null,
+          acceptedByAdmin: row.acceptedByAdmin || null,
+          uploadedAt: row.uploadedAt || null,
+          ...workflowFields,
+        };
+      });
     }
 
     return res.status(200).json({
