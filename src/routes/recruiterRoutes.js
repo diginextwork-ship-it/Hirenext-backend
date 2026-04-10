@@ -49,6 +49,12 @@ const {
   resolveStatusReasonInput,
 } = require("../utils/resumeCompatibility");
 const { getCurrentDateOnlyInBusinessTimeZone } = require("../utils/dateTime");
+const {
+  TASK_ASSIGNMENT_STATUS,
+  ensureTaskTables,
+  normalizeTaskAssignmentStatus,
+  resolveEffectiveTaskAssignmentStatus,
+} = require("../utils/taskAssignments");
 
 const router = express.Router();
 const buildCandidateId = (sequenceValue) => `c_${sequenceValue}`;
@@ -343,6 +349,51 @@ const getRecruiterSummary = async (rid) => {
   }
 
   return { success, points, thisMonth };
+};
+
+const buildRecruiterTaskPayload = (rows, recruiterRid) => {
+  const taskMap = new Map();
+
+  for (const row of rows) {
+    const taskId = Number(row.taskId) || null;
+    if (!taskId) continue;
+
+    const effectiveStatus = resolveEffectiveTaskAssignmentStatus(
+      row.assignmentStatus,
+      row.assignmentDate,
+    );
+
+    if (!taskMap.has(taskId)) {
+      taskMap.set(taskId, {
+        id: taskId,
+        heading: row.heading || "",
+        description: row.description || "",
+        createdAt: row.taskCreatedAt || null,
+        updatedAt: row.taskUpdatedAt || null,
+        assignmentId: Number(row.assignmentId) || null,
+        assignedAt: row.assignedAt || null,
+        assignmentDate: row.assignmentDate || null,
+        recruiterRid,
+        status: effectiveStatus,
+        rawStatus: normalizeTaskAssignmentStatus(row.assignmentStatus),
+        actedAt: row.actedAt || null,
+        recruiters: [],
+      });
+    }
+
+    taskMap.get(taskId).recruiters.push({
+      recruiterRid: row.memberRid || null,
+      recruiterName: row.memberName || null,
+      recruiterEmail: row.memberEmail || null,
+      isSelf: row.memberRid === recruiterRid,
+    });
+  }
+
+  return Array.from(taskMap.values()).sort((a, b) => {
+    const left = new Date(b.assignedAt || b.createdAt || 0).getTime();
+    const right = new Date(a.assignedAt || a.createdAt || 0).getTime();
+    return left - right;
+  });
 };
 
 router.post(
@@ -1831,6 +1882,143 @@ router.get(
     } catch (error) {
       return res.status(500).json({
         message: "Failed to fetch recruiter dashboard.",
+        error: error.message,
+      });
+    }
+  },
+);
+
+router.get(
+  "/api/recruiters/:rid/tasks",
+  requireAuth,
+  requireRoles("recruiter", "team leader", "team_leader"),
+  async (req, res) => {
+    const rid = String(req.params?.rid || "").trim();
+    if (!rid) {
+      return res.status(400).json({ message: "rid is required." });
+    }
+
+    if (!authorizeRecruiterResourceView(req, res, rid)) return;
+
+    try {
+      await ensureTaskTables();
+
+      const [rows] = await pool.query(
+        `SELECT
+          t.id AS taskId,
+          t.heading,
+          t.description,
+          t.created_at AS taskCreatedAt,
+          t.updated_at AS taskUpdatedAt,
+          ta_self.id AS assignmentId,
+          ta_self.status AS assignmentStatus,
+          ta_self.assignment_date AS assignmentDate,
+          ta_self.acted_at AS actedAt,
+          ta_self.created_at AS assignedAt,
+          ta_all.recruiter_rid AS memberRid,
+          r.name AS memberName,
+          r.email AS memberEmail
+        FROM task_assignments ta_self
+        INNER JOIN tasks t ON t.id = ta_self.task_id
+        LEFT JOIN task_assignments ta_all ON ta_all.task_id = t.id
+        LEFT JOIN recruiter r ON r.rid = ta_all.recruiter_rid
+        WHERE ta_self.recruiter_rid = ?
+        ORDER BY ta_self.created_at DESC, ta_all.created_at ASC, ta_all.id ASC`,
+        [rid],
+      );
+
+      return res.status(200).json({
+        tasks: buildRecruiterTaskPayload(rows, rid),
+      });
+    } catch (error) {
+      return res.status(500).json({
+        message: "Failed to fetch recruiter tasks.",
+        error: error.message,
+      });
+    }
+  },
+);
+
+router.post(
+  "/api/recruiters/:rid/tasks/:assignmentId/status",
+  requireAuth,
+  requireRoles("recruiter", "team leader", "team_leader"),
+  async (req, res) => {
+    const rid = String(req.params?.rid || "").trim();
+    const assignmentId = Number(req.params?.assignmentId);
+    if (!rid) {
+      return res.status(400).json({ message: "rid is required." });
+    }
+    if (!Number.isInteger(assignmentId) || assignmentId <= 0) {
+      return res.status(400).json({ message: "Valid assignment ID is required." });
+    }
+
+    if (!authorizeRecruiterResourceView(req, res, rid)) return;
+
+    const requestedStatus = String(req.body?.status || "")
+      .trim()
+      .toLowerCase();
+    if (!["completed", "rejected"].includes(requestedStatus)) {
+      return res.status(400).json({
+        message: "status must be either 'completed' or 'rejected'.",
+      });
+    }
+
+    try {
+      await ensureTaskTables();
+
+      const [rows] = await pool.query(
+        `SELECT
+          ta.id,
+          ta.status,
+          ta.assignment_date AS assignmentDate,
+          ta.recruiter_rid AS recruiterRid
+        FROM task_assignments ta
+        WHERE ta.id = ? AND ta.recruiter_rid = ?
+        LIMIT 1`,
+        [assignmentId, rid],
+      );
+
+      if (rows.length === 0) {
+        return res.status(404).json({ message: "Task assignment not found." });
+      }
+
+      const assignment = rows[0];
+      const effectiveStatus = resolveEffectiveTaskAssignmentStatus(
+        assignment.status,
+        assignment.assignmentDate,
+      );
+
+      if (effectiveStatus === TASK_ASSIGNMENT_STATUS.TIMED_OUT) {
+        return res.status(409).json({
+          message: "This task has already timed out for the day.",
+        });
+      }
+
+      if (effectiveStatus !== TASK_ASSIGNMENT_STATUS.PENDING) {
+        return res.status(409).json({
+          message: `This task is already marked as ${effectiveStatus}.`,
+        });
+      }
+
+      await pool.query(
+        `UPDATE task_assignments
+         SET status = ?, acted_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [requestedStatus, assignmentId],
+      );
+
+      return res.status(200).json({
+        message: "Task status updated successfully.",
+        assignment: {
+          id: assignmentId,
+          recruiterRid: rid,
+          status: requestedStatus,
+        },
+      });
+    } catch (error) {
+      return res.status(500).json({
+        message: "Failed to update task status.",
         error: error.message,
       });
     }

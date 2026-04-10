@@ -37,7 +37,15 @@ const {
   buildResumeCompatibilityFields,
   resolveStatusReasonInput,
 } = require("../utils/resumeCompatibility");
-const { parseInclusiveDateRange } = require("../utils/dateTime");
+const {
+  getCurrentDateOnlyInBusinessTimeZone,
+  parseInclusiveDateRange,
+} = require("../utils/dateTime");
+const {
+  TASK_ASSIGNMENT_STATUS,
+  ensureTaskTables,
+  resolveEffectiveTaskAssignmentStatus,
+} = require("../utils/taskAssignments");
 
 const router = express.Router();
 const ADMIN_API_KEY = String(process.env.ADMIN_API_KEY || "").trim();
@@ -294,6 +302,26 @@ const ensureRecruiterAccountStatusColumn = async () => {
       "ALTER TABLE recruiter ADD COLUMN account_status VARCHAR(20) NOT NULL DEFAULT 'active'",
     );
   }
+};
+
+const buildTaskAssignmentAdminRow = (row) => {
+  const effectiveStatus = resolveEffectiveTaskAssignmentStatus(
+    row.assignmentStatus,
+    row.assignmentDate,
+  );
+
+  return {
+    assignmentId: Number(row.assignmentId) || null,
+    recruiterRid: row.recruiterRid || null,
+    recruiterName: row.recruiterName || null,
+    recruiterEmail: row.recruiterEmail || null,
+    assignedAt: row.assignedAt || null,
+    assignmentDate: row.assignmentDate || null,
+    actedAt: row.actedAt || null,
+    status: effectiveStatus,
+    rawStatus: row.assignmentStatus || TASK_ASSIGNMENT_STATUS.PENDING,
+    isTimedOut: effectiveStatus === TASK_ASSIGNMENT_STATUS.TIMED_OUT,
+  };
 };
 
 const toPositiveMoney = (value) => {
@@ -1892,7 +1920,7 @@ router.get("/api/admin/recruiters/list", async (req, res) => {
       ? "WHERE LOWER(TRIM(COALESCE(role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')"
       : "";
     const [rows] = await pool.query(
-      `SELECT rid, name, COALESCE(role, 'recruiter') AS role
+      `SELECT rid, name, email, COALESCE(role, 'recruiter') AS role
        FROM recruiter
        ${roleFilter}
        ORDER BY name ASC, rid ASC`,
@@ -1902,6 +1930,7 @@ router.get("/api/admin/recruiters/list", async (req, res) => {
       recruiters: rows.map((row) => ({
         rid: row.rid,
         name: row.name,
+        email: row.email || null,
         role: normalizeStaffRole(row.role),
       })),
     });
@@ -1910,6 +1939,259 @@ router.get("/api/admin/recruiters/list", async (req, res) => {
       message: "Failed to fetch recruiters list.",
       error: error.message,
     });
+  }
+});
+
+router.get("/api/admin/tasks", async (req, res) => {
+  if (!ensureAdminAuthorized(req, res)) return;
+
+  try {
+    await ensureTaskTables();
+
+    const [taskRows] = await pool.query(
+      `SELECT
+        t.id,
+        t.heading,
+        t.description,
+        t.created_by AS createdBy,
+        t.created_at AS createdAt,
+        t.updated_at AS updatedAt,
+        ta.id AS assignmentId,
+        ta.recruiter_rid AS recruiterRid,
+        r.name AS recruiterName,
+        r.email AS recruiterEmail,
+        ta.status AS assignmentStatus,
+        ta.assignment_date AS assignmentDate,
+        ta.acted_at AS actedAt,
+        ta.created_at AS assignedAt
+      FROM tasks t
+      LEFT JOIN task_assignments ta ON ta.task_id = t.id
+      LEFT JOIN recruiter r ON r.rid = ta.recruiter_rid
+      ORDER BY t.created_at DESC, ta.created_at DESC, ta.id DESC`,
+    );
+
+    const taskMap = new Map();
+    for (const row of taskRows) {
+      if (!taskMap.has(row.id)) {
+        taskMap.set(row.id, {
+          id: Number(row.id) || null,
+          heading: row.heading || "",
+          description: row.description || "",
+          createdBy: row.createdBy || "admin",
+          createdAt: row.createdAt || null,
+          updatedAt: row.updatedAt || null,
+          assignments: [],
+        });
+      }
+
+      if (row.assignmentId) {
+        taskMap.get(row.id).assignments.push(buildTaskAssignmentAdminRow(row));
+      }
+    }
+
+    return res.status(200).json({
+      tasks: Array.from(taskMap.values()).map((task) => ({
+        ...task,
+        totalAssignments: task.assignments.length,
+        completedCount: task.assignments.filter(
+          (item) => item.status === TASK_ASSIGNMENT_STATUS.COMPLETED,
+        ).length,
+        rejectedCount: task.assignments.filter(
+          (item) => item.status === TASK_ASSIGNMENT_STATUS.REJECTED,
+        ).length,
+        timedOutCount: task.assignments.filter(
+          (item) => item.status === TASK_ASSIGNMENT_STATUS.TIMED_OUT,
+        ).length,
+        pendingCount: task.assignments.filter(
+          (item) => item.status === TASK_ASSIGNMENT_STATUS.PENDING,
+        ).length,
+      })),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to fetch tasks.",
+      error: error.message,
+    });
+  }
+});
+
+router.post("/api/admin/tasks", async (req, res) => {
+  if (!ensureAdminAuthorized(req, res)) return;
+
+  const heading = String(req.body?.heading || "").trim();
+  const description = String(req.body?.description || "").trim();
+  const recruiterRid = String(req.body?.recruiterRid || "").trim();
+
+  if (!heading) {
+    return res.status(400).json({ message: "Task heading is required." });
+  }
+
+  if (!recruiterRid) {
+    return res.status(400).json({ message: "Recruiter selection is required." });
+  }
+
+  let connection;
+  try {
+    await ensureTaskTables();
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    const [recruiterRows] = await connection.query(
+      `SELECT rid, name, email
+       FROM recruiter
+       WHERE rid = ?
+       LIMIT 1`,
+      [recruiterRid],
+    );
+
+    if (recruiterRows.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ message: "Recruiter not found." });
+    }
+
+    const [taskResult] = await connection.query(
+      `INSERT INTO tasks (heading, description, created_by)
+       VALUES (?, ?, 'admin')`,
+      [heading, description || null],
+    );
+
+    const assignmentDate = getCurrentDateOnlyInBusinessTimeZone();
+    const [assignmentResult] = await connection.query(
+      `INSERT INTO task_assignments
+        (task_id, recruiter_rid, status, assignment_date)
+       VALUES (?, ?, 'pending', ?)`,
+      [taskResult.insertId, recruiterRid, assignmentDate],
+    );
+
+    await connection.commit();
+
+    return res.status(201).json({
+      message: "Task created and assigned successfully.",
+      task: {
+        id: Number(taskResult.insertId) || null,
+        heading,
+        description,
+        assignments: [
+          {
+            assignmentId: Number(assignmentResult.insertId) || null,
+            recruiterRid,
+            recruiterName: recruiterRows[0].name || null,
+            recruiterEmail: recruiterRows[0].email || null,
+            assignmentDate,
+            status: TASK_ASSIGNMENT_STATUS.PENDING,
+            rawStatus: TASK_ASSIGNMENT_STATUS.PENDING,
+            assignedAt: null,
+            actedAt: null,
+            isTimedOut: false,
+          },
+        ],
+      },
+    });
+  } catch (error) {
+    if (connection) {
+      try {
+        await connection.rollback();
+      } catch (_rollbackError) {
+        // ignore rollback errors
+      }
+    }
+    return res.status(500).json({
+      message: "Failed to create task.",
+      error: error.message,
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
+router.post("/api/admin/tasks/:taskId/assign", async (req, res) => {
+  if (!ensureAdminAuthorized(req, res)) return;
+
+  const taskId = Number(req.params?.taskId);
+  const recruiterRid = String(req.body?.recruiterRid || "").trim();
+
+  if (!Number.isInteger(taskId) || taskId <= 0) {
+    return res.status(400).json({ message: "Valid task ID is required." });
+  }
+
+  if (!recruiterRid) {
+    return res.status(400).json({ message: "Recruiter selection is required." });
+  }
+
+  let connection;
+  try {
+    await ensureTaskTables();
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    const [[taskRow]] = await connection.query(
+      "SELECT id, heading, description FROM tasks WHERE id = ? LIMIT 1",
+      [taskId],
+    );
+    if (!taskRow) {
+      await connection.rollback();
+      return res.status(404).json({ message: "Task not found." });
+    }
+
+    const [[recruiterRow]] = await connection.query(
+      "SELECT rid, name, email FROM recruiter WHERE rid = ? LIMIT 1",
+      [recruiterRid],
+    );
+    if (!recruiterRow) {
+      await connection.rollback();
+      return res.status(404).json({ message: "Recruiter not found." });
+    }
+
+    const assignmentDate = getCurrentDateOnlyInBusinessTimeZone();
+    const [assignmentResult] = await connection.query(
+      `INSERT INTO task_assignments
+        (task_id, recruiter_rid, status, assignment_date)
+       VALUES (?, ?, 'pending', ?)`,
+      [taskId, recruiterRid, assignmentDate],
+    );
+
+    await connection.commit();
+
+    return res.status(201).json({
+      message: "Task assigned successfully.",
+      task: {
+        id: Number(taskRow.id) || null,
+        heading: taskRow.heading || "",
+        description: taskRow.description || "",
+      },
+      assignment: {
+        assignmentId: Number(assignmentResult.insertId) || null,
+        recruiterRid,
+        recruiterName: recruiterRow.name || null,
+        recruiterEmail: recruiterRow.email || null,
+        assignmentDate,
+        status: TASK_ASSIGNMENT_STATUS.PENDING,
+        rawStatus: TASK_ASSIGNMENT_STATUS.PENDING,
+        assignedAt: null,
+        actedAt: null,
+        isTimedOut: false,
+      },
+    });
+  } catch (error) {
+    if (connection) {
+      try {
+        await connection.rollback();
+      } catch (_rollbackError) {
+        // ignore rollback errors
+      }
+    }
+    const message =
+      error?.code === "ER_DUP_ENTRY"
+        ? "This recruiter already has this task for today."
+        : "Failed to assign task.";
+    return res.status(
+      error?.code === "ER_DUP_ENTRY" ? 409 : 500,
+    ).json({
+      message,
+      error: error.message,
+    });
+  } finally {
+    if (connection) connection.release();
   }
 });
 

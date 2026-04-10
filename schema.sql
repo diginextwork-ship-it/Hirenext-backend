@@ -428,3 +428,34 @@ CREATE TABLE IF NOT EXISTS recruiter_points_log (
     FOREIGN KEY (recruiter_rid) REFERENCES recruiter(rid)
     ON UPDATE CASCADE ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  heading VARCHAR(255) NOT NULL,
+  description TEXT NULL,
+  created_by VARCHAR(50) NOT NULL DEFAULT 'admin',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_tasks_created_at (created_at)
+);
+
+CREATE TABLE IF NOT EXISTS task_assignments (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  task_id BIGINT NOT NULL,
+  recruiter_rid VARCHAR(20) NOT NULL,
+  status ENUM('pending', 'completed', 'rejected') NOT NULL DEFAULT 'pending',
+  assignment_date DATE NOT NULL,
+  acted_at TIMESTAMP NULL DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_task_assignment_day (task_id, recruiter_rid, assignment_date),
+  INDEX idx_task_assignments_task (task_id),
+  INDEX idx_task_assignments_recruiter (recruiter_rid),
+  INDEX idx_task_assignments_status_date (status, assignment_date),
+  CONSTRAINT fk_task_assignments_task
+    FOREIGN KEY (task_id) REFERENCES tasks(id)
+    ON UPDATE CASCADE ON DELETE CASCADE,
+  CONSTRAINT fk_task_assignments_recruiter
+    FOREIGN KEY (recruiter_rid) REFERENCES recruiter(rid)
+    ON UPDATE CASCADE ON DELETE CASCADE
+);
