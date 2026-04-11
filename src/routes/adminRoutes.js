@@ -315,6 +315,7 @@ const buildTaskAssignmentAdminRow = (row) => {
     recruiterRid: row.recruiterRid || null,
     recruiterName: row.recruiterName || null,
     recruiterEmail: row.recruiterEmail || null,
+    recruiterRole: normalizeStaffRole(row.recruiterRole),
     assignedAt: row.assignedAt || null,
     assignmentDate: row.assignmentDate || null,
     actedAt: row.actedAt || null,
@@ -1960,6 +1961,7 @@ router.get("/api/admin/tasks", async (req, res) => {
         ta.recruiter_rid AS recruiterRid,
         r.name AS recruiterName,
         r.email AS recruiterEmail,
+        COALESCE(r.role, 'recruiter') AS recruiterRole,
         ta.status AS assignmentStatus,
         ta.assignment_date AS assignmentDate,
         ta.acted_at AS actedAt,
@@ -2027,7 +2029,7 @@ router.post("/api/admin/tasks", async (req, res) => {
   }
 
   if (!recruiterRid) {
-    return res.status(400).json({ message: "Recruiter selection is required." });
+    return res.status(400).json({ message: "Assignee selection is required." });
   }
 
   let connection;
@@ -2037,7 +2039,7 @@ router.post("/api/admin/tasks", async (req, res) => {
     await connection.beginTransaction();
 
     const [recruiterRows] = await connection.query(
-      `SELECT rid, name, email
+      `SELECT rid, name, email, COALESCE(role, 'recruiter') AS role
        FROM recruiter
        WHERE rid = ?
        LIMIT 1`,
@@ -2046,7 +2048,7 @@ router.post("/api/admin/tasks", async (req, res) => {
 
     if (recruiterRows.length === 0) {
       await connection.rollback();
-      return res.status(404).json({ message: "Recruiter not found." });
+      return res.status(404).json({ message: "Assignee not found." });
     }
 
     const [taskResult] = await connection.query(
@@ -2077,6 +2079,7 @@ router.post("/api/admin/tasks", async (req, res) => {
             recruiterRid,
             recruiterName: recruiterRows[0].name || null,
             recruiterEmail: recruiterRows[0].email || null,
+            recruiterRole: normalizeStaffRole(recruiterRows[0].role),
             assignmentDate,
             status: TASK_ASSIGNMENT_STATUS.PENDING,
             rawStatus: TASK_ASSIGNMENT_STATUS.PENDING,
@@ -2115,7 +2118,7 @@ router.post("/api/admin/tasks/:taskId/assign", async (req, res) => {
   }
 
   if (!recruiterRid) {
-    return res.status(400).json({ message: "Recruiter selection is required." });
+    return res.status(400).json({ message: "Assignee selection is required." });
   }
 
   let connection;
@@ -2134,12 +2137,12 @@ router.post("/api/admin/tasks/:taskId/assign", async (req, res) => {
     }
 
     const [[recruiterRow]] = await connection.query(
-      "SELECT rid, name, email FROM recruiter WHERE rid = ? LIMIT 1",
+      "SELECT rid, name, email, COALESCE(role, 'recruiter') AS role FROM recruiter WHERE rid = ? LIMIT 1",
       [recruiterRid],
     );
     if (!recruiterRow) {
       await connection.rollback();
-      return res.status(404).json({ message: "Recruiter not found." });
+      return res.status(404).json({ message: "Assignee not found." });
     }
 
     const assignmentDate = getCurrentDateOnlyInBusinessTimeZone();
@@ -2164,6 +2167,7 @@ router.post("/api/admin/tasks/:taskId/assign", async (req, res) => {
         recruiterRid,
         recruiterName: recruiterRow.name || null,
         recruiterEmail: recruiterRow.email || null,
+        recruiterRole: normalizeStaffRole(recruiterRow.role),
         assignmentDate,
         status: TASK_ASSIGNMENT_STATUS.PENDING,
         rawStatus: TASK_ASSIGNMENT_STATUS.PENDING,
@@ -2182,7 +2186,7 @@ router.post("/api/admin/tasks/:taskId/assign", async (req, res) => {
     }
     const message =
       error?.code === "ER_DUP_ENTRY"
-        ? "This recruiter already has this task for today."
+        ? "This team member already has this task for today."
         : "Failed to assign task.";
     return res.status(
       error?.code === "ER_DUP_ENTRY" ? 409 : 500,
