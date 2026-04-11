@@ -293,6 +293,18 @@ const ensureRecruiterTableColumns = async () => {
     );
   }
 
+  if (!(await columnExists("recruiter", "increment_amount"))) {
+    await pool.query(
+      "ALTER TABLE recruiter ADD COLUMN increment_amount DECIMAL(12,2) NULL",
+    );
+  }
+
+  if (!(await columnExists("recruiter", "increment_start_date"))) {
+    await pool.query(
+      "ALTER TABLE recruiter ADD COLUMN increment_start_date DATE NULL",
+    );
+  }
+
   if (!(await columnExists("recruiter", "points"))) {
     await pool.query(
       "ALTER TABLE recruiter ADD COLUMN points INT NOT NULL DEFAULT 0",

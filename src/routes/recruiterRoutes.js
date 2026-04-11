@@ -401,7 +401,15 @@ router.post(
   requireAuth,
   requireRoles("admin"),
   async (req, res) => {
-    const { name, email, password, role, monthlySalary } = req.body || {};
+    const {
+      name,
+      email,
+      password,
+      role,
+      monthlySalary,
+      incrementAmount,
+      incrementStartDate,
+    } = req.body || {};
 
     if (!name || !email || !password || !String(role || "").trim()) {
       return res.status(400).json({
@@ -416,6 +424,13 @@ router.post(
       monthlySalaryAmount === null
         ? null
         : Math.round((monthlySalaryAmount / 30) * 100) / 100;
+    const normalizedIncrementAmount = String(incrementAmount ?? "").trim();
+    const parsedIncrementAmountValue = toMoneyOrNull(normalizedIncrementAmount);
+    const normalizedIncrementStartDate = String(incrementStartDate ?? "").trim();
+    const incrementAmountValue =
+      parsedIncrementAmountValue !== null && parsedIncrementAmountValue > 0
+        ? parsedIncrementAmountValue
+        : null;
     const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailPattern.test(normalizedEmail)) {
       return res.status(400).json({
@@ -430,6 +445,34 @@ router.post(
     if (normalizedMonthlySalary && monthlySalaryAmount === null) {
       return res.status(400).json({
         message: "monthlySalary must be a valid non-negative number.",
+      });
+    }
+    if (normalizedIncrementAmount.length > 120) {
+      return res.status(400).json({
+        message: "incrementAmount must not exceed 120 characters.",
+      });
+    }
+    if (normalizedIncrementAmount && parsedIncrementAmountValue === null) {
+      return res.status(400).json({
+        message: "incrementAmount must be a valid non-negative number.",
+      });
+    }
+    if (
+      normalizedIncrementStartDate &&
+      !/^\d{4}-\d{2}-\d{2}$/.test(normalizedIncrementStartDate)
+    ) {
+      return res.status(400).json({
+        message: "incrementStartDate must be in YYYY-MM-DD format.",
+      });
+    }
+    if (incrementAmountValue !== null && !normalizedIncrementStartDate) {
+      return res.status(400).json({
+        message: "incrementStartDate is required when incrementAmount is set.",
+      });
+    }
+    if (normalizedIncrementStartDate && incrementAmountValue === null) {
+      return res.status(400).json({
+        message: "incrementAmount must be greater than 0 when incrementStartDate is set.",
       });
     }
 
@@ -485,6 +528,14 @@ router.post(
         "recruiter",
         "daily_salary",
       );
+      const hasIncrementAmountColumn = await columnExists(
+        "recruiter",
+        "increment_amount",
+      );
+      const hasIncrementStartDateColumn = await columnExists(
+        "recruiter",
+        "increment_start_date",
+      );
       const insertColumns = ["rid", "name", "email", "password"];
       const insertValues = [rid, name.trim(), normalizedEmail, password];
 
@@ -516,6 +567,14 @@ router.post(
         insertColumns.push("daily_salary");
         insertValues.push(dailySalaryAmount);
       }
+      if (hasIncrementAmountColumn) {
+        insertColumns.push("increment_amount");
+        insertValues.push(incrementAmountValue);
+      }
+      if (hasIncrementStartDateColumn) {
+        insertColumns.push("increment_start_date");
+        insertValues.push(normalizedIncrementStartDate || null);
+      }
 
       const placeholders = insertColumns.map(() => "?").join(", ");
       await connection.query(
@@ -535,6 +594,8 @@ router.post(
           salary: normalizedMonthlySalary || null,
           monthlySalary: monthlySalaryAmount,
           dailySalary: dailySalaryAmount,
+          incrementAmount: incrementAmountValue,
+          incrementStartDate: normalizedIncrementStartDate || null,
         },
       });
     } catch (error) {

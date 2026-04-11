@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS recruiter (
   salary VARCHAR(120) NULL,
   monthly_salary DECIMAL(12,2) NULL,
   daily_salary DECIMAL(12,2) NULL,
+  increment_amount DECIMAL(12,2) NULL,
+  increment_start_date DATE NULL,
   addjob BOOLEAN NOT NULL DEFAULT FALSE,
   success INT NOT NULL DEFAULT 0,
   points INT NOT NULL DEFAULT 0
@@ -62,6 +64,10 @@ ALTER TABLE recruiter
   ADD COLUMN IF NOT EXISTS monthly_salary DECIMAL(12,2) NULL;
 ALTER TABLE recruiter
   ADD COLUMN IF NOT EXISTS daily_salary DECIMAL(12,2) NULL;
+ALTER TABLE recruiter
+  ADD COLUMN IF NOT EXISTS increment_amount DECIMAL(12,2) NULL;
+ALTER TABLE recruiter
+  ADD COLUMN IF NOT EXISTS increment_start_date DATE NULL;
 
 CREATE TABLE IF NOT EXISTS applications (
   id INT AUTO_INCREMENT PRIMARY KEY,

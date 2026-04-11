@@ -373,6 +373,47 @@ const calculateAttendanceExpense = (status, dailySalary) => {
   return 0;
 };
 
+const isIsoDateOnly = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || "").trim());
+
+const parseLegacySalaryAmount = (value) => {
+  const normalized = String(value || "").trim();
+  if (!/^[0-9]+(\.[0-9]+)?$/.test(normalized)) return 0;
+  return toMoneyNumber(normalized);
+};
+
+const getApplicableIncrementAmount = (row, targetDate) => {
+  const normalizedTargetDate = String(targetDate || "").trim();
+  const normalizedStartDate = String(row?.incrementStartDate || "").trim();
+  const incrementAmount = toMoneyNumber(row?.incrementAmount);
+  if (!incrementAmount) return 0;
+  if (!isIsoDateOnly(normalizedTargetDate) || !isIsoDateOnly(normalizedStartDate)) {
+    return 0;
+  }
+  return normalizedTargetDate >= normalizedStartDate ? incrementAmount : 0;
+};
+
+const resolveAttendanceDailySalary = (row, targetDate) => {
+  const incrementAmount = getApplicableIncrementAmount(row, targetDate);
+  const incrementDailyAmount =
+    incrementAmount > 0 ? Math.round((incrementAmount / 30) * 100) / 100 : 0;
+  const explicitDailySalary = toMoneyNumber(row?.dailySalaryBase);
+  if (explicitDailySalary > 0) {
+    return Math.round((explicitDailySalary + incrementDailyAmount) * 100) / 100;
+  }
+
+  const monthlySalary = toMoneyNumber(row?.monthlySalaryBase);
+  if (monthlySalary > 0) {
+    return Math.round(((monthlySalary + incrementAmount) / 30) * 100) / 100;
+  }
+
+  const legacySalary = parseLegacySalaryAmount(row?.salaryText);
+  if (legacySalary > 0) {
+    return Math.round(((legacySalary + incrementAmount) / 30) * 100) / 100;
+  }
+
+  return incrementDailyAmount;
+};
+
 const buildAttendanceReason = ({
   recruiterRid,
   recruiterName,
@@ -1467,15 +1508,11 @@ router.get("/api/admin/attendance", async (req, res) => {
           WHEN LOWER(TRIM(COALESCE(r.role, 'recruiter'))) IN ('team leader', 'team_leader', 'job creator') THEN 'team leader'
           ELSE 'recruiter'
         END AS role,
-        COALESCE(
-          r.daily_salary,
-          ROUND(r.monthly_salary / 30, 2),
-          CASE
-            WHEN TRIM(COALESCE(r.salary, '')) REGEXP '^[0-9]+(\\.[0-9]+)?$'
-              THEN ROUND(CAST(TRIM(r.salary) AS DECIMAL(12,2)) / 30, 2)
-            ELSE 0
-          END
-        ) AS dailySalary,
+        r.salary AS salaryText,
+        r.monthly_salary AS monthlySalaryBase,
+        r.daily_salary AS dailySalaryBase,
+        r.increment_amount AS incrementAmount,
+        r.increment_start_date AS incrementStartDate,
         ra.id AS attendanceId,
         ra.status,
         ra.salary_amount AS salaryAmount,
@@ -1500,7 +1537,7 @@ router.get("/api/admin/attendance", async (req, res) => {
 
     const staff = rows.map((row) => {
       const status = normalizeAttendanceStatus(row.status) || "absent";
-      const dailySalary = toMoneyNumber(row.dailySalary);
+      const dailySalary = resolveAttendanceDailySalary(row, attendanceDate);
       const salaryAmount = toMoneyNumber(row.salaryAmount);
       return {
         attendanceId: row.attendanceId ? Number(row.attendanceId) : null,
@@ -1508,6 +1545,8 @@ router.get("/api/admin/attendance", async (req, res) => {
         name: row.name,
         role: normalizeStaffRole(row.role),
         dailySalary,
+        incrementAmount: toMoneyNumber(row.incrementAmount),
+        incrementStartDate: row.incrementStartDate || null,
         status,
         salaryAmount,
         moneySumId: row.moneySumId ? Number(row.moneySumId) : null,
@@ -1579,15 +1618,11 @@ router.put("/api/admin/attendance", async (req, res) => {
           WHEN LOWER(TRIM(COALESCE(role, 'recruiter'))) IN ('team leader', 'team_leader', 'job creator') THEN 'team leader'
           ELSE 'recruiter'
         END AS role,
-        COALESCE(
-          daily_salary,
-          ROUND(monthly_salary / 30, 2),
-          CASE
-            WHEN TRIM(COALESCE(salary, '')) REGEXP '^[0-9]+(\\.[0-9]+)?$'
-              THEN ROUND(CAST(TRIM(salary) AS DECIMAL(12,2)) / 30, 2)
-            ELSE 0
-          END
-        ) AS dailySalary
+        salary AS salaryText,
+        monthly_salary AS monthlySalaryBase,
+        daily_salary AS dailySalaryBase,
+        increment_amount AS incrementAmount,
+        increment_start_date AS incrementStartDate
       FROM recruiter
       WHERE rid = ?
         AND LOWER(TRIM(COALESCE(role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')
@@ -1606,7 +1641,7 @@ router.put("/api/admin/attendance", async (req, res) => {
     const recruiter = recruiterRows[0];
     const expenseAmount = calculateAttendanceExpense(
       status,
-      recruiter.dailySalary,
+      resolveAttendanceDailySalary(recruiter, attendanceDate),
     );
 
     const [attendanceRows] = await connection.query(
