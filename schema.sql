@@ -360,6 +360,20 @@ CREATE TABLE IF NOT EXISTS recruiter_attendance (
     ON UPDATE CASCADE ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS recruiter_salary_history (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  recruiter_rid VARCHAR(20) NOT NULL,
+  monthly_salary DECIMAL(12,2) NOT NULL,
+  daily_salary DECIMAL(12,2) NOT NULL,
+  effective_from DATE NOT NULL,
+  created_by VARCHAR(50) NOT NULL DEFAULT 'admin',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_recruiter_salary_history_staff_effective (recruiter_rid, effective_from),
+  CONSTRAINT fk_recruiter_salary_history_recruiter
+    FOREIGN KEY (recruiter_rid) REFERENCES recruiter(rid)
+    ON UPDATE CASCADE ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS job_recruiter_access (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   job_jid INT NOT NULL,

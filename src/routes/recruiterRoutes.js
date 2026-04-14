@@ -396,6 +396,24 @@ const buildRecruiterTaskPayload = (rows, recruiterRid) => {
   });
 };
 
+const ensureRecruiterSalaryHistoryTable = async (connection = pool) => {
+  await connection.query(
+    `CREATE TABLE IF NOT EXISTS recruiter_salary_history (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      recruiter_rid VARCHAR(20) NOT NULL,
+      monthly_salary DECIMAL(12,2) NOT NULL,
+      daily_salary DECIMAL(12,2) NOT NULL,
+      effective_from DATE NOT NULL,
+      created_by VARCHAR(50) NOT NULL DEFAULT 'admin',
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_recruiter_salary_history_staff_effective (recruiter_rid, effective_from),
+      CONSTRAINT fk_recruiter_salary_history_recruiter
+        FOREIGN KEY (recruiter_rid) REFERENCES recruiter(rid)
+        ON UPDATE CASCADE ON DELETE CASCADE
+    )`,
+  );
+};
+
 router.post(
   "/api/recruiters",
   requireAuth,
@@ -436,6 +454,7 @@ router.post(
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
+      await ensureRecruiterSalaryHistoryTable(connection);
 
       const [existing] = await connection.query(
         `SELECT rid
@@ -522,6 +541,21 @@ router.post(
         `INSERT INTO recruiter (${insertColumns.join(", ")}) VALUES (${placeholders})`,
         insertValues,
       );
+
+      if (monthlySalaryAmount !== null) {
+        await connection.query(
+          `INSERT INTO recruiter_salary_history
+            (recruiter_rid, monthly_salary, daily_salary, effective_from, created_by)
+           VALUES (?, ?, ?, ?, ?)`,
+          [
+            rid,
+            monthlySalaryAmount,
+            dailySalaryAmount,
+            getCurrentDateOnlyInBusinessTimeZone(),
+            "admin-create",
+          ],
+        );
+      }
 
       await connection.commit();
       return res.status(201).json({

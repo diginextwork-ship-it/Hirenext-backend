@@ -18,6 +18,7 @@ const {
 } = require("../utils/dbHelpers");
 const {
   toMoneyNumber,
+  toMoneyOrNull,
   normalizeJobJid,
   parseJsonField,
   extractCandidateSnapshot,
@@ -355,6 +356,17 @@ const normalizeAttendanceDate = (value) => {
   return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : "";
 };
 
+const normalizeSalaryEffectiveDate = (value) => {
+  const normalized = String(value || "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : "";
+};
+
+const roundMoneyOrNull = (value) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.round(parsed * 100) / 100;
+};
+
 const normalizeStaffRole = (value) => {
   const normalized = String(value || "")
     .trim()
@@ -363,6 +375,181 @@ const normalizeStaffRole = (value) => {
   if (normalized === "job creator") return "team leader";
   if (normalized === "team leader") return "team leader";
   return "recruiter";
+};
+
+const ensureRecruiterSalaryHistoryTable = async () => {
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS recruiter_salary_history (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      recruiter_rid VARCHAR(20) NOT NULL,
+      monthly_salary DECIMAL(12,2) NOT NULL,
+      daily_salary DECIMAL(12,2) NOT NULL,
+      effective_from DATE NOT NULL,
+      created_by VARCHAR(50) NOT NULL DEFAULT 'admin',
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_recruiter_salary_history_staff_effective (recruiter_rid, effective_from),
+      CONSTRAINT fk_recruiter_salary_history_recruiter
+        FOREIGN KEY (recruiter_rid) REFERENCES recruiter(rid)
+        ON UPDATE CASCADE ON DELETE CASCADE
+    )`,
+  );
+};
+
+const getRecruiterSalaryColumnMeta = async () => {
+  const hasSalaryColumn = await columnExists("recruiter", "salary");
+  const hasMonthlySalaryColumn = await columnExists("recruiter", "monthly_salary");
+  const hasDailySalaryColumn = await columnExists("recruiter", "daily_salary");
+
+  return {
+    hasSalaryColumn,
+    hasMonthlySalaryColumn,
+    hasDailySalaryColumn,
+    salarySelect: hasSalaryColumn ? "r.salary AS rawSalary," : "NULL AS rawSalary,",
+    monthlySalarySelect: hasMonthlySalaryColumn
+      ? "r.monthly_salary AS monthlySalary,"
+      : "NULL AS monthlySalary,",
+    dailySalarySelect: hasDailySalaryColumn
+      ? "r.daily_salary AS dailySalary,"
+      : "NULL AS dailySalary,",
+  };
+};
+
+const resolveLegacySalarySnapshot = (row) => {
+  const explicitMonthlySalary = toMoneyOrNull(row?.monthlySalary);
+  const explicitDailySalary = toMoneyOrNull(row?.dailySalary);
+  const rawSalaryAmount = toMoneyOrNull(row?.rawSalary);
+  const monthlySalary =
+    explicitMonthlySalary ??
+    (explicitDailySalary !== null
+      ? roundMoneyOrNull(explicitDailySalary * 30)
+      : rawSalaryAmount);
+  const dailySalary =
+    explicitDailySalary ??
+    (monthlySalary !== null ? roundMoneyOrNull(monthlySalary / 30) : null);
+
+  return {
+    rawSalary:
+      row?.rawSalary === undefined || row?.rawSalary === null
+        ? null
+        : String(row.rawSalary).trim() || null,
+    monthlySalary,
+    dailySalary,
+  };
+};
+
+const getRecruiterSalarySnapshot = async (
+  connection,
+  recruiterRid,
+  effectiveDate,
+) => {
+  await ensureRecruiterSalaryHistoryTable();
+  const salaryMeta = await getRecruiterSalaryColumnMeta();
+  const [rows] = await connection.query(
+    `SELECT
+       r.rid,
+       r.name,
+       r.email,
+       COALESCE(r.role, 'recruiter') AS role,
+       ${salaryMeta.salarySelect}
+       ${salaryMeta.monthlySalarySelect}
+       ${salaryMeta.dailySalarySelect}
+       (
+         SELECT rsh.monthly_salary
+         FROM recruiter_salary_history rsh
+         WHERE rsh.recruiter_rid = r.rid
+           AND rsh.effective_from <= ?
+         ORDER BY rsh.effective_from DESC, rsh.id DESC
+         LIMIT 1
+       ) AS historyMonthlySalary,
+       (
+         SELECT rsh.daily_salary
+         FROM recruiter_salary_history rsh
+         WHERE rsh.recruiter_rid = r.rid
+           AND rsh.effective_from <= ?
+         ORDER BY rsh.effective_from DESC, rsh.id DESC
+         LIMIT 1
+       ) AS historyDailySalary,
+       (
+         SELECT rsh.effective_from
+         FROM recruiter_salary_history rsh
+         WHERE rsh.recruiter_rid = r.rid
+           AND rsh.effective_from <= ?
+         ORDER BY rsh.effective_from DESC, rsh.id DESC
+         LIMIT 1
+       ) AS historyEffectiveFrom
+     FROM recruiter r
+     WHERE r.rid = ?
+     LIMIT 1`,
+    [effectiveDate, effectiveDate, effectiveDate, recruiterRid],
+  );
+
+  if (rows.length === 0) return null;
+
+  const row = rows[0];
+  const legacySalary = resolveLegacySalarySnapshot(row);
+  const historyMonthlySalary = toMoneyOrNull(row.historyMonthlySalary);
+  const historyDailySalary =
+    toMoneyOrNull(row.historyDailySalary) ??
+    (historyMonthlySalary !== null
+      ? roundMoneyOrNull(historyMonthlySalary / 30)
+      : null);
+
+  return {
+    rid: row.rid,
+    name: row.name,
+    email: row.email || null,
+    role: normalizeStaffRole(row.role),
+    rawSalary: legacySalary.rawSalary,
+    legacyMonthlySalary: legacySalary.monthlySalary,
+    legacyDailySalary: legacySalary.dailySalary,
+    currentSalary: historyMonthlySalary ?? legacySalary.monthlySalary,
+    currentDailySalary: historyDailySalary ?? legacySalary.dailySalary,
+    currentSalaryEffectiveFrom: row.historyEffectiveFrom || null,
+  };
+};
+
+const syncRecruiterCurrentSalaryColumns = async (
+  connection,
+  recruiterRid,
+  effectiveDate,
+) => {
+  const salarySnapshot = await getRecruiterSalarySnapshot(
+    connection,
+    recruiterRid,
+    effectiveDate,
+  );
+  if (!salarySnapshot) return null;
+
+  const salaryMeta = await getRecruiterSalaryColumnMeta();
+  const updateFields = [];
+  const updateValues = [];
+
+  if (salaryMeta.hasSalaryColumn) {
+    updateFields.push("salary = ?");
+    updateValues.push(
+      salarySnapshot.currentSalary === null
+        ? salarySnapshot.rawSalary
+        : String(salarySnapshot.currentSalary),
+    );
+  }
+  if (salaryMeta.hasMonthlySalaryColumn) {
+    updateFields.push("monthly_salary = ?");
+    updateValues.push(salarySnapshot.currentSalary);
+  }
+  if (salaryMeta.hasDailySalaryColumn) {
+    updateFields.push("daily_salary = ?");
+    updateValues.push(salarySnapshot.currentDailySalary);
+  }
+
+  if (updateFields.length > 0) {
+    updateValues.push(recruiterRid);
+    await connection.query(
+      `UPDATE recruiter SET ${updateFields.join(", ")} WHERE rid = ?`,
+      updateValues,
+    );
+  }
+
+  return salarySnapshot;
 };
 
 const calculateAttendanceExpense = (status, dailySalary) => {
@@ -1458,6 +1645,8 @@ router.get("/api/admin/attendance", async (req, res) => {
 
   try {
     await ensureRecruiterAttendanceTable();
+    await ensureRecruiterSalaryHistoryTable();
+    const salaryMeta = await getRecruiterSalaryColumnMeta();
 
     const [rows] = await pool.query(
       `SELECT
@@ -1468,13 +1657,25 @@ router.get("/api/admin/attendance", async (req, res) => {
           ELSE 'recruiter'
         END AS role,
         COALESCE(
-          r.daily_salary,
-          ROUND(r.monthly_salary / 30, 2),
-          CASE
+          (
+            SELECT rsh.daily_salary
+            FROM recruiter_salary_history rsh
+            WHERE rsh.recruiter_rid = r.rid
+              AND rsh.effective_from <= ?
+            ORDER BY rsh.effective_from DESC, rsh.id DESC
+            LIMIT 1
+          ),
+          ${salaryMeta.hasDailySalaryColumn ? "r.daily_salary," : ""}
+          ${salaryMeta.hasMonthlySalaryColumn ? "ROUND(r.monthly_salary / 30, 2)," : ""}
+          ${
+            salaryMeta.hasSalaryColumn
+              ? `CASE
             WHEN TRIM(COALESCE(r.salary, '')) REGEXP '^[0-9]+(\\.[0-9]+)?$'
               THEN ROUND(CAST(TRIM(r.salary) AS DECIMAL(12,2)) / 30, 2)
             ELSE 0
-          END
+          END`
+              : "0"
+          }
         ) AS dailySalary,
         ra.id AS attendanceId,
         ra.status,
@@ -1495,7 +1696,7 @@ router.get("/api/admin/attendance", async (req, res) => {
         END,
         r.name ASC,
         r.rid ASC`,
-      [attendanceDate],
+      [attendanceDate, attendanceDate],
     );
 
     const staff = rows.map((row) => {
@@ -1569,6 +1770,7 @@ router.put("/api/admin/attendance", async (req, res) => {
   const connection = await pool.getConnection();
   try {
     await ensureRecruiterAttendanceTable();
+    await ensureRecruiterSalaryHistoryTable();
     await connection.beginTransaction();
 
     const [recruiterRows] = await connection.query(
@@ -1580,6 +1782,14 @@ router.put("/api/admin/attendance", async (req, res) => {
           ELSE 'recruiter'
         END AS role,
         COALESCE(
+          (
+            SELECT rsh.daily_salary
+            FROM recruiter_salary_history rsh
+            WHERE rsh.recruiter_rid = recruiter.rid
+              AND rsh.effective_from <= ?
+            ORDER BY rsh.effective_from DESC, rsh.id DESC
+            LIMIT 1
+          ),
           daily_salary,
           ROUND(monthly_salary / 30, 2),
           CASE
@@ -1588,12 +1798,12 @@ router.put("/api/admin/attendance", async (req, res) => {
             ELSE 0
           END
         ) AS dailySalary
-      FROM recruiter
+      FROM recruiter recruiter
       WHERE rid = ?
         AND LOWER(TRIM(COALESCE(role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')
       LIMIT 1
       FOR UPDATE`,
-      [recruiterRid],
+      [attendanceDate, recruiterRid],
     );
 
     if (recruiterRows.length === 0) {
@@ -1916,30 +2126,200 @@ router.get("/api/admin/recruiters/list", async (req, res) => {
   if (!ensureAdminAuthorized(req, res)) return;
 
   try {
+    await ensureRecruiterSalaryHistoryTable();
+    const currentDate = getCurrentDateOnlyInBusinessTimeZone();
     const hasRoleColumn = await columnExists("recruiter", "role");
+    const salaryMeta = await getRecruiterSalaryColumnMeta();
     const roleFilter = hasRoleColumn
       ? "WHERE LOWER(TRIM(COALESCE(role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')"
       : "";
     const [rows] = await pool.query(
-      `SELECT rid, name, email, COALESCE(role, 'recruiter') AS role
-       FROM recruiter
+      `SELECT
+         r.rid,
+         r.name,
+         r.email,
+         COALESCE(r.role, 'recruiter') AS role,
+         ${salaryMeta.salarySelect}
+         ${salaryMeta.monthlySalarySelect}
+         ${salaryMeta.dailySalarySelect}
+         (
+           SELECT rsh.monthly_salary
+           FROM recruiter_salary_history rsh
+           WHERE rsh.recruiter_rid = r.rid
+             AND rsh.effective_from <= ?
+           ORDER BY rsh.effective_from DESC, rsh.id DESC
+           LIMIT 1
+         ) AS historyMonthlySalary,
+         (
+           SELECT rsh.effective_from
+           FROM recruiter_salary_history rsh
+           WHERE rsh.recruiter_rid = r.rid
+             AND rsh.effective_from <= ?
+           ORDER BY rsh.effective_from DESC, rsh.id DESC
+           LIMIT 1
+         ) AS currentSalaryEffectiveFrom
+       FROM recruiter r
        ${roleFilter}
        ORDER BY name ASC, rid ASC`,
+      [currentDate, currentDate],
     );
 
     return res.status(200).json({
-      recruiters: rows.map((row) => ({
-        rid: row.rid,
-        name: row.name,
-        email: row.email || null,
-        role: normalizeStaffRole(row.role),
-      })),
+      recruiters: rows.map((row) => {
+        const legacySalary = resolveLegacySalarySnapshot(row);
+        return {
+          rid: row.rid,
+          name: row.name,
+          email: row.email || null,
+          role: normalizeStaffRole(row.role),
+          currentSalary:
+            toMoneyOrNull(row.historyMonthlySalary) ?? legacySalary.monthlySalary,
+          currentSalaryEffectiveFrom: row.currentSalaryEffectiveFrom || null,
+        };
+      }),
     });
   } catch (error) {
     return res.status(500).json({
       message: "Failed to fetch recruiters list.",
       error: error.message,
     });
+  }
+});
+
+router.get("/api/admin/recruiters/:rid/salary-history", async (req, res) => {
+  if (!ensureAdminAuthorized(req, res)) return;
+
+  const recruiterRid = String(req.params?.rid || "").trim();
+  if (!recruiterRid) {
+    return res.status(400).json({ message: "Recruiter ID is required." });
+  }
+
+  try {
+    await ensureRecruiterSalaryHistoryTable();
+    const currentDate = getCurrentDateOnlyInBusinessTimeZone();
+    const salarySnapshot = await getRecruiterSalarySnapshot(
+      pool,
+      recruiterRid,
+      currentDate,
+    );
+
+    if (!salarySnapshot) {
+      return res.status(404).json({ message: "Recruiter not found." });
+    }
+
+    const [historyRows] = await pool.query(
+      `SELECT
+         id,
+         recruiter_rid AS recruiterRid,
+         monthly_salary AS monthlySalary,
+         daily_salary AS dailySalary,
+         effective_from AS effectiveFrom,
+         created_by AS createdBy,
+         created_at AS createdAt
+       FROM recruiter_salary_history
+       WHERE recruiter_rid = ?
+       ORDER BY effective_from DESC, id DESC`,
+      [recruiterRid],
+    );
+
+    return res.status(200).json({
+      recruiter: salarySnapshot,
+      modifications: historyRows.map((row) => ({
+        id: Number(row.id) || null,
+        recruiterRid: row.recruiterRid,
+        monthlySalary: toMoneyOrNull(row.monthlySalary),
+        dailySalary: toMoneyOrNull(row.dailySalary),
+        effectiveFrom: row.effectiveFrom || null,
+        createdBy: row.createdBy || null,
+        createdAt: row.createdAt || null,
+      })),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to fetch salary history.",
+      error: error.message,
+    });
+  }
+});
+
+router.put("/api/admin/recruiters/:rid/salary-history", async (req, res) => {
+  if (!ensureAdminAuthorized(req, res)) return;
+
+  const recruiterRid = String(req.params?.rid || "").trim();
+  const monthlySalary = toMoneyOrNull(req.body?.monthlySalary);
+  const effectiveFrom = normalizeSalaryEffectiveDate(req.body?.effectiveFrom);
+  const createdBy =
+    String(req.body?.createdBy || "admin-panel").trim() || "admin-panel";
+
+  if (!recruiterRid) {
+    return res.status(400).json({ message: "Recruiter ID is required." });
+  }
+  if (monthlySalary === null || monthlySalary <= 0) {
+    return res.status(400).json({
+      message: "monthlySalary must be a valid positive number.",
+    });
+  }
+  if (!effectiveFrom) {
+    return res.status(400).json({
+      message: "effectiveFrom must be in YYYY-MM-DD format.",
+    });
+  }
+
+  const connection = await pool.getConnection();
+  try {
+    await ensureRecruiterSalaryHistoryTable();
+    await connection.beginTransaction();
+
+    const [recruiterRows] = await connection.query(
+      `SELECT rid
+       FROM recruiter
+       WHERE rid = ?
+       LIMIT 1
+       FOR UPDATE`,
+      [recruiterRid],
+    );
+
+    if (recruiterRows.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ message: "Recruiter not found." });
+    }
+
+    const dailySalary = roundMoneyOrNull(monthlySalary / 30) || 0;
+    await connection.query(
+      `INSERT INTO recruiter_salary_history
+        (recruiter_rid, monthly_salary, daily_salary, effective_from, created_by)
+       VALUES (?, ?, ?, ?, ?)`,
+      [recruiterRid, monthlySalary, dailySalary, effectiveFrom, createdBy],
+    );
+
+    const currentDate = getCurrentDateOnlyInBusinessTimeZone();
+    const recruiter = await syncRecruiterCurrentSalaryColumns(
+      connection,
+      recruiterRid,
+      currentDate,
+    );
+
+    await connection.commit();
+
+    return res.status(200).json({
+      message: "Salary updated successfully.",
+      recruiter,
+      modification: {
+        recruiterRid,
+        monthlySalary,
+        dailySalary,
+        effectiveFrom,
+        createdBy,
+      },
+    });
+  } catch (error) {
+    await connection.rollback();
+    return res.status(500).json({
+      message: "Failed to update salary.",
+      error: error.message,
+    });
+  } finally {
+    connection.release();
   }
 });
 
