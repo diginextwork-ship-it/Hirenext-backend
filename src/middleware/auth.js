@@ -1,59 +1,28 @@
-const crypto = require("crypto");
+const jwt = require("jsonwebtoken");
 
-const AUTH_SECRET = String(process.env.AUTH_SECRET || "hirenext-auth-secret-change-me");
+const AUTH_SECRET = String(
+  process.env.JWT_SECRET || process.env.AUTH_SECRET || "hirenext-auth-secret-change-me",
+);
 const TOKEN_TTL_SECONDS = Number.parseInt(process.env.AUTH_TOKEN_TTL_SECONDS || "43200", 10);
 
-const toBase64Url = (value) =>
-  Buffer.from(value, "utf8")
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "");
-
-const fromBase64Url = (value) => {
-  const normalized = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
-  const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
-  return Buffer.from(padded, "base64").toString("utf8");
-};
-
-const signPayload = (payloadSegment) =>
-  crypto.createHmac("sha256", AUTH_SECRET).update(payloadSegment).digest("base64url");
-
 const createAuthToken = (payload) => {
-  const now = Math.floor(Date.now() / 1000);
-  const tokenPayload = {
-    ...payload,
-    iat: now,
-    exp: now + (Number.isFinite(TOKEN_TTL_SECONDS) ? TOKEN_TTL_SECONDS : 43200),
-  };
-
-  const payloadSegment = toBase64Url(JSON.stringify(tokenPayload));
-  const signature = signPayload(payloadSegment);
-  return `${payloadSegment}.${signature}`;
+  const expiresIn = Number.isFinite(TOKEN_TTL_SECONDS) ? TOKEN_TTL_SECONDS : 43200;
+  return jwt.sign({ ...payload }, AUTH_SECRET, {
+    algorithm: "HS256",
+    expiresIn,
+  });
 };
 
 const verifyAuthToken = (token) => {
-  const [payloadSegment, signature] = String(token || "").split(".");
-  if (!payloadSegment || !signature) {
-    throw new Error("Invalid token format.");
-  }
+  const payload = jwt.verify(String(token || ""), AUTH_SECRET, {
+    algorithms: ["HS256"],
+  });
 
-  const expectedSignature = signPayload(payloadSegment);
-  if (signature !== expectedSignature) {
-    throw new Error("Invalid token signature.");
-  }
-
-  const parsedPayload = JSON.parse(fromBase64Url(payloadSegment));
-  if (!parsedPayload || typeof parsedPayload !== "object") {
+  if (!payload || typeof payload !== "object") {
     throw new Error("Invalid token payload.");
   }
 
-  const now = Math.floor(Date.now() / 1000);
-  if (!parsedPayload.exp || now >= Number(parsedPayload.exp)) {
-    throw new Error("Token expired.");
-  }
-
-  return parsedPayload;
+  return payload;
 };
 
 const getTokenFromRequest = (req) => {
