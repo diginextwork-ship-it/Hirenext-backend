@@ -124,6 +124,10 @@ const buildResumeCompatibilityFields = (record = {}) => {
   const companyName = firstPresent(record.companyName, record.company_name);
   const roleName = firstPresent(record.roleName, record.role_name);
   const city = firstPresent(record.city);
+  const officeLocationCity = firstPresent(
+    record.officeLocationCity,
+    record.office_location_city,
+  );
   const walkInDate = normalizeDateOnly(
     record.walkInDate ?? record.walk_in_date ?? record.currentWalkInDate,
   );
@@ -244,6 +248,8 @@ const buildResumeCompatibilityFields = (record = {}) => {
     company_name: companyName,
     roleName,
     role_name: roleName,
+    officeLocationCity,
+    office_location_city: officeLocationCity,
     city,
   };
 };

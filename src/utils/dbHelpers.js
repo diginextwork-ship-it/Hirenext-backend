@@ -119,6 +119,7 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
   const hasRejectReason = columns.has("reject_reason");
   const hasLeftReason = columns.has("left_reason");
   const hasBilledReason = columns.has("billed_reason");
+  const hasOfficeLocationCity = columns.has("office_location_city");
 
   const hasAnyReason =
     hasSubmittedReason ||
@@ -131,7 +132,8 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
     hasDropoutReason ||
     hasRejectReason ||
     hasLeftReason ||
-    hasBilledReason;
+    hasBilledReason ||
+    hasOfficeLocationCity;
 
   if (!resumeIdColumn || !hasAnyReason) return new Map();
 
@@ -153,6 +155,9 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
   if (hasRejectReason) selectColumns.push("reject_reason AS rejectReason");
   if (hasLeftReason) selectColumns.push("left_reason AS leftReason");
   if (hasBilledReason) selectColumns.push("billed_reason AS billedReason");
+  if (hasOfficeLocationCity) {
+    selectColumns.push("office_location_city AS officeLocationCity");
+  }
 
   const [rows] = await connection.query(
     `SELECT ${selectColumns.join(", ")}
@@ -180,6 +185,8 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
           billedReason: row.billedReason || null,
         }),
         furtherReason: row.furtherReason || null,
+        officeLocationCity: row.officeLocationCity || null,
+        office_location_city: row.officeLocationCity || null,
       },
     ]),
   );
@@ -214,6 +221,15 @@ const upsertExtraInfoFields = async (connection, payload) => {
   addColumnValue("job_jid", payload.jobJid);
   addColumnValue("recruiter_rid", payload.recruiterRid);
   addColumnValue("rid", payload.recruiterRid);
+  if (
+    payload.officeLocationCity !== undefined &&
+    columns.has("office_location_city")
+  ) {
+    insertColumns.push("office_location_city");
+    insertValues.push(payload.officeLocationCity);
+    placeholders.push("?");
+    updates.push("office_location_city = VALUES(office_location_city)");
+  }
   if (
     payload.submittedReason !== undefined &&
     columns.has("submitted_reason")

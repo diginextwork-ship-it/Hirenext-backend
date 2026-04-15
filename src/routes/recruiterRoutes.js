@@ -915,6 +915,21 @@ router.post(
     const submitterRole = normalizeRoleAlias(req.auth?.role);
     const safeJobId = normalizeJobJid(req.body?.job_jid ?? req.body?.jid);
     const resumeSource = normalizeResumeSource(req.body?.source);
+    const rawOfficeLocationOption = String(
+      req.body?.office_location_option ?? req.body?.officeLocationOption ?? "",
+    )
+      .trim()
+      .toLowerCase();
+    const requestedOfficeLocationCity = String(
+      req.body?.office_location_city ?? req.body?.officeLocationCity ?? "",
+    ).trim();
+    const officeLocationOption =
+      rawOfficeLocationOption === "manual" ||
+      rawOfficeLocationOption === "enter_manually"
+        ? "manual"
+        : "jd";
+    const officeLocationCity =
+      officeLocationOption === "manual" ? requestedOfficeLocationCity : null;
 
     if (!authRid || !recruiterRid || authRid !== recruiterRid) {
       return res.status(403).json({
@@ -934,6 +949,13 @@ router.post(
       return res.status(400).json({
         success: false,
         error: `source is required. Allowed values: ${resumeSourceOptions.join(", ")}.`,
+      });
+    }
+
+    if (officeLocationOption === "manual" && !officeLocationCity) {
+      return res.status(400).json({
+        success: false,
+        error: "office_location_city is required when entering the office location manually.",
       });
     }
 
@@ -1241,6 +1263,7 @@ router.post(
           candidateName,
           email,
           phone,
+          officeLocationCity,
           submittedReason: String(submittedReason || "").trim() || null,
           submittedAt: "__CURRENT_TIMESTAMP__",
         });
@@ -1261,6 +1284,8 @@ router.post(
           atsScore: parsed.atsScore,
           atsMatchPercentage: parsed.atsMatchPercentage,
           submittedCount: Number(statusRows?.[0]?.submittedCount) || 0,
+          companyName: jobRows[0]?.company_name || null,
+          officeLocationCity,
         });
       } catch (error) {
         await connection.rollback();
@@ -2158,11 +2183,14 @@ router.get(
         a.created_at AS createdAt,
         j.role_name AS roleName,
         j.company_name AS companyName,
-        j.city AS city
+        j.city AS city,
+        ei.office_location_city AS officeLocationCity
       FROM applications a
       LEFT JOIN candidate c ON c.res_id = a.res_id
       INNER JOIN jobs j ON j.jid = a.job_jid
       LEFT JOIN recruiter creator ON creator.rid = j.${jobsRecruiterIdColumn}
+      LEFT JOIN extra_info ei
+        ON ei.res_id = a.res_id OR ei.resume_id = a.res_id
       WHERE ${whereClause}
       ORDER BY a.created_at DESC`,
         queryParams,
@@ -2186,6 +2214,7 @@ router.get(
           job: {
             roleName: row.roleName,
             companyName: row.companyName,
+            officeLocationCity: row.officeLocationCity || null,
             city: row.city || null,
           },
         })),

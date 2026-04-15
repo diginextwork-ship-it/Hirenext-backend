@@ -782,6 +782,7 @@ router.get("/api/admin/dashboard", async (_req, res) => {
           c.joining_date AS joiningDate,
           j.company_name AS companyName,
           j.city AS city,
+          ei.office_location_city AS officeLocationCity,
           j.points_per_joining AS pointsPerJoining,
           j.revenue AS revenue,
           COALESCE(jrs.selection_status, 'submitted') AS workflowStatus,
@@ -798,6 +799,8 @@ router.get("/api/admin/dashboard", async (_req, res) => {
           ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
         LEFT JOIN jobs j ON j.jid = rd.job_jid
         LEFT JOIN recruiter teamLeader ON teamLeader.rid = j.recruiter_rid
+        LEFT JOIN extra_info ei
+          ON ei.res_id = rd.res_id OR ei.resume_id = rd.res_id
         ORDER BY rd.uploaded_at DESC`,
       );
 
@@ -823,6 +826,7 @@ router.get("/api/admin/dashboard", async (_req, res) => {
           candidatePhone: row.candidatePhone || null,
           phone: row.candidatePhone || null,
           companyName: row.companyName || null,
+          officeLocationCity: row.officeLocationCity || null,
           city: row.city || null,
           joiningDate: row.joiningDate || null,
           pointsPerJoining:
@@ -950,6 +954,9 @@ const getCandidateResumesHandler = async (req, res) => {
       (await columnExists("extra_info", "verified_reason"));
     const hasJoinedReasonColumn =
       hasExtraInfoTable && (await columnExists("extra_info", "joined_reason"));
+    const hasOfficeLocationCityColumn =
+      hasExtraInfoTable &&
+      (await columnExists("extra_info", "office_location_city"));
     const applicantNameSelect = hasCandidateNameColumn
       ? "c.name AS applicantName,"
       : "NULL AS applicantName,";
@@ -1384,7 +1391,12 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
         ${walkInDateSelect}
         ${resumeJoiningDateSelect}
         c.joining_date AS joiningDate,
-        ${hasJoinedReasonColumn ? "ei.joined_reason AS joinedReason" : "NULL AS joinedReason"}
+        ${hasJoinedReasonColumn ? "ei.joined_reason AS joinedReason," : "NULL AS joinedReason,"}
+        ${
+          hasOfficeLocationCityColumn
+            ? "ei.office_location_city AS officeLocationCity"
+            : "NULL AS officeLocationCity"
+        }
       FROM resumes_data rd
       INNER JOIN recruiter r ON r.rid = rd.rid
       LEFT JOIN candidate c ON c.res_id = rd.res_id
@@ -1464,6 +1476,7 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
             joiningDate: row.joiningDate || null,
             joinedReason: row.joinedReason || null,
             joiningNote: row.joinedReason || null,
+            officeLocationCity: row.officeLocationCity || null,
             ...workflowFields,
           };
         })(),
@@ -3960,7 +3973,8 @@ router.get("/api/admin/performance", async (req, res) => {
         c.revenue AS candidateRevenue,
         j.revenue AS companyRevenue,
         j.company_name AS companyName,
-        j.city AS city
+        j.city AS city,
+        ei.office_location_city AS officeLocationCity
       FROM resumes_data rd
       LEFT JOIN candidate c ON c.res_id = rd.res_id
       INNER JOIN recruiter recruiter ON recruiter.rid = rd.rid
@@ -3995,6 +4009,7 @@ router.get("/api/admin/performance", async (req, res) => {
             ? null
             : String(row.jobJid).trim(),
         companyName: row.companyName || null,
+        officeLocationCity: row.officeLocationCity || null,
         city: row.city || null,
         resumeFilename: row.resumeFilename || null,
         candidateName: row.candidateName || null,

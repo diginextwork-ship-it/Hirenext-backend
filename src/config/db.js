@@ -893,6 +893,7 @@ const ensureExtraInfoTable = async () => {
       job_jid ${jobJidColumnSql} NULL,
       recruiter_rid VARCHAR(50) NULL,
       rid VARCHAR(50) NULL,
+      office_location_city VARCHAR(120) NULL,
       submitted_reason TEXT NULL,
       verified_reason TEXT NULL,
       shortlisted_reason TEXT NULL,
@@ -928,6 +929,11 @@ const ensureExtraInfoTable = async () => {
   }
   if (!(await columnExists("extra_info", "rid"))) {
     await pool.query("ALTER TABLE extra_info ADD COLUMN rid VARCHAR(50) NULL");
+  }
+  if (!(await columnExists("extra_info", "office_location_city"))) {
+    await pool.query(
+      "ALTER TABLE extra_info ADD COLUMN office_location_city VARCHAR(120) NULL",
+    );
   }
   if (!(await columnExists("extra_info", "submitted_reason"))) {
     await pool.query(
