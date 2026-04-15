@@ -1,6 +1,9 @@
 const pool = require("../config/db");
 const { columnExists } = require("./dbHelpers");
-const { getCurrentDateOnlyInBusinessTimeZone } = require("./dateTime");
+const {
+  getCurrentDateOnlyInBusinessTimeZone,
+  isValidDateOnly,
+} = require("./dateTime");
 
 const TASK_ASSIGNMENT_STATUS = {
   PENDING: "pending",
@@ -41,6 +44,50 @@ const resolveEffectiveTaskAssignmentStatus = (
   return normalizedStatus;
 };
 
+const getTaskAssignmentActionState = (
+  assignmentDate,
+  today = getCurrentDateOnlyInBusinessTimeZone(),
+) => {
+  const safeAssignmentDate = String(assignmentDate || "").trim();
+  const safeToday = String(today || "").trim();
+
+  if (
+    isValidDateOnly(safeAssignmentDate) &&
+    isValidDateOnly(safeToday) &&
+    safeAssignmentDate > safeToday
+  ) {
+    return {
+      today: safeToday,
+      assignmentDate: safeAssignmentDate,
+      isActionableToday: false,
+      isScheduledForFuture: true,
+      isPastDue: false,
+    };
+  }
+
+  if (
+    isValidDateOnly(safeAssignmentDate) &&
+    isValidDateOnly(safeToday) &&
+    safeAssignmentDate < safeToday
+  ) {
+    return {
+      today: safeToday,
+      assignmentDate: safeAssignmentDate,
+      isActionableToday: false,
+      isScheduledForFuture: false,
+      isPastDue: true,
+    };
+  }
+
+  return {
+    today: safeToday,
+    assignmentDate: safeAssignmentDate,
+    isActionableToday: true,
+    isScheduledForFuture: false,
+    isPastDue: false,
+  };
+};
+
 const ensureTaskTables = async () => {
   await pool.query(
     `CREATE TABLE IF NOT EXISTS tasks (
@@ -67,6 +114,9 @@ const ensureTaskTables = async () => {
       recruiter_rid VARCHAR(20) NOT NULL,
       status ENUM('pending', 'completed', 'rejected') NOT NULL DEFAULT 'pending',
       assignment_date DATE NOT NULL,
+      rescheduled_from_date DATE NULL DEFAULT NULL,
+      rescheduled_at TIMESTAMP NULL DEFAULT NULL,
+      rescheduled_by_rid VARCHAR(20) NULL DEFAULT NULL,
       acted_at TIMESTAMP NULL DEFAULT NULL,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -94,11 +144,27 @@ const ensureTaskTables = async () => {
       "ALTER TABLE task_assignments ADD COLUMN acted_at TIMESTAMP NULL DEFAULT NULL",
     );
   }
+  if (!(await columnExists("task_assignments", "rescheduled_from_date"))) {
+    await pool.query(
+      "ALTER TABLE task_assignments ADD COLUMN rescheduled_from_date DATE NULL DEFAULT NULL",
+    );
+  }
+  if (!(await columnExists("task_assignments", "rescheduled_at"))) {
+    await pool.query(
+      "ALTER TABLE task_assignments ADD COLUMN rescheduled_at TIMESTAMP NULL DEFAULT NULL",
+    );
+  }
+  if (!(await columnExists("task_assignments", "rescheduled_by_rid"))) {
+    await pool.query(
+      "ALTER TABLE task_assignments ADD COLUMN rescheduled_by_rid VARCHAR(20) NULL DEFAULT NULL",
+    );
+  }
 };
 
 module.exports = {
   TASK_ASSIGNMENT_STATUS,
   ensureTaskTables,
+  getTaskAssignmentActionState,
   normalizeTaskAssignmentStatus,
   resolveEffectiveTaskAssignmentStatus,
 };

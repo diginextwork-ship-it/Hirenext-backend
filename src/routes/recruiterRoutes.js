@@ -48,10 +48,14 @@ const {
   buildResumeCompatibilityFields,
   resolveStatusReasonInput,
 } = require("../utils/resumeCompatibility");
-const { getCurrentDateOnlyInBusinessTimeZone } = require("../utils/dateTime");
+const {
+  getCurrentDateOnlyInBusinessTimeZone,
+  isValidDateOnly,
+} = require("../utils/dateTime");
 const {
   TASK_ASSIGNMENT_STATUS,
   ensureTaskTables,
+  getTaskAssignmentActionState,
   normalizeTaskAssignmentStatus,
   resolveEffectiveTaskAssignmentStatus,
 } = require("../utils/taskAssignments");
@@ -362,6 +366,7 @@ const buildRecruiterTaskPayload = (rows, recruiterRid) => {
       row.assignmentStatus,
       row.assignmentDate,
     );
+    const actionState = getTaskAssignmentActionState(row.assignmentDate);
 
     if (!taskMap.has(taskId)) {
       taskMap.set(taskId, {
@@ -373,10 +378,16 @@ const buildRecruiterTaskPayload = (rows, recruiterRid) => {
         assignmentId: Number(row.assignmentId) || null,
         assignedAt: row.assignedAt || null,
         assignmentDate: row.assignmentDate || null,
+        rescheduledFromDate: row.rescheduledFromDate || null,
+        rescheduledAt: row.rescheduledAt || null,
+        rescheduledByRid: row.rescheduledByRid || null,
+        rescheduledByName: row.rescheduledByName || null,
         recruiterRid,
         status: effectiveStatus,
         rawStatus: normalizeTaskAssignmentStatus(row.assignmentStatus),
         actedAt: row.actedAt || null,
+        isActionableToday: actionState.isActionableToday,
+        isScheduledForFuture: actionState.isScheduledForFuture,
         recruiters: [],
       });
     }
@@ -1972,6 +1983,10 @@ router.get(
           ta_self.id AS assignmentId,
           ta_self.status AS assignmentStatus,
           ta_self.assignment_date AS assignmentDate,
+          ta_self.rescheduled_from_date AS rescheduledFromDate,
+          ta_self.rescheduled_at AS rescheduledAt,
+          ta_self.rescheduled_by_rid AS rescheduledByRid,
+          rb.name AS rescheduledByName,
           ta_self.acted_at AS actedAt,
           ta_self.created_at AS assignedAt,
           ta_all.recruiter_rid AS memberRid,
@@ -1981,6 +1996,7 @@ router.get(
         INNER JOIN tasks t ON t.id = ta_self.task_id
         LEFT JOIN task_assignments ta_all ON ta_all.task_id = t.id
         LEFT JOIN recruiter r ON r.rid = ta_all.recruiter_rid
+        LEFT JOIN recruiter rb ON rb.rid = ta_self.rescheduled_by_rid
         WHERE ta_self.recruiter_rid = ?
         ORDER BY ta_self.created_at DESC, ta_all.created_at ASC, ta_all.id ASC`,
         [rid],
@@ -2043,10 +2059,17 @@ router.post(
       }
 
       const assignment = rows[0];
+      const actionState = getTaskAssignmentActionState(assignment.assignmentDate);
       const effectiveStatus = resolveEffectiveTaskAssignmentStatus(
         assignment.status,
         assignment.assignmentDate,
       );
+
+      if (!actionState.isActionableToday && actionState.isScheduledForFuture) {
+        return res.status(409).json({
+          message: `This task can only be updated on ${assignment.assignmentDate}.`,
+        });
+      }
 
       if (effectiveStatus === TASK_ASSIGNMENT_STATUS.TIMED_OUT) {
         return res.status(409).json({
@@ -2078,6 +2101,118 @@ router.post(
     } catch (error) {
       return res.status(500).json({
         message: "Failed to update task status.",
+        error: error.message,
+      });
+    }
+  },
+);
+
+router.post(
+  "/api/recruiters/:rid/tasks/:assignmentId/reschedule",
+  requireAuth,
+  requireRoles("recruiter", "team leader", "team_leader"),
+  async (req, res) => {
+    const rid = String(req.params?.rid || "").trim();
+    const assignmentId = Number(req.params?.assignmentId);
+    const requestedDate = String(req.body?.assignmentDate || "").trim();
+    const actorRid = String(req.auth?.rid || "").trim();
+    const today = getCurrentDateOnlyInBusinessTimeZone();
+
+    if (!rid) {
+      return res.status(400).json({ message: "rid is required." });
+    }
+    if (!Number.isInteger(assignmentId) || assignmentId <= 0) {
+      return res.status(400).json({ message: "Valid assignment ID is required." });
+    }
+    if (!requestedDate) {
+      return res.status(400).json({ message: "assignmentDate is required." });
+    }
+    if (!isValidDateOnly(requestedDate)) {
+      return res.status(400).json({
+        message: "assignmentDate must be in YYYY-MM-DD format.",
+      });
+    }
+
+    if (!authorizeRecruiterResourceView(req, res, rid)) return;
+
+    try {
+      await ensureTaskTables();
+
+      const [rows] = await pool.query(
+        `SELECT
+          ta.id,
+          ta.status,
+          ta.assignment_date AS assignmentDate,
+          ta.recruiter_rid AS recruiterRid
+        FROM task_assignments ta
+        WHERE ta.id = ? AND ta.recruiter_rid = ?
+        LIMIT 1`,
+        [assignmentId, rid],
+      );
+
+      if (rows.length === 0) {
+        return res.status(404).json({ message: "Task assignment not found." });
+      }
+
+      const assignment = rows[0];
+      const effectiveStatus = resolveEffectiveTaskAssignmentStatus(
+        assignment.status,
+        assignment.assignmentDate,
+      );
+
+      if (effectiveStatus === TASK_ASSIGNMENT_STATUS.TIMED_OUT) {
+        return res.status(409).json({
+          message: "This task has already timed out and cannot be rescheduled.",
+        });
+      }
+
+      if (effectiveStatus !== TASK_ASSIGNMENT_STATUS.PENDING) {
+        return res.status(409).json({
+          message: `This task is already marked as ${effectiveStatus}.`,
+        });
+      }
+
+      if (requestedDate <= today) {
+        return res.status(400).json({
+          message: `Reschedule date must be after ${today}.`,
+        });
+      }
+
+      if (requestedDate === String(assignment.assignmentDate || "").trim()) {
+        return res.status(400).json({
+          message: "Choose a different future date to reschedule this task.",
+        });
+      }
+
+      await pool.query(
+        `UPDATE task_assignments
+         SET assignment_date = ?,
+             rescheduled_from_date = assignment_date,
+             rescheduled_at = CURRENT_TIMESTAMP,
+             rescheduled_by_rid = ?,
+             acted_at = NULL
+         WHERE id = ?`,
+        [requestedDate, actorRid || rid, assignmentId],
+      );
+
+      return res.status(200).json({
+        message: `Task rescheduled to ${requestedDate}.`,
+        assignment: {
+          id: assignmentId,
+          recruiterRid: rid,
+          assignmentDate: requestedDate,
+          rescheduledFromDate: assignment.assignmentDate || null,
+          rescheduledAt: new Date().toISOString(),
+          rescheduledByRid: actorRid || rid,
+          status: TASK_ASSIGNMENT_STATUS.PENDING,
+          rawStatus: TASK_ASSIGNMENT_STATUS.PENDING,
+          isActionableToday: false,
+          isScheduledForFuture: true,
+        },
+      });
+    } catch (error) {
+      return res.status(500).json({
+        message: "Failed to reschedule task.",
         error: error.message,
       });
     }

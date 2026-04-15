@@ -45,6 +45,7 @@ const {
 const {
   TASK_ASSIGNMENT_STATUS,
   ensureTaskTables,
+  getTaskAssignmentActionState,
   resolveEffectiveTaskAssignmentStatus,
 } = require("../utils/taskAssignments");
 
@@ -310,6 +311,7 @@ const buildTaskAssignmentAdminRow = (row) => {
     row.assignmentStatus,
     row.assignmentDate,
   );
+  const actionState = getTaskAssignmentActionState(row.assignmentDate);
 
   return {
     assignmentId: Number(row.assignmentId) || null,
@@ -319,10 +321,17 @@ const buildTaskAssignmentAdminRow = (row) => {
     recruiterRole: normalizeStaffRole(row.recruiterRole),
     assignedAt: row.assignedAt || null,
     assignmentDate: row.assignmentDate || null,
+    rescheduledFromDate: row.rescheduledFromDate || null,
+    rescheduledAt: row.rescheduledAt || null,
+    rescheduledByRid: row.rescheduledByRid || null,
+    rescheduledByName: row.rescheduledByName || null,
+    rescheduledByEmail: row.rescheduledByEmail || null,
     actedAt: row.actedAt || null,
     status: effectiveStatus,
     rawStatus: row.assignmentStatus || TASK_ASSIGNMENT_STATUS.PENDING,
     isTimedOut: effectiveStatus === TASK_ASSIGNMENT_STATUS.TIMED_OUT,
+    isActionableToday: actionState.isActionableToday,
+    isScheduledForFuture: actionState.isScheduledForFuture,
   };
 };
 
@@ -2357,11 +2366,17 @@ router.get("/api/admin/tasks", async (req, res) => {
         COALESCE(r.role, 'recruiter') AS recruiterRole,
         ta.status AS assignmentStatus,
         ta.assignment_date AS assignmentDate,
+        ta.rescheduled_from_date AS rescheduledFromDate,
+        ta.rescheduled_at AS rescheduledAt,
+        ta.rescheduled_by_rid AS rescheduledByRid,
+        rb.name AS rescheduledByName,
+        rb.email AS rescheduledByEmail,
         ta.acted_at AS actedAt,
         ta.created_at AS assignedAt
       FROM tasks t
       LEFT JOIN task_assignments ta ON ta.task_id = t.id
       LEFT JOIN recruiter r ON r.rid = ta.recruiter_rid
+      LEFT JOIN recruiter rb ON rb.rid = ta.rescheduled_by_rid
       ORDER BY t.created_at DESC, ta.created_at DESC, ta.id DESC`,
     );
 
@@ -2474,11 +2489,18 @@ router.post("/api/admin/tasks", async (req, res) => {
             recruiterEmail: recruiterRows[0].email || null,
             recruiterRole: normalizeStaffRole(recruiterRows[0].role),
             assignmentDate,
+            rescheduledFromDate: null,
+            rescheduledAt: null,
+            rescheduledByRid: null,
+            rescheduledByName: null,
+            rescheduledByEmail: null,
             status: TASK_ASSIGNMENT_STATUS.PENDING,
             rawStatus: TASK_ASSIGNMENT_STATUS.PENDING,
             assignedAt: null,
             actedAt: null,
             isTimedOut: false,
+            isActionableToday: true,
+            isScheduledForFuture: false,
           },
         ],
       },
@@ -2562,11 +2584,18 @@ router.post("/api/admin/tasks/:taskId/assign", async (req, res) => {
         recruiterEmail: recruiterRow.email || null,
         recruiterRole: normalizeStaffRole(recruiterRow.role),
         assignmentDate,
+        rescheduledFromDate: null,
+        rescheduledAt: null,
+        rescheduledByRid: null,
+        rescheduledByName: null,
+        rescheduledByEmail: null,
         status: TASK_ASSIGNMENT_STATUS.PENDING,
         rawStatus: TASK_ASSIGNMENT_STATUS.PENDING,
         assignedAt: null,
         actedAt: null,
         isTimedOut: false,
+        isActionableToday: true,
+        isScheduledForFuture: false,
       },
     });
   } catch (error) {
