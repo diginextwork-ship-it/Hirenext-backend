@@ -664,6 +664,19 @@ const normalizePhotoValue = (value) => {
   return String(value);
 };
 
+const extractRevenueResumeId = (entry = {}) => {
+  const directResId = String(entry?.resId || "").trim();
+  if (directResId) return directResId;
+
+  const reason = String(entry?.reason || "");
+  const billedMatch = reason.match(/\[BILLED:([^\]]+)\]/i);
+  if (billedMatch?.[1]) {
+    return String(billedMatch[1]).trim();
+  }
+
+  return "";
+};
+
 const recomputeMoneyProfit = async (connection) => {
   const [rows] = await connection.query(
     `SELECT id, company_rev AS companyRev, expense
@@ -1979,11 +1992,47 @@ router.get("/api/admin/revenue", async (req, res) => {
         profit,
         reason,
         photo,
+        res_id AS resId,
         entry_type AS entryType,
         created_at AS createdAt
       FROM money_sum
       ORDER BY created_at DESC, id DESC`,
     );
+
+    const revenueResIds = Array.from(
+      new Set(
+        rows
+          .map((row) => extractRevenueResumeId(row))
+          .filter((value) => Boolean(String(value || "").trim())),
+      ),
+    );
+
+    let revenueMetaByResId = new Map();
+    if (revenueResIds.length > 0) {
+      const placeholders = revenueResIds.map(() => "?").join(", ");
+      const [metaRows] = await pool.query(
+        `SELECT
+          rd.res_id AS resId,
+          rd.job_jid AS jobJid,
+          j.company_name AS companyName,
+          j.city AS city
+        FROM resumes_data rd
+        LEFT JOIN jobs j ON j.jid = rd.job_jid
+        WHERE rd.res_id IN (${placeholders})`,
+        revenueResIds,
+      );
+      revenueMetaByResId = new Map(
+        (Array.isArray(metaRows) ? metaRows : []).map((row) => [
+          String(row.resId),
+          {
+            resId: row.resId || null,
+            jobJid: row.jobJid ?? null,
+            companyName: row.companyName || null,
+            city: row.city || null,
+          },
+        ]),
+      );
+    }
 
     const [summaryRows] = await pool.query(
       `SELECT
@@ -1996,18 +2045,29 @@ router.get("/api/admin/revenue", async (req, res) => {
     const netProfit = Math.round((totalIntake - totalExpense) * 100) / 100;
 
     return res.status(200).json({
-      entries: rows.map((row) => ({
-        id: Number(row.id),
-        companyRev: toMoneyNumber(row.companyRev),
-        expense: toMoneyNumber(row.expense),
-        profit: toMoneyNumber(row.profit),
-        reason: row.reason || "",
-        photo: normalizePhotoValue(row.photo),
-        entryType:
-          normalizeRevenueEntryType(row.entryType) ||
-          (toMoneyNumber(row.companyRev) > 0 ? "intake" : "expense"),
-        createdAt: row.createdAt,
-      })),
+      entries: rows.map((row) => {
+        const normalizedResId = extractRevenueResumeId(row);
+        const revenueMeta = normalizedResId
+          ? revenueMetaByResId.get(normalizedResId) || null
+          : null;
+
+        return {
+          id: Number(row.id),
+          companyRev: toMoneyNumber(row.companyRev),
+          expense: toMoneyNumber(row.expense),
+          profit: toMoneyNumber(row.profit),
+          reason: row.reason || "",
+          photo: normalizePhotoValue(row.photo),
+          resId: normalizedResId || null,
+          jobJid: revenueMeta?.jobJid ?? null,
+          companyName: revenueMeta?.companyName ?? null,
+          city: revenueMeta?.city ?? null,
+          entryType:
+            normalizeRevenueEntryType(row.entryType) ||
+            (toMoneyNumber(row.companyRev) > 0 ? "intake" : "expense"),
+          createdAt: row.createdAt,
+        };
+      }),
       summary: {
         totalIntake,
         totalExpense,
