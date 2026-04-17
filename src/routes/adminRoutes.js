@@ -4713,11 +4713,7 @@ router.delete(
 // ═══════════════════════════════════════════════════════════════════════════
 // DELETE /api/admin/candidates/:resId — Cascade-delete candidate resume
 // ═══════════════════════════════════════════════════════════════════════════
-router.delete(
-  "/api/admin/candidates/:resId",
-  requireAuth,
-  requireRoles("admin"),
-  async (req, res) => {
+const deleteAdminResumeHandler = async (req, res) => {
     const resId = String(req.params.resId || "").trim();
     if (!resId) {
       return res
@@ -4730,27 +4726,40 @@ router.delete(
       conn = await pool.getConnection();
       await conn.beginTransaction();
 
-      // Verify resume exists
       const [[resume]] = await conn.query(
-        "SELECT res_id FROM resumes_data WHERE res_id = ?",
+        `SELECT
+           rd.res_id AS resId,
+           COALESCE(NULLIF(TRIM(c.name), ''), NULL) AS candidateName,
+           COALESCE(
+             NULLIF(TRIM(j.company_name), ''),
+             NULLIF(TRIM(rd.source), '')
+           ) AS companyName
+         FROM resumes_data rd
+         LEFT JOIN candidate c ON c.res_id = rd.res_id
+         LEFT JOIN jobs j ON j.jid = rd.job_jid
+         WHERE rd.res_id = ?
+         LIMIT 1`,
         [resId],
       );
+
       if (!resume) {
         conn.release();
-        return res
-          .status(404)
-          .json({ message: `Candidate resume ${resId} not found.` });
+        return res.status(404).json({ message: `Resume ${resId} not found.` });
       }
 
-      // 1. Delete job_resume_selection rows for this resume
+      await conn.query("DELETE FROM applications WHERE res_id = ?", [resId]);
+      await conn.query("DELETE FROM recruiter_points_log WHERE res_id = ?", [
+        resId,
+      ]);
+      await conn.query("DELETE FROM money_sum WHERE res_id = ?", [resId]);
+      await conn.query(
+        "DELETE FROM extra_info WHERE res_id = ? OR resume_id = ?",
+        [resId, resId],
+      );
       await conn.query("DELETE FROM job_resume_selection WHERE res_id = ?", [
         resId,
       ]);
-
-      // 2. Delete extra_info (ATS scores, phone, email, extra data)
-      await conn.query("DELETE FROM extra_info WHERE res_id = ?", [resId]);
-
-      // 3. Delete the resume record itself (LONGBLOB file data is stored inline)
+      await conn.query("DELETE FROM candidate WHERE res_id = ?", [resId]);
       await conn.query("DELETE FROM resumes_data WHERE res_id = ?", [resId]);
 
       await conn.commit();
@@ -4758,7 +4767,12 @@ router.delete(
 
       return res.status(200).json({
         success: true,
-        message: `Candidate resume ${resId} and all associated data deleted.`,
+        message: `Resume ${resId} deleted successfully.`,
+        deletedResume: {
+          resId,
+          candidateName: resume.candidateName || null,
+          companyName: resume.companyName || null,
+        },
       });
     } catch (error) {
       if (conn) {
@@ -4769,21 +4783,34 @@ router.delete(
         }
         conn.release();
       }
-      console.error("DELETE /api/admin/candidates/:resId error:", error);
+      console.error("DELETE /api/admin/resumes/:resId error:", error);
 
       if (error.code === "ER_ROW_IS_REFERENCED_2") {
         return res.status(409).json({
           message:
-            "Cannot delete candidate resume: a foreign key constraint prevents deletion. Please remove dependent records first.",
+            "Cannot delete resume: a foreign key constraint prevents deletion. Please remove dependent records first.",
           error: error.message,
         });
       }
       return res.status(500).json({
-        message: "Failed to delete candidate resume.",
+        message: "Failed to delete resume.",
         error: error.message,
       });
     }
-  },
+  };
+
+router.delete(
+  "/api/admin/resumes/:resId",
+  requireAuth,
+  requireRoles("admin"),
+  deleteAdminResumeHandler,
+);
+
+router.delete(
+  "/api/admin/candidates/:resId",
+  requireAuth,
+  requireRoles("admin"),
+  deleteAdminResumeHandler,
 );
 
 module.exports = router;
