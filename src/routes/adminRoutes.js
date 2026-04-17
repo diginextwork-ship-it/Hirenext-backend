@@ -2973,6 +2973,58 @@ const hasNonEmptyValue = (value) =>
 const isCanonicalWorkflowStatus = (value) =>
   CANONICAL_WORKFLOW_STATUSES.includes(normalizeWorkflowStatus(value));
 
+const firstNonEmptyText = (...values) => {
+  for (const value of values) {
+    if (value === undefined || value === null) continue;
+    const normalized = String(value).trim();
+    if (normalized) return normalized;
+  }
+  return null;
+};
+
+const resolveLatestPerformanceNote = (row = {}) => {
+  const workflowStatus = resolveCanonicalWorkflowStatus({
+    workflowStatus: row.workflowStatus,
+    selectionStatus: row.selectionStatus,
+    status: row.status,
+    joiningDate: row.joiningDate,
+  });
+
+  const byStatus = {
+    submitted: firstNonEmptyText(row.submittedReason),
+    verified: firstNonEmptyText(row.verifiedReason, row.selectionNote),
+    walk_in: firstNonEmptyText(row.walkInReason, row.selectionNote),
+    shortlisted: firstNonEmptyText(row.shortlistedReason, row.selectionNote),
+    selected: firstNonEmptyText(row.selectReason, row.selectionNote),
+    joined: firstNonEmptyText(row.joinedReason, row.joiningNote, row.selectionNote),
+    billed: firstNonEmptyText(row.billedReason, row.selectionNote),
+    left: firstNonEmptyText(row.leftReason, row.selectionNote),
+    dropout: firstNonEmptyText(row.dropoutReason, row.selectionNote),
+    rejected: firstNonEmptyText(row.rejectReason, row.selectionNote),
+  };
+
+  if (byStatus[workflowStatus]) {
+    return byStatus[workflowStatus];
+  }
+
+  return firstNonEmptyText(
+    row.leftReason,
+    row.billedReason,
+    row.dropoutReason,
+    row.joinedReason,
+    row.joiningNote,
+    row.selectReason,
+    row.shortlistedReason,
+    row.rejectReason,
+    row.walkInReason,
+    row.verifiedReason,
+    row.submittedReason,
+    row.selectionNote,
+    row.note,
+    row.reason,
+  );
+};
+
 const resolveCanonicalWorkflowStatus = ({
   workflowStatus,
   selectionStatus,
@@ -4083,13 +4135,24 @@ router.get("/api/admin/performance", async (req, res) => {
         statusActor.name AS statusActorName,
         statusActor.role AS statusActorRole,
         jrs.selected_by_admin AS selectedByAdmin,
+        jrs.selection_note AS selectionNote,
         c.name AS candidateName,
         c.phone AS candidatePhone,
         c.revenue AS candidateRevenue,
         j.revenue AS companyRevenue,
         j.company_name AS companyName,
         j.city AS city,
-        ei.office_location_city AS officeLocationCity
+        ei.office_location_city AS officeLocationCity,
+        ei.submitted_reason AS submittedReason,
+        ei.verified_reason AS verifiedReason,
+        ei.walk_in_reason AS walkInReason,
+        ei.select_reason AS selectReason,
+        ei.shortlisted_reason AS shortlistedReason,
+        ei.reject_reason AS rejectReason,
+        ei.joined_reason AS joinedReason,
+        ei.dropout_reason AS dropoutReason,
+        ei.billed_reason AS billedReason,
+        ei.left_reason AS leftReason
       FROM resumes_data rd
       LEFT JOIN candidate c ON c.res_id = rd.res_id
       INNER JOIN recruiter recruiter ON recruiter.rid = rd.rid
@@ -4135,6 +4198,20 @@ router.get("/api/admin/performance", async (req, res) => {
         candidateName: row.candidateName || null,
         walkInDate: row.walkInDate || null,
         joiningDate: row.joiningDate || null,
+        selectionNote: row.selectionNote || null,
+        submittedReason: row.submittedReason || null,
+        verifiedReason: row.verifiedReason || null,
+        walkInReason: row.walkInReason || null,
+        selectReason: row.selectReason || null,
+        shortlistedReason: row.shortlistedReason || null,
+        rejectReason: row.rejectReason || null,
+        joinedReason: row.joinedReason || null,
+        joiningNote: row.joinedReason || null,
+        dropoutReason: row.dropoutReason || null,
+        billedReason: row.billedReason || null,
+        leftReason: row.leftReason || null,
+        latestNote: resolveLatestPerformanceNote(row),
+        note: resolveLatestPerformanceNote(row),
         eventAt: row.eventAt || null,
         revenue: row.revenue,
         company_rev: row.company_rev,
