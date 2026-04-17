@@ -796,6 +796,7 @@ router.get("/api/admin/dashboard", async (_req, res) => {
           rd.rid AS rid,
           r.name AS recruiterName,
           r.email AS recruiterEmail,
+          r.role AS recruiterRole,
           ${jobJidSelect}
           teamLeader.rid AS teamLeaderRid,
           teamLeader.name AS teamLeaderName,
@@ -831,6 +832,12 @@ router.get("/api/admin/dashboard", async (_req, res) => {
           includeSelection: false,
           includeStatusHistory: false,
         });
+        const effectiveTeamLeaderRid = isTeamLeaderLikeRole(row.recruiterRole)
+          ? row.rid || null
+          : null;
+        const effectiveTeamLeaderName = isTeamLeaderLikeRole(row.recruiterRole)
+          ? row.recruiterName || null
+          : null;
 
         return {
           resId: row.resId || null,
@@ -841,8 +848,10 @@ router.get("/api/admin/dashboard", async (_req, res) => {
             row.jobJid === null || row.jobJid === undefined
               ? null
               : String(row.jobJid).trim(),
-          teamLeaderRid: row.teamLeaderRid || null,
-          teamLeaderName: row.teamLeaderName || null,
+          teamLeaderRid: effectiveTeamLeaderRid,
+          teamLeaderName: effectiveTeamLeaderName,
+          jobOwnerTeamLeaderRid: row.teamLeaderRid || null,
+          jobOwnerTeamLeaderName: row.teamLeaderName || null,
           name: row.candidateName || null,
           candidateName: row.candidateName || null,
           candidatePhone: row.candidatePhone || null,
@@ -2947,6 +2956,17 @@ const PERFORMANCE_EVENT_META = {
 const normalizePerformanceTimestamp = (value) =>
   value == null ? null : String(value).trim() || null;
 
+const isTeamLeaderLikeRole = (value) => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  return (
+    normalized === "team leader" ||
+    normalized === "team_leader" ||
+    normalized === "job creator"
+  );
+};
+
 const hasNonEmptyValue = (value) =>
   value !== undefined && value !== null && String(value).trim() !== "";
 
@@ -4056,8 +4076,13 @@ router.get("/api/admin/performance", async (req, res) => {
         COALESCE(jrs.selection_status, 'submitted') AS workflowStatus,
         recruiter.rid AS recruiterRid,
         recruiter.name AS recruiterName,
+        recruiter.role AS recruiterRole,
         teamLeader.rid AS teamLeaderRid,
         teamLeader.name AS teamLeaderName,
+        statusActor.rid AS statusActorRid,
+        statusActor.name AS statusActorName,
+        statusActor.role AS statusActorRole,
+        jrs.selected_by_admin AS selectedByAdmin,
         c.name AS candidateName,
         c.phone AS candidatePhone,
         c.revenue AS candidateRevenue,
@@ -4072,6 +4097,7 @@ router.get("/api/admin/performance", async (req, res) => {
         ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
       LEFT JOIN jobs j ON j.jid = rd.job_jid
       LEFT JOIN recruiter teamLeader ON teamLeader.rid = j.recruiter_rid
+      LEFT JOIN recruiter statusActor ON statusActor.rid = jrs.selected_by_admin
       LEFT JOIN extra_info ei
         ON ei.res_id = rd.res_id OR ei.resume_id = rd.res_id
       WHERE COALESCE(LOWER(TRIM(rd.submitted_by_role)), 'recruiter') <> 'candidate'
@@ -4092,6 +4118,9 @@ router.get("/api/admin/performance", async (req, res) => {
         recruiterRid: row.recruiterRid || null,
         teamLeaderRid: row.teamLeaderRid || null,
         teamLeaderName: row.teamLeaderName || null,
+        statusActorRid: row.statusActorRid || null,
+        statusActorName: row.statusActorName || null,
+        selectedByAdmin: row.selectedByAdmin || null,
         name: row.candidateName || null,
         candidatePhone: row.candidatePhone || null,
         phone: row.candidatePhone || null,
@@ -4197,14 +4226,80 @@ router.get("/api/admin/performance", async (req, res) => {
         left: row.leftAt,
       };
 
+      const eventTeamLeaderByMetric = {
+        submitted: isTeamLeaderLikeRole(row.recruiterRole)
+          ? {
+              rid: row.recruiterRid || null,
+              name: row.recruiterName || null,
+            }
+          : null,
+        verified: isTeamLeaderLikeRole(row.statusActorRole)
+          ? {
+              rid: row.statusActorRid || null,
+              name: row.statusActorName || null,
+            }
+          : null,
+        walk_in: isTeamLeaderLikeRole(row.statusActorRole)
+          ? {
+              rid: row.statusActorRid || null,
+              name: row.statusActorName || null,
+            }
+          : null,
+        selected: isTeamLeaderLikeRole(row.statusActorRole)
+          ? {
+              rid: row.statusActorRid || null,
+              name: row.statusActorName || null,
+            }
+          : null,
+        rejected: isTeamLeaderLikeRole(row.statusActorRole)
+          ? {
+              rid: row.statusActorRid || null,
+              name: row.statusActorName || null,
+            }
+          : null,
+        shortlisted: isTeamLeaderLikeRole(row.statusActorRole)
+          ? {
+              rid: row.statusActorRid || null,
+              name: row.statusActorName || null,
+            }
+          : null,
+        joined: isTeamLeaderLikeRole(row.statusActorRole)
+          ? {
+              rid: row.statusActorRid || null,
+              name: row.statusActorName || null,
+            }
+          : null,
+        dropout: isTeamLeaderLikeRole(row.statusActorRole)
+          ? {
+              rid: row.statusActorRid || null,
+              name: row.statusActorName || null,
+            }
+          : null,
+        billed: isTeamLeaderLikeRole(row.statusActorRole)
+          ? {
+              rid: row.statusActorRid || null,
+              name: row.statusActorName || null,
+            }
+          : null,
+        left: isTeamLeaderLikeRole(row.statusActorRole)
+          ? {
+              rid: row.statusActorRid || null,
+              name: row.statusActorName || null,
+            }
+          : null,
+      };
+
       for (const metricKey of PERFORMANCE_EVENT_KEYS) {
         const eventAt = currentEventAtMap[metricKey];
         if (!isTimestampWithinInclusiveRange(eventAt, dateRange)) continue;
+        const effectiveTeamLeader = eventTeamLeaderByMetric[metricKey];
 
         statusDrilldown[metricKey].push(
           normalizePerformanceDrilldownItem({
             ...row,
             eventAt,
+            teamLeaderRid: effectiveTeamLeader?.rid || null,
+            teamLeaderName: effectiveTeamLeader?.name || null,
           }),
         );
         if (recruiterStats) {
