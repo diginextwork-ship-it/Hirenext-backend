@@ -3054,6 +3054,16 @@ const resolveRollbackSourceStatus = (resume) => {
   });
 
   if (currentStatus === "rejected") {
+    if (
+      hasNonEmptyValue(resume.currentJoiningDate) ||
+      hasNonEmptyValue(resume.selectedAtHistory) ||
+      hasNonEmptyValue(resume.selectedAt)
+    ) {
+      return "selected";
+    }
+    if (hasNonEmptyValue(resume.shortlistedAt)) {
+      return "shortlisted";
+    }
     if (hasNonEmptyValue(resume.currentWalkInDate) || hasNonEmptyValue(resume.walkInAt)) {
       return "walk_in";
     }
@@ -3736,6 +3746,7 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
         ei.verified_reason AS verifiedReason,
         ei.verified_at AS verifiedAt,
         ei.walk_in_at AS walkInAt,
+        ei.selected_at AS selectedAtHistory,
         ei.shortlisted_at AS shortlistedAt
       FROM resumes_data rd
       LEFT JOIN job_resume_selection jrs

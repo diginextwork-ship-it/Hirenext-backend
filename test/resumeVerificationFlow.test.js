@@ -1378,6 +1378,95 @@ test("admin rollback returns the actual previous workflow status and synced payl
   }
 });
 
+test("admin rollback restores selected when a rejected candidate still has selection history", async () => {
+  const resId = buildTempResumeId("rejadm");
+
+  await createPerformanceResume({
+    resId,
+    recruiterRid: "hnr-2",
+    jobJid: "JID-5",
+    uploadedAt: "2026-04-01 09:00:00",
+    candidateName: "Rejected Admin Candidate",
+    candidatePhone: "9991112233",
+    walkInDate: "2026-04-03",
+    joiningDate: "2026-04-08",
+    currentStatus: "rejected",
+    currentStatusAt: "2026-04-10 12:00:00",
+    extraInfo: {
+      verified_at: "2026-04-02 10:00:00",
+      walk_in_at: "2026-04-03 11:00:00",
+      shortlisted_at: "2026-04-04 12:00:00",
+      selected_at: "2026-04-05 13:00:00",
+      rejected_at: "2026-04-10 12:00:00",
+      reject_reason: "client closed the position",
+    },
+  });
+
+  try {
+    const rollbackResponse = await requestJson(
+      `/api/admin/resumes/${resId}/rollback-status`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+        },
+      },
+    );
+
+    assert.equal(rollbackResponse.status, 200);
+    assert.equal(rollbackResponse.body?.data?.previousStatus, "rejected");
+    assert.equal(rollbackResponse.body?.data?.workflowStatus, "selected");
+    assert.equal(rollbackResponse.body?.data?.status, "selected");
+    assert.equal(rollbackResponse.body?.data?.selection?.status, "selected");
+    assert.equal(rollbackResponse.body?.data?.joiningDate, "2026-04-08");
+  } finally {
+    await cleanupTempResume(resId);
+  }
+});
+
+test("team leader rollback restores selected when a rejected candidate still has selection history", async () => {
+  const resId = buildTempResumeId("rejjob");
+
+  await createPerformanceResume({
+    resId,
+    recruiterRid: "hnr-2",
+    jobJid: "JID-5",
+    uploadedAt: "2026-04-01 09:00:00",
+    candidateName: "Rejected Job Candidate",
+    candidatePhone: "9991112244",
+    walkInDate: "2026-04-03",
+    joiningDate: "2026-04-09",
+    currentStatus: "rejected",
+    currentStatusAt: "2026-04-11 12:00:00",
+    extraInfo: {
+      verified_at: "2026-04-02 10:00:00",
+      walk_in_at: "2026-04-03 11:00:00",
+      shortlisted_at: "2026-04-04 12:00:00",
+      selected_at: "2026-04-05 13:00:00",
+      rejected_at: "2026-04-11 12:00:00",
+      reject_reason: "candidate rejected by client",
+    },
+  });
+
+  try {
+    const rollbackResponse = await requestJson(
+      `/api/jobs/JID-5/resume-statuses/${resId}/rollback`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${teamLeaderToken}`,
+        },
+      },
+    );
+
+    assert.equal(rollbackResponse.status, 200);
+    assert.equal(rollbackResponse.body?.data?.previousStatus, "rejected");
+    assert.equal(rollbackResponse.body?.data?.status, "selected");
+  } finally {
+    await cleanupTempResume(resId);
+  }
+});
+
 test("admin performance endpoint applies inclusive date filters across summary, recruiters, team leaders, and drilldown", async () => {
   const todayDate = "2037-03-30";
   const yesterdayDate = "2037-03-29";

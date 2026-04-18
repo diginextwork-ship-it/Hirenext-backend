@@ -317,6 +317,8 @@ const resolveManualRollbackTarget = (resume = {}) => {
       : currentStatus;
 
   if (currentDerivedStatus === "rejected") {
+    if (resume.currentJoiningDate || resume.selectedAt) return "selected";
+    if (resume.shortlistedAt) return "shortlisted";
     if (resume.currentWalkInDate || resume.walkInAt) return "walk_in";
     if (resume.verifiedAt || resume.verifiedReason) return "verified";
     return "submitted";
@@ -1561,7 +1563,8 @@ router.post(
             ei.verified_reason AS verifiedReason,
             ei.verified_at AS verifiedAt,
             ei.walk_in_at AS walkInAt,
-            ei.selected_at AS selectedAt
+            ei.selected_at AS selectedAt,
+            ei.shortlisted_at AS shortlistedAt
           FROM resumes_data rd
           LEFT JOIN job_resume_selection jrs
             ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
