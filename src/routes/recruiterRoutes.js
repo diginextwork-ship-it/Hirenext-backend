@@ -2384,6 +2384,14 @@ const resolveRecruiterRollbackTarget = (resume = {}) => {
       : "shortlisted";
   }
 
+  if (currentStatus === "others") {
+    return resume.verifiedAt || resume.verifiedReason ? "verified" : "submitted";
+  }
+
+  if (currentStatus === "walk_in" && (resume.othersReason || resume.othersAt)) {
+    return "others";
+  }
+
   if (currentStatus === "left" || currentStatus === "billed") {
     return "joined";
   }

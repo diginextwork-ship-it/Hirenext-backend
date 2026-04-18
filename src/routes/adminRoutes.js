@@ -3137,6 +3137,20 @@ const resolveRollbackSourceStatus = (resume) => {
       : "shortlisted";
   }
 
+  if (currentStatus === "others") {
+    return hasNonEmptyValue(resume.verifiedAt) ||
+      hasNonEmptyValue(resume.verifiedReason)
+      ? CANONICAL_VERIFY_STATUS
+      : DEFAULT_WORKFLOW_STATUS;
+  }
+
+  if (
+    currentStatus === "walk_in" &&
+    (hasNonEmptyValue(resume.othersAt) || hasNonEmptyValue(resume.othersReason))
+  ) {
+    return "others";
+  }
+
   return getPreviousWorkflowStatus(currentStatus);
 };
 

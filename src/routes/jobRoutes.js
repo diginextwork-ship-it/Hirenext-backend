@@ -331,6 +331,14 @@ const resolveManualRollbackTarget = (resume = {}) => {
       : "shortlisted";
   }
 
+  if (currentDerivedStatus === "others") {
+    return resume.verifiedAt || resume.verifiedReason ? "verified" : "submitted";
+  }
+
+  if (currentDerivedStatus === "walk_in" && (resume.othersAt || resume.othersReason)) {
+    return "others";
+  }
+
   return getPreviousWorkflowStatus(currentDerivedStatus) || null;
 };
 

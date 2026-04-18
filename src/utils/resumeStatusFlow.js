@@ -47,7 +47,11 @@ const isSupportedResumeStatus = (value) =>
   CANONICAL_RESUME_STATUSES.has(normalizeResumeStatusInput(value));
 
 const ADMIN_STATUS_TRANSITIONS = {
-  [DEFAULT_WORKFLOW_STATUS]: new Set([CANONICAL_VERIFY_STATUS, "rejected"]),
+  [DEFAULT_WORKFLOW_STATUS]: new Set([
+    CANONICAL_VERIFY_STATUS,
+    "others",
+    "rejected",
+  ]),
   [CANONICAL_VERIFY_STATUS]: new Set(["walk_in", "others", "rejected"]),
   others: new Set(["walk_in", "rejected"]),
   walk_in: new Set(["shortlisted", "rejected"]),
@@ -61,6 +65,7 @@ const ADMIN_STATUS_TRANSITIONS = {
 };
 
 const RECRUITER_STATUS_TRANSITIONS = {
+  [DEFAULT_WORKFLOW_STATUS]: ["others", "rejected"],
   [CANONICAL_VERIFY_STATUS]: ["walk_in", "others", "rejected"],
   others: ["walk_in", "rejected"],
   walk_in: ["shortlisted", "rejected"],
