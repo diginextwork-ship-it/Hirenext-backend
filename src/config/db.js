@@ -896,6 +896,7 @@ const ensureExtraInfoTable = async () => {
       office_location_city VARCHAR(120) NULL,
       submitted_reason TEXT NULL,
       verified_reason TEXT NULL,
+      others_reason TEXT NULL,
       shortlisted_reason TEXT NULL,
       shortlisted_at TIMESTAMP NULL DEFAULT NULL,
       updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -943,6 +944,11 @@ const ensureExtraInfoTable = async () => {
   if (!(await columnExists("extra_info", "verified_reason"))) {
     await pool.query(
       "ALTER TABLE extra_info ADD COLUMN verified_reason TEXT NULL",
+    );
+  }
+  if (!(await columnExists("extra_info", "others_reason"))) {
+    await pool.query(
+      "ALTER TABLE extra_info ADD COLUMN others_reason TEXT NULL",
     );
   }
   if (!(await columnExists("extra_info", "shortlisted_reason"))) {
@@ -1001,6 +1007,7 @@ const ensureExtraInfoTable = async () => {
   const extraInfoTimestampColumns = [
     "submitted_at",
     "verified_at",
+    "others_at",
     "walk_in_at",
     "further_at",
     "selected_at",

@@ -308,6 +308,20 @@ const ensureRecruiterAccountStatusColumn = async () => {
   }
 };
 
+const ensurePerformanceExtraInfoColumns = async () => {
+  if (!(await columnExists("extra_info", "others_reason"))) {
+    await pool.query(
+      "ALTER TABLE extra_info ADD COLUMN others_reason TEXT NULL",
+    );
+  }
+
+  if (!(await columnExists("extra_info", "others_at"))) {
+    await pool.query(
+      "ALTER TABLE extra_info ADD COLUMN others_at TIMESTAMP NULL DEFAULT NULL",
+    );
+  }
+};
+
 const buildTaskAssignmentAdminRow = (row) => {
   const effectiveStatus = resolveEffectiveTaskAssignmentStatus(
     row.assignmentStatus,
@@ -4032,6 +4046,7 @@ router.get("/api/admin/resumes/:resId/file", async (req, res) => {
 router.get("/api/admin/performance", async (req, res) => {
   try {
     await ensureRecruiterAccountStatusColumn();
+    await ensurePerformanceExtraInfoColumns();
     const dateRange = parseInclusiveDateRange(
       req.query?.startDate,
       req.query?.endDate,
