@@ -4067,12 +4067,7 @@ router.get("/api/admin/performance", async (req, res) => {
         COALESCE(NULLIF(TRIM(r.account_status), ''), 'active') AS accountStatus,
         COALESCE(r.points, 0) AS points
       FROM recruiter r
-      WHERE LOWER(TRIM(COALESCE(r.role, 'recruiter'))) IN (
-        'recruiter',
-        'team leader',
-        'team_leader',
-        'job creator'
-      )
+      WHERE LOWER(TRIM(COALESCE(r.role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader')
       ORDER BY r.name ASC`,
     );
 
