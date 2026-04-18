@@ -189,7 +189,9 @@ const ensureMoneySumTable = async () => {
     );
   }
   if (!(await columnExists("money_sum", "res_id"))) {
-    await pool.query("ALTER TABLE money_sum ADD COLUMN res_id VARCHAR(30) NULL");
+    await pool.query(
+      "ALTER TABLE money_sum ADD COLUMN res_id VARCHAR(30) NULL",
+    );
   }
   if (!(await columnExists("money_sum", "created_at"))) {
     await pool.query(
@@ -406,14 +408,19 @@ const ensureRecruiterSalaryHistoryTable = async () => {
 
 const getRecruiterSalaryColumnMeta = async () => {
   const hasSalaryColumn = await columnExists("recruiter", "salary");
-  const hasMonthlySalaryColumn = await columnExists("recruiter", "monthly_salary");
+  const hasMonthlySalaryColumn = await columnExists(
+    "recruiter",
+    "monthly_salary",
+  );
   const hasDailySalaryColumn = await columnExists("recruiter", "daily_salary");
 
   return {
     hasSalaryColumn,
     hasMonthlySalaryColumn,
     hasDailySalaryColumn,
-    salarySelect: hasSalaryColumn ? "r.salary AS rawSalary," : "NULL AS rawSalary,",
+    salarySelect: hasSalaryColumn
+      ? "r.salary AS rawSalary,"
+      : "NULL AS rawSalary,",
     monthlySalarySelect: hasMonthlySalaryColumn
       ? "r.monthly_salary AS monthlySalary,"
       : "NULL AS monthlySalary,",
@@ -1486,8 +1493,7 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
             resId: row.resId,
             rid: row.rid,
             name: candidateSnapshot.name || row.candidateName || null,
-            candidateName:
-              candidateSnapshot.name || row.candidateName || null,
+            candidateName: candidateSnapshot.name || row.candidateName || null,
             candidatePhone:
               candidateSnapshot.phone || row.candidatePhone || null,
             phone: candidateSnapshot.phone || row.candidatePhone || null,
@@ -2264,7 +2270,8 @@ router.get("/api/admin/recruiters/list", async (req, res) => {
           email: row.email || null,
           role: normalizeStaffRole(row.role),
           currentSalary:
-            toMoneyOrNull(row.historyMonthlySalary) ?? legacySalary.monthlySalary,
+            toMoneyOrNull(row.historyMonthlySalary) ??
+            legacySalary.monthlySalary,
           currentSalaryEffectiveFrom: row.currentSalaryEffectiveFrom || null,
         };
       }),
@@ -2679,9 +2686,7 @@ router.post("/api/admin/tasks/:taskId/assign", async (req, res) => {
       error?.code === "ER_DUP_ENTRY"
         ? "This team member already has this task for today."
         : "Failed to assign task.";
-    return res.status(
-      error?.code === "ER_DUP_ENTRY" ? 409 : 500,
-    ).json({
+    return res.status(error?.code === "ER_DUP_ENTRY" ? 409 : 500).json({
       message,
       error: error.message,
     });
@@ -2996,7 +3001,11 @@ const resolveLatestPerformanceNote = (row = {}) => {
     walk_in: firstNonEmptyText(row.walkInReason, row.selectionNote),
     shortlisted: firstNonEmptyText(row.shortlistedReason, row.selectionNote),
     selected: firstNonEmptyText(row.selectReason, row.selectionNote),
-    joined: firstNonEmptyText(row.joinedReason, row.joiningNote, row.selectionNote),
+    joined: firstNonEmptyText(
+      row.joinedReason,
+      row.joiningNote,
+      row.selectionNote,
+    ),
     billed: firstNonEmptyText(row.billedReason, row.selectionNote),
     left: firstNonEmptyText(row.leftReason, row.selectionNote),
     dropout: firstNonEmptyText(row.dropoutReason, row.selectionNote),
@@ -3031,7 +3040,7 @@ const resolveCanonicalWorkflowStatus = ({
   status,
   joiningDate,
 } = {}) => {
-    const candidates = [workflowStatus, selectionStatus, status];
+  const candidates = [workflowStatus, selectionStatus, status];
   for (const candidate of candidates) {
     const normalized = normalizeResumeStatusInput(candidate);
     if (CANONICAL_WORKFLOW_STATUSES.includes(normalized)) {
@@ -3064,7 +3073,10 @@ const resolveRollbackSourceStatus = (resume) => {
     if (hasNonEmptyValue(resume.shortlistedAt)) {
       return "shortlisted";
     }
-    if (hasNonEmptyValue(resume.currentWalkInDate) || hasNonEmptyValue(resume.walkInAt)) {
+    if (
+      hasNonEmptyValue(resume.currentWalkInDate) ||
+      hasNonEmptyValue(resume.walkInAt)
+    ) {
       return "walk_in";
     }
     if (
@@ -3099,7 +3111,9 @@ const buildStatusHistory = (row = {}) => {
   const entries = [
     {
       status: "submitted",
-      changedAt: normalizePerformanceTimestamp(row.submittedAt || row.uploadedAt),
+      changedAt: normalizePerformanceTimestamp(
+        row.submittedAt || row.uploadedAt,
+      ),
       changedBy: row.submittedBy || null,
     },
     {
@@ -3168,10 +3182,12 @@ const buildWorkflowResponseFields = (row = {}, options = {}) => {
       row.selectionJoiningDate,
   });
   const allowedNextStatuses = getAllowedNextStatuses(workflowStatus);
-  const canRollback = Boolean(resolveRollbackSourceStatus({
-    ...row,
-    workflowStatus,
-  }));
+  const canRollback = Boolean(
+    resolveRollbackSourceStatus({
+      ...row,
+      workflowStatus,
+    }),
+  );
   const includeSelection =
     options.includeSelection !== undefined
       ? options.includeSelection
@@ -3184,27 +3200,35 @@ const buildWorkflowResponseFields = (row = {}, options = {}) => {
     ? {
         ...(row.selection || {}),
         status: workflowStatus,
-        note:
-          row.selection?.note ??
-          row.selectionNote ??
-          row.note ??
-          null,
+        note: row.selection?.note ?? row.selectionNote ?? row.note ?? null,
         selectedByAdmin:
           row.selection?.selectedByAdmin ?? row.selectedByAdmin ?? null,
         selectedAt: row.selection?.selectedAt ?? row.selectedAt ?? null,
         walkInDate:
-          row.selection?.walkInDate ?? row.walkInDate ?? row.currentWalkInDate ?? null,
+          row.selection?.walkInDate ??
+          row.walkInDate ??
+          row.currentWalkInDate ??
+          null,
         resumeJoiningDate:
           row.selection?.resumeJoiningDate ??
           row.resumeJoiningDate ??
           row.currentJoiningDate ??
           null,
         joiningDate:
-          row.selection?.joiningDate ?? row.joiningDate ?? row.currentJoiningDate ?? null,
+          row.selection?.joiningDate ??
+          row.joiningDate ??
+          row.currentJoiningDate ??
+          null,
         joinedReason:
-          row.selection?.joinedReason ?? row.joinedReason ?? row.joiningNote ?? null,
+          row.selection?.joinedReason ??
+          row.joinedReason ??
+          row.joiningNote ??
+          null,
         joiningNote:
-          row.selection?.joiningNote ?? row.joinedReason ?? row.joiningNote ?? null,
+          row.selection?.joiningNote ??
+          row.joinedReason ??
+          row.joiningNote ??
+          null,
         dropoutReason:
           row.selection?.dropoutReason ?? row.dropoutReason ?? null,
       }
@@ -3217,7 +3241,9 @@ const buildWorkflowResponseFields = (row = {}, options = {}) => {
     allowedNextStatuses,
     canRollback,
     statusHistory:
-      options.includeStatusHistory === false ? undefined : buildStatusHistory(row),
+      options.includeStatusHistory === false
+        ? undefined
+        : buildStatusHistory(row),
   };
 };
 
@@ -3344,85 +3370,85 @@ router.post(
   "/api/admin/resumes/:resId/advance-status",
   parseAdminAdvanceStatusRequest,
   async (req, res) => {
-  if (!ensureAdminAuthorized(req, res)) return;
+    if (!ensureAdminAuthorized(req, res)) return;
 
-  const normalizedResId = String(req.params.resId || "").trim();
-  if (!normalizedResId) {
-    return res.status(400).json({ message: "resId is required." });
-  }
+    const normalizedResId = String(req.params.resId || "").trim();
+    if (!normalizedResId) {
+      return res.status(400).json({ message: "resId is required." });
+    }
 
-  const newStatus = normalizeResumeStatusInput(req.body?.status);
-  const reason = resolveStatusReasonInput(req.body, newStatus);
-  const joiningDate = String(req.body?.joining_date || "").trim();
-  const joinedReasonSource =
-    req.body?.joinedReason ??
-    req.body?.joined_reason ??
-    req.body?.joiningNote ??
-    req.body?.joining_note;
-  const joinedReason =
-    joinedReasonSource === undefined || joinedReasonSource === null
-      ? null
-      : String(joinedReasonSource).trim();
-  const submittedRevenueAmount = resolveRevenueAmount(
-    req.body?.revenue,
-    req.body?.revenueAmount,
-    req.body?.candidateRevenue,
-    req.body?.companyRevenue,
-    req.body?.companyRev,
-    req.body?.company_rev,
-  );
+    const newStatus = normalizeResumeStatusInput(req.body?.status);
+    const reason = resolveStatusReasonInput(req.body, newStatus);
+    const joiningDate = String(req.body?.joining_date || "").trim();
+    const joinedReasonSource =
+      req.body?.joinedReason ??
+      req.body?.joined_reason ??
+      req.body?.joiningNote ??
+      req.body?.joining_note;
+    const joinedReason =
+      joinedReasonSource === undefined || joinedReasonSource === null
+        ? null
+        : String(joinedReasonSource).trim();
+    const submittedRevenueAmount = resolveRevenueAmount(
+      req.body?.revenue,
+      req.body?.revenueAmount,
+      req.body?.candidateRevenue,
+      req.body?.companyRevenue,
+      req.body?.companyRev,
+      req.body?.company_rev,
+    );
 
-  const allowedNewStatuses = new Set([
-    "verified",
-    "walk_in",
-    "selected",
-    "shortlisted",
-    "rejected",
-    "joined",
-    "dropout",
-    "billed",
-    "left",
-  ]);
-  if (!allowedNewStatuses.has(newStatus)) {
-    return res.status(400).json({ message: "Invalid target status." });
-  }
+    const allowedNewStatuses = new Set([
+      "verified",
+      "walk_in",
+      "selected",
+      "shortlisted",
+      "rejected",
+      "joined",
+      "dropout",
+      "billed",
+      "left",
+    ]);
+    if (!allowedNewStatuses.has(newStatus)) {
+      return res.status(400).json({ message: "Invalid target status." });
+    }
 
-  const effectiveReason = reason;
+    const effectiveReason = reason;
 
-  const joiningDateRequiredStatuses = new Set(["selected"]);
+    const joiningDateRequiredStatuses = new Set(["selected"]);
 
-  if (joiningDateRequiredStatuses.has(newStatus)) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(joiningDate)) {
+    if (joiningDateRequiredStatuses.has(newStatus)) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(joiningDate)) {
+        return res.status(400).json({
+          message: "joining_date is required in YYYY-MM-DD format.",
+        });
+      }
+    } else if (newStatus === "shortlisted" && joiningDate) {
       return res.status(400).json({
-        message: "joining_date is required in YYYY-MM-DD format.",
+        message: "joining_date should only be provided for selected.",
+      });
+    } else if (joiningDate && !/^\d{4}-\d{2}-\d{2}$/.test(joiningDate)) {
+      return res.status(400).json({
+        message: "joining_date must be in YYYY-MM-DD format.",
       });
     }
-  } else if (newStatus === "shortlisted" && joiningDate) {
-    return res.status(400).json({
-      message: "joining_date should only be provided for selected.",
-    });
-  } else if (joiningDate && !/^\d{4}-\d{2}-\d{2}$/.test(joiningDate)) {
-    return res.status(400).json({
-      message: "joining_date must be in YYYY-MM-DD format.",
-    });
-  }
 
-  const reasonRequiredStatuses = new Set(["rejected", "dropout", "left"]);
-  if (reasonRequiredStatuses.has(newStatus) && !reason) {
-    return res
-      .status(400)
-      .json({ message: "reason is required for this status transition." });
-  }
+    const reasonRequiredStatuses = new Set(["rejected", "dropout", "left"]);
+    if (reasonRequiredStatuses.has(newStatus) && !reason) {
+      return res
+        .status(400)
+        .json({ message: "reason is required for this status transition." });
+    }
 
-  const isBilledStatus = newStatus === "billed";
+    const isBilledStatus = newStatus === "billed";
 
-  const connection = await pool.getConnection();
-  try {
-    await connection.beginTransaction();
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
 
-    // Fetch the resume and its current workflow status
-    const [resumeRows] = await connection.query(
-      `SELECT
+      // Fetch the resume and its current workflow status
+      const [resumeRows] = await connection.query(
+        `SELECT
         rd.res_id AS resId,
         rd.rid,
         rd.job_jid AS jobJid,
@@ -3441,287 +3467,288 @@ router.post(
       WHERE rd.res_id = ?
       LIMIT 1
       FOR UPDATE`,
-      [normalizedResId],
-    );
+        [normalizedResId],
+      );
 
-    if (resumeRows.length === 0) {
-      await connection.rollback();
-      return res.status(404).json({ message: "Resume not found." });
-    }
+      if (resumeRows.length === 0) {
+        await connection.rollback();
+        return res.status(404).json({ message: "Resume not found." });
+      }
 
-    const resume = resumeRows[0];
-    const parsedResumePayload = parseJsonField(resume.atsRawJson);
-    const adminStatusCandidateSnapshot = extractCandidateSnapshot({
-      source: {
-        candidate_name:
-          req.body?.candidate_name ??
-          req.body?.candidateName ??
-          resume.candidateName,
-        candidate_email:
-          req.body?.candidate_email ??
-          req.body?.candidateEmail ??
-          resume.candidateEmail,
-        candidate_phone: req.body?.candidate_phone ?? req.body?.candidatePhone,
-        job_jid: resume.jobJid,
-        recruiter_rid: resume.rid,
-      },
-      parsedData:
-        parsedResumePayload?.parsed_data ||
-        parsedResumePayload?.parsedData ||
-        parsedResumePayload,
-      fallback: {
-        jobJid: resume.jobJid,
-        recruiterRid: resume.rid,
-      },
-    });
-    const currentStatus = normalizeWorkflowStatus(resume.currentStatus);
-    const currentDerivedStatus = resolveCanonicalWorkflowStatus({
-      workflowStatus: currentStatus,
-      joiningDate: resume.currentJoiningDate,
-    });
-    const resolvedRevenueAmount = resolveRevenueAmount(
-      resume.candidateRevenue,
-      resume.companyRevenue,
-    );
-    const joinedRevenueAmount =
-      newStatus === "joined" ? submittedRevenueAmount : undefined;
-    const billedRevenueAmount = isBilledStatus
-      ? resolvedRevenueAmount
-      : undefined;
-
-    if (
-      newStatus === "joined" &&
-      (!Number.isFinite(joinedRevenueAmount) || joinedRevenueAmount <= 0)
-    ) {
-      await connection.rollback();
-      return res.status(422).json({
-        message: "Revenue amount is required before moving candidate to joined.",
+      const resume = resumeRows[0];
+      const parsedResumePayload = parseJsonField(resume.atsRawJson);
+      const adminStatusCandidateSnapshot = extractCandidateSnapshot({
+        source: {
+          candidate_name:
+            req.body?.candidate_name ??
+            req.body?.candidateName ??
+            resume.candidateName,
+          candidate_email:
+            req.body?.candidate_email ??
+            req.body?.candidateEmail ??
+            resume.candidateEmail,
+          candidate_phone:
+            req.body?.candidate_phone ?? req.body?.candidatePhone,
+          job_jid: resume.jobJid,
+          recruiter_rid: resume.rid,
+        },
+        parsedData:
+          parsedResumePayload?.parsed_data ||
+          parsedResumePayload?.parsedData ||
+          parsedResumePayload,
+        fallback: {
+          jobJid: resume.jobJid,
+          recruiterRid: resume.rid,
+        },
       });
-    }
+      const currentStatus = normalizeWorkflowStatus(resume.currentStatus);
+      const currentDerivedStatus = resolveCanonicalWorkflowStatus({
+        workflowStatus: currentStatus,
+        joiningDate: resume.currentJoiningDate,
+      });
+      const resolvedRevenueAmount = resolveRevenueAmount(
+        resume.candidateRevenue,
+        resume.companyRevenue,
+      );
+      const joinedRevenueAmount =
+        newStatus === "joined" ? submittedRevenueAmount : undefined;
+      const billedRevenueAmount = isBilledStatus
+        ? resolvedRevenueAmount
+        : undefined;
 
-    // Validate transition. Allow billed->billed as an idempotent admin retry.
-    const isIdempotentBilledRetry =
-      currentDerivedStatus === "billed" && newStatus === "billed";
-    if (!isIdempotentBilledRetry) {
-      const allowedTransitions = getAllowedNextStatuses(currentDerivedStatus);
-      if (!allowedTransitions.includes(newStatus)) {
+      if (
+        newStatus === "joined" &&
+        (!Number.isFinite(joinedRevenueAmount) || joinedRevenueAmount <= 0)
+      ) {
         await connection.rollback();
-        return res
-          .status(400)
-          .json(buildInvalidTransitionPayload(currentDerivedStatus, newStatus));
-      }
-    }
-
-    if (newStatus === "billed") {
-      if (!req.file) {
-        await connection.rollback();
-        return res.status(400).json({
-          message: "photo PDF attachment is required for billed status.",
+        return res.status(422).json({
+          message:
+            "Revenue amount is required before moving candidate to joined.",
         });
       }
 
-      const billedMimeType = String(req.file.mimetype || "")
-        .trim()
-        .toLowerCase();
-      if (billedMimeType !== "application/pdf") {
-        await connection.rollback();
-        return res.status(400).json({
-          message: "Only PDF attachments are allowed for billed status.",
-        });
+      // Validate transition. Allow billed->billed as an idempotent admin retry.
+      const isIdempotentBilledRetry =
+        currentDerivedStatus === "billed" && newStatus === "billed";
+      if (!isIdempotentBilledRetry) {
+        const allowedTransitions = getAllowedNextStatuses(currentDerivedStatus);
+        if (!allowedTransitions.includes(newStatus)) {
+          await connection.rollback();
+          return res
+            .status(400)
+            .json(
+              buildInvalidTransitionPayload(currentDerivedStatus, newStatus),
+            );
+        }
       }
-    }
 
-    const effectiveJoiningDate = /^\d{4}-\d{2}-\d{2}$/.test(joiningDate)
-      ? joiningDate
-      : resume.currentJoiningDate || null;
-    const joiningDateValue =
-      newStatus === "selected" || newStatus === "joined"
-        ? effectiveJoiningDate
-        : null;
-    const selectionNoteValue =
-      newStatus === "joined" ? joinedReason || effectiveReason || null : effectiveReason || null;
+      if (newStatus === "billed") {
+        if (!req.file) {
+          await connection.rollback();
+          return res.status(400).json({
+            message: "photo PDF attachment is required for billed status.",
+          });
+        }
 
-    if (resume.jobJid) {
-      await connection.query(
-        `INSERT INTO job_resume_selection
+        const billedMimeType = String(req.file.mimetype || "")
+          .trim()
+          .toLowerCase();
+        if (billedMimeType !== "application/pdf") {
+          await connection.rollback();
+          return res.status(400).json({
+            message: "Only PDF attachments are allowed for billed status.",
+          });
+        }
+      }
+
+      const effectiveJoiningDate = /^\d{4}-\d{2}-\d{2}$/.test(joiningDate)
+        ? joiningDate
+        : resume.currentJoiningDate || null;
+      const joiningDateValue =
+        newStatus === "selected" || newStatus === "joined"
+          ? effectiveJoiningDate
+          : null;
+      const selectionNoteValue =
+        newStatus === "joined"
+          ? joinedReason || effectiveReason || null
+          : effectiveReason || null;
+
+      if (resume.jobJid) {
+        await connection.query(
+          `INSERT INTO job_resume_selection
           (job_jid, res_id, selected_by_admin, selection_status, selection_note)
         VALUES (?, ?, 'admin-panel', ?, ?)
         ON DUPLICATE KEY UPDATE
           selection_status = VALUES(selection_status),
           selection_note = VALUES(selection_note),
           selected_at = CURRENT_TIMESTAMP`,
-        [
-          resume.jobJid,
-          normalizedResId,
-          newStatus,
-          selectionNoteValue,
-        ],
-      );
-    }
-
-    let candidateJoiningDateValue = resume.currentJoiningDate || null;
-    if (newStatus === "shortlisted") {
-      candidateJoiningDateValue = null;
-    } else if (newStatus === "selected") {
-      candidateJoiningDateValue = joiningDate;
-    } else if (newStatus === "joined" && effectiveJoiningDate) {
-      candidateJoiningDateValue = effectiveJoiningDate;
-    }
-
-    await upsertCandidateFields(connection, {
-      resId: normalizedResId,
-      cid: undefined,
-      jobJid: resume.jobJid || undefined,
-      recruiterRid: resume.rid || undefined,
-      name: adminStatusCandidateSnapshot.name || undefined,
-      phone: adminStatusCandidateSnapshot.phone || undefined,
-      email: adminStatusCandidateSnapshot.email || undefined,
-      levelOfEdu: adminStatusCandidateSnapshot.levelOfEdu || undefined,
-      boardUni: adminStatusCandidateSnapshot.boardUni || undefined,
-      institutionName:
-        adminStatusCandidateSnapshot.institutionName || undefined,
-      age: adminStatusCandidateSnapshot.age,
-      joiningDate: candidateJoiningDateValue,
-      revenue:
-        newStatus === "joined"
-          ? joinedRevenueAmount
-          : newStatus === "billed"
-            ? billedRevenueAmount
-            : undefined,
-    });
-
-    const reasonField = STATUS_REASON_FIELD_MAP[newStatus];
-    const statusReasonValue =
-      newStatus === "joined" ? joinedReason : effectiveReason || null;
-    const statusTimestampFieldMap = {
-      verified: "verifiedAt",
-      walk_in: "walkInAt",
-      further: "furtherAt",
-      selected: "selectedAt",
-      shortlisted: "shortlistedAt",
-      joined: "joinedAt",
-      rejected: "rejectedAt",
-      dropout: "dropoutAt",
-      billed: "billedAt",
-      left: "leftAt",
-    };
-
-    if (reasonField) {
-      await upsertExtraInfoFields(connection, {
-        resId: normalizedResId,
-        jobJid: resume.jobJid || undefined,
-        recruiterRid: resume.rid || undefined,
-        [reasonField]: statusReasonValue,
-        [statusTimestampFieldMap[newStatus]]: "__CURRENT_TIMESTAMP__",
-      });
-    } else if (statusTimestampFieldMap[newStatus]) {
-      await upsertExtraInfoFields(connection, {
-        resId: normalizedResId,
-        jobJid: resume.jobJid || undefined,
-        recruiterRid: resume.rid || undefined,
-        [statusTimestampFieldMap[newStatus]]: "__CURRENT_TIMESTAMP__",
-      });
-    }
-
-    if (newStatus === "joined") {
-      const intakeEntry = await addCandidateBillIntakeEntry(
-        connection,
-        normalizedResId,
-        {
-          amount: joinedRevenueAmount,
-          reason:
-            joinedReason ||
-            effectiveReason ||
-            "candidate joined revenue",
-        },
-      );
-      if (!intakeEntry) {
-        throw new Error(
-          "Failed to create joined intake entry in money_sum for this candidate.",
+          [resume.jobJid, normalizedResId, newStatus, selectionNoteValue],
         );
       }
-    }
 
-    // Credit points_per_joining to the recruiter when candidate reaches billed status
-    if (newStatus === "billed") {
-      // Credit points_per_joining to the recruiter when candidate reaches billed status
-      if (resume.rid && resume.jobJid) {
-        const [jobPtsRows] = await connection.query(
-          "SELECT COALESCE(points_per_joining, 0) AS pts FROM jobs WHERE jid = ? LIMIT 1",
-          [resume.jobJid],
+      let candidateJoiningDateValue = resume.currentJoiningDate || null;
+      if (newStatus === "shortlisted") {
+        candidateJoiningDateValue = null;
+      } else if (newStatus === "selected") {
+        candidateJoiningDateValue = joiningDate;
+      } else if (newStatus === "joined" && effectiveJoiningDate) {
+        candidateJoiningDateValue = effectiveJoiningDate;
+      }
+
+      await upsertCandidateFields(connection, {
+        resId: normalizedResId,
+        cid: undefined,
+        jobJid: resume.jobJid || undefined,
+        recruiterRid: resume.rid || undefined,
+        name: adminStatusCandidateSnapshot.name || undefined,
+        phone: adminStatusCandidateSnapshot.phone || undefined,
+        email: adminStatusCandidateSnapshot.email || undefined,
+        levelOfEdu: adminStatusCandidateSnapshot.levelOfEdu || undefined,
+        boardUni: adminStatusCandidateSnapshot.boardUni || undefined,
+        institutionName:
+          adminStatusCandidateSnapshot.institutionName || undefined,
+        age: adminStatusCandidateSnapshot.age,
+        joiningDate: candidateJoiningDateValue,
+        revenue:
+          newStatus === "joined"
+            ? joinedRevenueAmount
+            : newStatus === "billed"
+              ? billedRevenueAmount
+              : undefined,
+      });
+
+      const reasonField = STATUS_REASON_FIELD_MAP[newStatus];
+      const statusReasonValue =
+        newStatus === "joined" ? joinedReason : effectiveReason || null;
+      const statusTimestampFieldMap = {
+        verified: "verifiedAt",
+        walk_in: "walkInAt",
+        further: "furtherAt",
+        selected: "selectedAt",
+        shortlisted: "shortlistedAt",
+        joined: "joinedAt",
+        rejected: "rejectedAt",
+        dropout: "dropoutAt",
+        billed: "billedAt",
+        left: "leftAt",
+      };
+
+      if (reasonField) {
+        await upsertExtraInfoFields(connection, {
+          resId: normalizedResId,
+          jobJid: resume.jobJid || undefined,
+          recruiterRid: resume.rid || undefined,
+          [reasonField]: statusReasonValue,
+          [statusTimestampFieldMap[newStatus]]: "__CURRENT_TIMESTAMP__",
+        });
+      } else if (statusTimestampFieldMap[newStatus]) {
+        await upsertExtraInfoFields(connection, {
+          resId: normalizedResId,
+          jobJid: resume.jobJid || undefined,
+          recruiterRid: resume.rid || undefined,
+          [statusTimestampFieldMap[newStatus]]: "__CURRENT_TIMESTAMP__",
+        });
+      }
+
+      if (newStatus === "joined") {
+        const intakeEntry = await addCandidateBillIntakeEntry(
+          connection,
+          normalizedResId,
+          {
+            amount: joinedRevenueAmount,
+            reason:
+              joinedReason || effectiveReason || "candidate joined revenue",
+          },
         );
-        const pts = Number(jobPtsRows?.[0]?.pts) || 0;
-        if (pts > 0) {
-          await connection.query(
-            "UPDATE recruiter SET points = COALESCE(points, 0) + ? WHERE rid = ?",
-            [pts, resume.rid],
-          );
-          await connection.query(
-            `INSERT INTO recruiter_points_log (recruiter_rid, job_jid, res_id, points, reason)
-             VALUES (?, ?, ?, ?, 'billed')`,
-            [resume.rid, resume.jobJid, normalizedResId, pts],
+        if (!intakeEntry) {
+          throw new Error(
+            "Failed to create joined intake entry in money_sum for this candidate.",
           );
         }
       }
 
-      const intakeEntry = await addCandidateBillIntakeEntry(
+      // Credit points_per_joining to the recruiter when candidate reaches billed status
+      if (newStatus === "billed") {
+        // Credit points_per_joining to the recruiter when candidate reaches billed status
+        if (resume.rid && resume.jobJid) {
+          const [jobPtsRows] = await connection.query(
+            "SELECT COALESCE(points_per_joining, 0) AS pts FROM jobs WHERE jid = ? LIMIT 1",
+            [resume.jobJid],
+          );
+          const pts = Number(jobPtsRows?.[0]?.pts) || 0;
+          if (pts > 0) {
+            await connection.query(
+              "UPDATE recruiter SET points = COALESCE(points, 0) + ? WHERE rid = ?",
+              [pts, resume.rid],
+            );
+            await connection.query(
+              `INSERT INTO recruiter_points_log (recruiter_rid, job_jid, res_id, points, reason)
+             VALUES (?, ?, ?, ?, 'billed')`,
+              [resume.rid, resume.jobJid, normalizedResId, pts],
+            );
+          }
+        }
+
+        const intakeEntry = await addCandidateBillIntakeEntry(
+          connection,
+          normalizedResId,
+          {
+            amount: billedRevenueAmount,
+            reason: effectiveReason || "candidate's bill",
+            photo: toRevenueAttachmentDataUrl(req.file) || null,
+          },
+        );
+        if (!intakeEntry) {
+          throw new Error(
+            "Failed to create billed intake entry in money_sum for this candidate.",
+          );
+        }
+      }
+
+      const updatedResumePayload = await fetchAdminResumeWorkflowPayload(
         connection,
         normalizedResId,
-        {
-          amount: billedRevenueAmount,
-          reason: effectiveReason || "candidate's bill",
-          photo: toRevenueAttachmentDataUrl(req.file) || null,
-        },
       );
-      if (!intakeEntry) {
-        throw new Error(
-          "Failed to create billed intake entry in money_sum for this candidate.",
-        );
-      }
-    }
-
-    const updatedResumePayload = await fetchAdminResumeWorkflowPayload(
-      connection,
-      normalizedResId,
-    );
-    const responseFields = buildResumeCompatibilityFields({
-      ...updatedResumePayload,
-      reason: newStatus === "joined" ? joinedReason : effectiveReason || null,
-      note: newStatus === "joined" ? joinedReason : effectiveReason || null,
-    });
-
-    await connection.commit();
-    return res.status(200).json({
-      message: "Status updated successfully.",
-      data: {
+      const responseFields = buildResumeCompatibilityFields({
         ...updatedResumePayload,
-        ...responseFields,
         reason: newStatus === "joined" ? joinedReason : effectiveReason || null,
-        verifiedReason:
-          newStatus === CANONICAL_VERIFY_STATUS
-            ? responseFields.verifiedReason
-            : updatedResumePayload?.verifiedReason ?? null,
-        joining_date: responseFields.joiningDate ?? joiningDateValue,
-        revenue:
-          newStatus === "joined"
-            ? joinedRevenueAmount
-            : resolvedRevenueAmount,
-        company_rev:
-          newStatus === "billed"
-            ? billedRevenueAmount
-            : resolvedRevenueAmount,
-      },
-    });
-  } catch (error) {
-    await connection.rollback();
-    return res.status(500).json({
-      message: "Failed to advance resume status.",
-      error: error.message,
-    });
-  } finally {
-    connection.release();
-  }
-});
+        note: newStatus === "joined" ? joinedReason : effectiveReason || null,
+      });
+
+      await connection.commit();
+      return res.status(200).json({
+        message: "Status updated successfully.",
+        data: {
+          ...updatedResumePayload,
+          ...responseFields,
+          reason:
+            newStatus === "joined" ? joinedReason : effectiveReason || null,
+          verifiedReason:
+            newStatus === CANONICAL_VERIFY_STATUS
+              ? responseFields.verifiedReason
+              : (updatedResumePayload?.verifiedReason ?? null),
+          joining_date: responseFields.joiningDate ?? joiningDateValue,
+          revenue:
+            newStatus === "joined"
+              ? joinedRevenueAmount
+              : resolvedRevenueAmount,
+          company_rev:
+            newStatus === "billed"
+              ? billedRevenueAmount
+              : resolvedRevenueAmount,
+        },
+      });
+    } catch (error) {
+      await connection.rollback();
+      return res.status(500).json({
+        message: "Failed to advance resume status.",
+        error: error.message,
+      });
+    } finally {
+      connection.release();
+    }
+  },
+);
 
 router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
   if (!ensureAdminAuthorized(req, res)) return;
@@ -3913,8 +3940,7 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
   } finally {
     connection.release();
   }
-},
-);
+});
 
 // ─── Admin Performance Dashboard ───────────────────────────────────────────────
 router.get("/api/admin/resumes/:resId/file", async (req, res) => {
@@ -4021,7 +4047,9 @@ router.get("/api/admin/performance", async (req, res) => {
       name: row.name,
       email: row.email,
       accountStatus:
-        String(row.accountStatus || "active").trim().toLowerCase() === "inactive"
+        String(row.accountStatus || "active")
+          .trim()
+          .toLowerCase() === "inactive"
           ? "inactive"
           : "active",
       points: Number(row.points) || 0,
@@ -4042,6 +4070,14 @@ router.get("/api/admin/performance", async (req, res) => {
       WHERE LOWER(TRIM(COALESCE(r.role, 'recruiter'))) = 'recruiter'
       ORDER BY r.name ASC`,
     );
+
+    // Build submission date filter clause (count resumes submitted in this period)
+    const submissionDateClause = dateRange.hasDateRange
+      ? "AND rd.uploaded_at >= ? AND rd.uploaded_at <= ?"
+      : "";
+    const submissionDateParams = dateRange.hasDateRange
+      ? [dateRange.startDateTime, dateRange.endDateTime]
+      : [];
 
     const [performanceRows] = await pool.query(
       `SELECT
@@ -4181,7 +4217,9 @@ router.get("/api/admin/performance", async (req, res) => {
           'team_leader',
           'job creator'
         )
+        ${submissionDateClause}
       ORDER BY rd.uploaded_at DESC, rd.res_id DESC`,
+      submissionDateParams,
     );
 
     const normalizePerformanceDrilldownItem = (row) => {
@@ -4251,8 +4289,9 @@ router.get("/api/admin/performance", async (req, res) => {
           name: row.name,
           email: row.email,
           accountStatus:
-            String(row.accountStatus || "active").trim().toLowerCase() ===
-            "inactive"
+            String(row.accountStatus || "active")
+              .trim()
+              .toLowerCase() === "inactive"
               ? "inactive"
               : "active",
           points: Number(row.points) || 0,
@@ -4301,99 +4340,152 @@ router.get("/api/admin/performance", async (req, res) => {
         joiningDate: row.joiningDate,
       });
 
-      const currentEventAtMap = {
-        submitted: row.submittedAt,
-        verified: row.verifiedAt,
-        walk_in: row.walkInAt,
-        selected: row.selectedAt,
-        rejected: row.rejectedAt,
-        shortlisted: row.shortlistedAt,
-        joined: row.joinedAt,
-        dropout: row.dropoutAt,
-        billed: row.billedAt,
-        left: row.leftAt,
+      // Count each resume by its CURRENT status (not by when transitions occurred)
+      // This ensures accurate status breakdown for submitted resumes
+      const currentStatus = normalizeWorkflowStatus(
+        row.workflowStatus,
+        "submitted",
+      );
+
+      // Add resume to "submitted" status drilldown (all submitted resumes)
+      statusDrilldown.submitted.push(
+        normalizePerformanceDrilldownItem({
+          ...row,
+          eventAt: row.submittedAt,
+          teamLeaderRid: isTeamLeaderLikeRole(row.recruiterRole)
+            ? row.recruiterRid || null
+            : null,
+          teamLeaderName: isTeamLeaderLikeRole(row.recruiterRole)
+            ? row.recruiterName || null
+            : null,
+        }),
+      );
+
+      if (recruiterStats) {
+        recruiterStats.submitted += 1;
+        if (
+          !recruiterStats.lastUpdated ||
+          row.submittedAt > recruiterStats.lastUpdated
+        ) {
+          recruiterStats.lastUpdated = row.submittedAt;
+        }
+      }
+
+      // Add resume to status drilldowns based on its current workflow status
+      // Map each status to which drilldown bucket it belongs in
+      const statusToDrilldown = {
+        verified: [
+          {
+            key: "verified",
+            teamLeaderSource: row.statusActorRole,
+            teamLeaderRid: row.statusActorRid,
+            teamLeaderName: row.statusActorName,
+            eventAt: row.verifiedAt,
+          },
+        ],
+        walk_in: [
+          {
+            key: "walk_in",
+            teamLeaderSource: row.statusActorRole,
+            teamLeaderRid: row.statusActorRid,
+            teamLeaderName: row.statusActorName,
+            eventAt: row.walkInAt,
+          },
+        ],
+        shortlisted: [
+          {
+            key: "shortlisted",
+            teamLeaderSource: row.statusActorRole,
+            teamLeaderRid: row.statusActorRid,
+            teamLeaderName: row.statusActorName,
+            eventAt: row.shortlistedAt,
+          },
+        ],
+        selected: [
+          {
+            key: "selected",
+            teamLeaderSource: row.statusActorRole,
+            teamLeaderRid: row.statusActorRid,
+            teamLeaderName: row.statusActorName,
+            eventAt: row.selectedAt,
+          },
+        ],
+        rejected: [
+          {
+            key: "rejected",
+            teamLeaderSource: row.statusActorRole,
+            teamLeaderRid: row.statusActorRid,
+            teamLeaderName: row.statusActorName,
+            eventAt: row.rejectedAt,
+          },
+        ],
+        joined: [
+          {
+            key: "joined",
+            teamLeaderSource: row.statusActorRole,
+            teamLeaderRid: row.statusActorRid,
+            teamLeaderName: row.statusActorName,
+            eventAt: row.joinedAt,
+          },
+        ],
+        dropout: [
+          {
+            key: "dropout",
+            teamLeaderSource: row.statusActorRole,
+            teamLeaderRid: row.statusActorRid,
+            teamLeaderName: row.statusActorName,
+            eventAt: row.dropoutAt,
+          },
+        ],
+        billed: [
+          {
+            key: "billed",
+            teamLeaderSource: row.statusActorRole,
+            teamLeaderRid: row.statusActorRid,
+            teamLeaderName: row.statusActorName,
+            eventAt: row.billedAt,
+          },
+        ],
+        left: [
+          {
+            key: "left",
+            teamLeaderSource: row.statusActorRole,
+            teamLeaderRid: row.statusActorRid,
+            teamLeaderName: row.statusActorName,
+            eventAt: row.leftAt,
+          },
+        ],
       };
 
-      const eventTeamLeaderByMetric = {
-        submitted: isTeamLeaderLikeRole(row.recruiterRole)
-          ? {
-              rid: row.recruiterRid || null,
-              name: row.recruiterName || null,
-            }
-          : null,
-        verified: isTeamLeaderLikeRole(row.statusActorRole)
-          ? {
-              rid: row.statusActorRid || null,
-              name: row.statusActorName || null,
-            }
-          : null,
-        walk_in: isTeamLeaderLikeRole(row.statusActorRole)
-          ? {
-              rid: row.statusActorRid || null,
-              name: row.statusActorName || null,
-            }
-          : null,
-        selected: isTeamLeaderLikeRole(row.statusActorRole)
-          ? {
-              rid: row.statusActorRid || null,
-              name: row.statusActorName || null,
-            }
-          : null,
-        rejected: isTeamLeaderLikeRole(row.statusActorRole)
-          ? {
-              rid: row.statusActorRid || null,
-              name: row.statusActorName || null,
-            }
-          : null,
-        shortlisted: isTeamLeaderLikeRole(row.statusActorRole)
-          ? {
-              rid: row.statusActorRid || null,
-              name: row.statusActorName || null,
-            }
-          : null,
-        joined: isTeamLeaderLikeRole(row.statusActorRole)
-          ? {
-              rid: row.statusActorRid || null,
-              name: row.statusActorName || null,
-            }
-          : null,
-        dropout: isTeamLeaderLikeRole(row.statusActorRole)
-          ? {
-              rid: row.statusActorRid || null,
-              name: row.statusActorName || null,
-            }
-          : null,
-        billed: isTeamLeaderLikeRole(row.statusActorRole)
-          ? {
-              rid: row.statusActorRid || null,
-              name: row.statusActorName || null,
-            }
-          : null,
-        left: isTeamLeaderLikeRole(row.statusActorRole)
-          ? {
-              rid: row.statusActorRid || null,
-              name: row.statusActorName || null,
-            }
-          : null,
-      };
+      if (currentStatus !== "submitted" && statusToDrilldown[currentStatus]) {
+        for (const drilldownEntry of statusToDrilldown[currentStatus]) {
+          statusDrilldown[drilldownEntry.key].push(
+            normalizePerformanceDrilldownItem({
+              ...row,
+              eventAt: drilldownEntry.eventAt,
+              teamLeaderRid: isTeamLeaderLikeRole(
+                drilldownEntry.teamLeaderSource,
+              )
+                ? drilldownEntry.teamLeaderRid || null
+                : null,
+              teamLeaderName: isTeamLeaderLikeRole(
+                drilldownEntry.teamLeaderSource,
+              )
+                ? drilldownEntry.teamLeaderName || null
+                : null,
+            }),
+          );
 
-      for (const metricKey of PERFORMANCE_EVENT_KEYS) {
-        const eventAt = currentEventAtMap[metricKey];
-        if (!isTimestampWithinInclusiveRange(eventAt, dateRange)) continue;
-        const effectiveTeamLeader = eventTeamLeaderByMetric[metricKey];
-
-        statusDrilldown[metricKey].push(
-          normalizePerformanceDrilldownItem({
-            ...row,
-            eventAt,
-            teamLeaderRid: effectiveTeamLeader?.rid || null,
-            teamLeaderName: effectiveTeamLeader?.name || null,
-          }),
-        );
-        if (recruiterStats) {
-          recruiterStats[PERFORMANCE_EVENT_META[metricKey].recruiterField] += 1;
-          if (!recruiterStats.lastUpdated || eventAt > recruiterStats.lastUpdated) {
-            recruiterStats.lastUpdated = eventAt;
+          if (recruiterStats && PERFORMANCE_EVENT_META[drilldownEntry.key]) {
+            recruiterStats[
+              PERFORMANCE_EVENT_META[drilldownEntry.key].recruiterField
+            ] += 1;
+            if (
+              !recruiterStats.lastUpdated ||
+              drilldownEntry.eventAt > recruiterStats.lastUpdated
+            ) {
+              recruiterStats.lastUpdated = drilldownEntry.eventAt;
+            }
           }
         }
       }
@@ -4421,27 +4513,30 @@ router.get("/api/admin/performance", async (req, res) => {
               ? Number(((shortlisted / verified) * 100).toFixed(1))
               : 0,
           joiningRate:
-            selected > 0
-              ? Number(((joined / selected) * 100).toFixed(1))
-              : 0,
+            selected > 0 ? Number(((joined / selected) * 100).toFixed(1)) : 0,
           dropoutRate:
-            selected > 0
-              ? Number(((dropout / selected) * 100).toFixed(1))
-              : 0,
+            selected > 0 ? Number(((dropout / selected) * 100).toFixed(1)) : 0,
           billingRate:
             joined > 0 ? Number(((billed / joined) * 100).toFixed(1)) : 0,
-          leftRate:
-            billed > 0 ? Number(((left / billed) * 100).toFixed(1)) : 0,
+          leftRate: billed > 0 ? Number(((left / billed) * 100).toFixed(1)) : 0,
         };
       })
-      .sort((a, b) => b.submitted - a.submitted || a.name.localeCompare(b.name));
+      .sort(
+        (a, b) => b.submitted - a.submitted || a.name.localeCompare(b.name),
+      );
 
     // ── Summary totals ──────────────────────────────────────────────────────
     const summary = {
       totalTeamLeaders: teamLeaders.length,
       totalRecruiters: recruiters.length,
-      totalJobsCreated: teamLeaders.reduce((sum, tl) => sum + tl.jobsCreated, 0),
-      totalPositions: teamLeaders.reduce((sum, tl) => sum + tl.totalPositions, 0),
+      totalJobsCreated: teamLeaders.reduce(
+        (sum, tl) => sum + tl.jobsCreated,
+        0,
+      ),
+      totalPositions: teamLeaders.reduce(
+        (sum, tl) => sum + tl.totalPositions,
+        0,
+      ),
       totalSubmitted: 0,
       totalVerified: 0,
       totalWalkIn: 0,
@@ -4725,20 +4820,18 @@ router.delete(
 // DELETE /api/admin/candidates/:resId — Cascade-delete candidate resume
 // ═══════════════════════════════════════════════════════════════════════════
 const deleteAdminResumeHandler = async (req, res) => {
-    const resId = String(req.params.resId || "").trim();
-    if (!resId) {
-      return res
-        .status(400)
-        .json({ message: "Resume ID (resId) is required." });
-    }
+  const resId = String(req.params.resId || "").trim();
+  if (!resId) {
+    return res.status(400).json({ message: "Resume ID (resId) is required." });
+  }
 
-    let conn;
-    try {
-      conn = await pool.getConnection();
-      await conn.beginTransaction();
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
 
-      const [[resume]] = await conn.query(
-        `SELECT
+    const [[resume]] = await conn.query(
+      `SELECT
            rd.res_id AS resId,
            COALESCE(NULLIF(TRIM(c.name), ''), NULL) AS candidateName,
            COALESCE(
@@ -4750,65 +4843,65 @@ const deleteAdminResumeHandler = async (req, res) => {
          LEFT JOIN jobs j ON j.jid = rd.job_jid
          WHERE rd.res_id = ?
          LIMIT 1`,
-        [resId],
-      );
+      [resId],
+    );
 
-      if (!resume) {
-        conn.release();
-        return res.status(404).json({ message: `Resume ${resId} not found.` });
-      }
-
-      await conn.query("DELETE FROM applications WHERE res_id = ?", [resId]);
-      await conn.query("DELETE FROM recruiter_points_log WHERE res_id = ?", [
-        resId,
-      ]);
-      await conn.query("DELETE FROM money_sum WHERE res_id = ?", [resId]);
-      await conn.query(
-        "DELETE FROM extra_info WHERE res_id = ? OR resume_id = ?",
-        [resId, resId],
-      );
-      await conn.query("DELETE FROM job_resume_selection WHERE res_id = ?", [
-        resId,
-      ]);
-      await conn.query("DELETE FROM candidate WHERE res_id = ?", [resId]);
-      await conn.query("DELETE FROM resumes_data WHERE res_id = ?", [resId]);
-
-      await conn.commit();
+    if (!resume) {
       conn.release();
+      return res.status(404).json({ message: `Resume ${resId} not found.` });
+    }
 
-      return res.status(200).json({
-        success: true,
-        message: `Resume ${resId} deleted successfully.`,
-        deletedResume: {
-          resId,
-          candidateName: resume.candidateName || null,
-          companyName: resume.companyName || null,
-        },
-      });
-    } catch (error) {
-      if (conn) {
-        try {
-          await conn.rollback();
-        } catch (_rollbackErr) {
-          /* ignore */
-        }
-        conn.release();
-      }
-      console.error("DELETE /api/admin/resumes/:resId error:", error);
+    await conn.query("DELETE FROM applications WHERE res_id = ?", [resId]);
+    await conn.query("DELETE FROM recruiter_points_log WHERE res_id = ?", [
+      resId,
+    ]);
+    await conn.query("DELETE FROM money_sum WHERE res_id = ?", [resId]);
+    await conn.query(
+      "DELETE FROM extra_info WHERE res_id = ? OR resume_id = ?",
+      [resId, resId],
+    );
+    await conn.query("DELETE FROM job_resume_selection WHERE res_id = ?", [
+      resId,
+    ]);
+    await conn.query("DELETE FROM candidate WHERE res_id = ?", [resId]);
+    await conn.query("DELETE FROM resumes_data WHERE res_id = ?", [resId]);
 
-      if (error.code === "ER_ROW_IS_REFERENCED_2") {
-        return res.status(409).json({
-          message:
-            "Cannot delete resume: a foreign key constraint prevents deletion. Please remove dependent records first.",
-          error: error.message,
-        });
+    await conn.commit();
+    conn.release();
+
+    return res.status(200).json({
+      success: true,
+      message: `Resume ${resId} deleted successfully.`,
+      deletedResume: {
+        resId,
+        candidateName: resume.candidateName || null,
+        companyName: resume.companyName || null,
+      },
+    });
+  } catch (error) {
+    if (conn) {
+      try {
+        await conn.rollback();
+      } catch (_rollbackErr) {
+        /* ignore */
       }
-      return res.status(500).json({
-        message: "Failed to delete resume.",
+      conn.release();
+    }
+    console.error("DELETE /api/admin/resumes/:resId error:", error);
+
+    if (error.code === "ER_ROW_IS_REFERENCED_2") {
+      return res.status(409).json({
+        message:
+          "Cannot delete resume: a foreign key constraint prevents deletion. Please remove dependent records first.",
         error: error.message,
       });
     }
-  };
+    return res.status(500).json({
+      message: "Failed to delete resume.",
+      error: error.message,
+    });
+  }
+};
 
 router.delete(
   "/api/admin/resumes/:resId",
