@@ -4071,14 +4071,6 @@ router.get("/api/admin/performance", async (req, res) => {
       ORDER BY r.name ASC`,
     );
 
-    // Build submission date filter clause (count resumes submitted in this period)
-    const submissionDateClause = dateRange.hasDateRange
-      ? "AND rd.uploaded_at >= ? AND rd.uploaded_at <= ?"
-      : "";
-    const submissionDateParams = dateRange.hasDateRange
-      ? [dateRange.startDateTime, dateRange.endDateTime]
-      : [];
-
     const [performanceRows] = await pool.query(
       `SELECT
         rd.res_id AS resId,
@@ -4217,9 +4209,7 @@ router.get("/api/admin/performance", async (req, res) => {
           'team_leader',
           'job creator'
         )
-        ${submissionDateClause}
       ORDER BY rd.uploaded_at DESC, rd.res_id DESC`,
-      submissionDateParams,
     );
 
     const normalizePerformanceDrilldownItem = (row) => {
@@ -4340,152 +4330,118 @@ router.get("/api/admin/performance", async (req, res) => {
         joiningDate: row.joiningDate,
       });
 
-      // Count each resume by its CURRENT status (not by when transitions occurred)
-      // This ensures accurate status breakdown for submitted resumes
-      const currentStatus = normalizeWorkflowStatus(
-        row.workflowStatus,
-        "submitted",
-      );
+      // Count each resume by when events occurred (event-based counting)
+      // For "submitted": count if submission date is in range
+      // For other statuses: count if transition to that status occurred in range
 
-      // Add resume to "submitted" status drilldown (all submitted resumes)
-      statusDrilldown.submitted.push(
-        normalizePerformanceDrilldownItem({
-          ...row,
-          eventAt: row.submittedAt,
-          teamLeaderRid: isTeamLeaderLikeRole(row.recruiterRole)
-            ? row.recruiterRid || null
-            : null,
-          teamLeaderName: isTeamLeaderLikeRole(row.recruiterRole)
-            ? row.recruiterName || null
-            : null,
-        }),
-      );
-
-      if (recruiterStats) {
-        recruiterStats.submitted += 1;
-        if (
-          !recruiterStats.lastUpdated ||
-          row.submittedAt > recruiterStats.lastUpdated
-        ) {
-          recruiterStats.lastUpdated = row.submittedAt;
+      // Always add to submitted if submittedAt is in range
+      if (isTimestampWithinInclusiveRange(row.submittedAt, dateRange)) {
+        statusDrilldown.submitted.push(
+          normalizePerformanceDrilldownItem({
+            ...row,
+            eventAt: row.submittedAt,
+            teamLeaderRid: isTeamLeaderLikeRole(row.recruiterRole)
+              ? row.recruiterRid || null
+              : null,
+            teamLeaderName: isTeamLeaderLikeRole(row.recruiterRole)
+              ? row.recruiterName || null
+              : null,
+          }),
+        );
+        if (recruiterStats) {
+          recruiterStats.submitted += 1;
+          if (
+            !recruiterStats.lastUpdated ||
+            row.submittedAt > recruiterStats.lastUpdated
+          ) {
+            recruiterStats.lastUpdated = row.submittedAt;
+          }
         }
       }
 
-      // Add resume to status drilldowns based on its current workflow status
-      // Map each status to which drilldown bucket it belongs in
-      const statusToDrilldown = {
-        verified: [
-          {
-            key: "verified",
-            teamLeaderSource: row.statusActorRole,
-            teamLeaderRid: row.statusActorRid,
-            teamLeaderName: row.statusActorName,
-            eventAt: row.verifiedAt,
-          },
-        ],
-        walk_in: [
-          {
-            key: "walk_in",
-            teamLeaderSource: row.statusActorRole,
-            teamLeaderRid: row.statusActorRid,
-            teamLeaderName: row.statusActorName,
-            eventAt: row.walkInAt,
-          },
-        ],
-        shortlisted: [
-          {
-            key: "shortlisted",
-            teamLeaderSource: row.statusActorRole,
-            teamLeaderRid: row.statusActorRid,
-            teamLeaderName: row.statusActorName,
-            eventAt: row.shortlistedAt,
-          },
-        ],
-        selected: [
-          {
-            key: "selected",
-            teamLeaderSource: row.statusActorRole,
-            teamLeaderRid: row.statusActorRid,
-            teamLeaderName: row.statusActorName,
-            eventAt: row.selectedAt,
-          },
-        ],
-        rejected: [
-          {
-            key: "rejected",
-            teamLeaderSource: row.statusActorRole,
-            teamLeaderRid: row.statusActorRid,
-            teamLeaderName: row.statusActorName,
-            eventAt: row.rejectedAt,
-          },
-        ],
-        joined: [
-          {
-            key: "joined",
-            teamLeaderSource: row.statusActorRole,
-            teamLeaderRid: row.statusActorRid,
-            teamLeaderName: row.statusActorName,
-            eventAt: row.joinedAt,
-          },
-        ],
-        dropout: [
-          {
-            key: "dropout",
-            teamLeaderSource: row.statusActorRole,
-            teamLeaderRid: row.statusActorRid,
-            teamLeaderName: row.statusActorName,
-            eventAt: row.dropoutAt,
-          },
-        ],
-        billed: [
-          {
-            key: "billed",
-            teamLeaderSource: row.statusActorRole,
-            teamLeaderRid: row.statusActorRid,
-            teamLeaderName: row.statusActorName,
-            eventAt: row.billedAt,
-          },
-        ],
-        left: [
-          {
-            key: "left",
-            teamLeaderSource: row.statusActorRole,
-            teamLeaderRid: row.statusActorRid,
-            teamLeaderName: row.statusActorName,
-            eventAt: row.leftAt,
-          },
-        ],
+      // For each other status, add to drilldown only if transition happened in range
+      const statusEventMap = {
+        verified: {
+          eventAt: row.verifiedAt,
+          teamLeaderSource: row.statusActorRole,
+          teamLeaderRid: row.statusActorRid,
+          teamLeaderName: row.statusActorName,
+        },
+        walk_in: {
+          eventAt: row.walkInAt,
+          teamLeaderSource: row.statusActorRole,
+          teamLeaderRid: row.statusActorRid,
+          teamLeaderName: row.statusActorName,
+        },
+        shortlisted: {
+          eventAt: row.shortlistedAt,
+          teamLeaderSource: row.statusActorRole,
+          teamLeaderRid: row.statusActorRid,
+          teamLeaderName: row.statusActorName,
+        },
+        selected: {
+          eventAt: row.selectedAt,
+          teamLeaderSource: row.statusActorRole,
+          teamLeaderRid: row.statusActorRid,
+          teamLeaderName: row.statusActorName,
+        },
+        rejected: {
+          eventAt: row.rejectedAt,
+          teamLeaderSource: row.statusActorRole,
+          teamLeaderRid: row.statusActorRid,
+          teamLeaderName: row.statusActorName,
+        },
+        joined: {
+          eventAt: row.joinedAt,
+          teamLeaderSource: row.statusActorRole,
+          teamLeaderRid: row.statusActorRid,
+          teamLeaderName: row.statusActorName,
+        },
+        dropout: {
+          eventAt: row.dropoutAt,
+          teamLeaderSource: row.statusActorRole,
+          teamLeaderRid: row.statusActorRid,
+          teamLeaderName: row.statusActorName,
+        },
+        billed: {
+          eventAt: row.billedAt,
+          teamLeaderSource: row.statusActorRole,
+          teamLeaderRid: row.statusActorRid,
+          teamLeaderName: row.statusActorName,
+        },
+        left: {
+          eventAt: row.leftAt,
+          teamLeaderSource: row.statusActorRole,
+          teamLeaderRid: row.statusActorRid,
+          teamLeaderName: row.statusActorName,
+        },
       };
 
-      if (currentStatus !== "submitted" && statusToDrilldown[currentStatus]) {
-        for (const drilldownEntry of statusToDrilldown[currentStatus]) {
-          statusDrilldown[drilldownEntry.key].push(
-            normalizePerformanceDrilldownItem({
-              ...row,
-              eventAt: drilldownEntry.eventAt,
-              teamLeaderRid: isTeamLeaderLikeRole(
-                drilldownEntry.teamLeaderSource,
-              )
-                ? drilldownEntry.teamLeaderRid || null
-                : null,
-              teamLeaderName: isTeamLeaderLikeRole(
-                drilldownEntry.teamLeaderSource,
-              )
-                ? drilldownEntry.teamLeaderName || null
-                : null,
-            }),
-          );
+      for (const [statusKey, statusEvent] of Object.entries(statusEventMap)) {
+        // Only count if this status event occurred in the date range
+        if (!isTimestampWithinInclusiveRange(statusEvent.eventAt, dateRange))
+          continue;
 
-          if (recruiterStats && PERFORMANCE_EVENT_META[drilldownEntry.key]) {
-            recruiterStats[
-              PERFORMANCE_EVENT_META[drilldownEntry.key].recruiterField
-            ] += 1;
-            if (
-              !recruiterStats.lastUpdated ||
-              drilldownEntry.eventAt > recruiterStats.lastUpdated
-            ) {
-              recruiterStats.lastUpdated = drilldownEntry.eventAt;
-            }
+        statusDrilldown[statusKey].push(
+          normalizePerformanceDrilldownItem({
+            ...row,
+            eventAt: statusEvent.eventAt,
+            teamLeaderRid: isTeamLeaderLikeRole(statusEvent.teamLeaderSource)
+              ? statusEvent.teamLeaderRid || null
+              : null,
+            teamLeaderName: isTeamLeaderLikeRole(statusEvent.teamLeaderSource)
+              ? statusEvent.teamLeaderName || null
+              : null,
+          }),
+        );
+
+        if (recruiterStats && PERFORMANCE_EVENT_META[statusKey]) {
+          recruiterStats[PERFORMANCE_EVENT_META[statusKey].recruiterField] += 1;
+          if (
+            !recruiterStats.lastUpdated ||
+            statusEvent.eventAt > recruiterStats.lastUpdated
+          ) {
+            recruiterStats.lastUpdated = statusEvent.eventAt;
           }
         }
       }
