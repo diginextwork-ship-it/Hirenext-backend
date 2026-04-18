@@ -91,6 +91,7 @@ const recruiterStatsSubquery = `
     rd.rid AS recruiter_rid,
     COUNT(*) AS submitted,
     SUM(CASE WHEN jrs.selection_status = 'verified' THEN 1 ELSE 0 END) AS verified,
+    SUM(CASE WHEN jrs.selection_status = 'others' THEN 1 ELSE 0 END) AS others,
     SUM(CASE WHEN jrs.selection_status = 'walk_in' THEN 1 ELSE 0 END) AS walk_in,
     SUM(CASE WHEN jrs.selection_status = 'further' THEN 1 ELSE 0 END) AS further,
     SUM(CASE WHEN jrs.selection_status = 'selected' THEN 1 ELSE 0 END) AS selected,
@@ -181,6 +182,7 @@ const buildCalculatedMetrics = (stats) => {
 const mapStats = (row) => ({
   submitted: Number(row.submitted) || 0,
   verified: Number(row.verified) || 0,
+  others: Number(row.others) || 0,
   walk_in: Number(row.walk_in) || 0,
   further: Number(row.further) || 0,
   shortlisted: Number(row.shortlisted) || 0,
@@ -197,6 +199,7 @@ const mapStats = (row) => ({
 const TEAM_LEADER_PERFORMANCE_EVENT_KEYS = [
   "submitted",
   "verified",
+  "others",
   "walk_in",
   "shortlisted",
   "selected",
@@ -210,6 +213,7 @@ const TEAM_LEADER_PERFORMANCE_EVENT_KEYS = [
 const TEAM_LEADER_PERFORMANCE_EVENT_META = {
   submitted: { summaryField: "totalSubmitted" },
   verified: { summaryField: "totalVerified" },
+  others: { summaryField: "totalOthers" },
   walk_in: { summaryField: "totalWalkIn" },
   shortlisted: { summaryField: "totalShortlisted" },
   selected: { summaryField: "totalSelected" },
@@ -272,6 +276,7 @@ router.get(
           COALESCE(r.points, 0) AS points,
           COALESCE(rs.submitted, 0) AS submitted,
           COALESCE(rs.verified, 0) AS verified,
+          COALESCE(rs.others, 0) AS others,
           COALESCE(rs.walk_in, 0) AS walk_in,
           COALESCE(rs.further, 0) AS further,
           COALESCE(rs.shortlisted, 0) AS shortlisted,
@@ -337,6 +342,7 @@ router.get(
       email: "r.email",
       submitted: "COALESCE(rs.submitted, 0)",
       verified: "COALESCE(rs.verified, 0)",
+      others: "COALESCE(rs.others, 0)",
       walk_in: "COALESCE(rs.walk_in, 0)",
       shortlisted: "COALESCE(rs.shortlisted, 0)",
       select: "COALESCE(rs.selected, 0)",
@@ -379,6 +385,7 @@ router.get(
           COALESCE(r.points, 0) AS points,
           COALESCE(rs.submitted, 0) AS submitted,
           COALESCE(rs.verified, 0) AS verified,
+          COALESCE(rs.others, 0) AS others,
           COALESCE(rs.walk_in, 0) AS walk_in,
           COALESCE(rs.further, 0) AS further,
           COALESCE(rs.shortlisted, 0) AS shortlisted,
@@ -583,6 +590,13 @@ router.get(
             '%Y-%m-%d %H:%i:%s.%f'
           ) AS verifiedAt,
           DATE_FORMAT(
+            COALESCE(
+              ei.others_at,
+              CASE WHEN jrs.selection_status = 'others' THEN jrs.selected_at ELSE NULL END
+            ),
+            '%Y-%m-%d %H:%i:%s.%f'
+          ) AS othersAt,
+          DATE_FORMAT(
             CASE
               WHEN c.walk_in IS NOT NULL THEN CAST(CONCAT(c.walk_in, ' 00:00:00.000000') AS DATETIME(6))
               WHEN jrs.selection_status = 'walk_in' THEN jrs.selected_at
@@ -629,6 +643,16 @@ router.get(
           DATE_FORMAT(c.walk_in, '%Y-%m-%d') AS walkInDate,
           DATE_FORMAT(c.joining_date, '%Y-%m-%d') AS joiningDate,
           COALESCE(jrs.selection_status, 'submitted') AS workflowStatus,
+          ei.verified_reason AS verifiedReason,
+          ei.others_reason AS othersReason,
+          ei.walk_in_reason AS walkInReason,
+          ei.shortlisted_reason AS shortlistedReason,
+          ei.select_reason AS selectReason,
+          ei.reject_reason AS rejectReason,
+          ei.joined_reason AS joinedReason,
+          ei.dropout_reason AS dropoutReason,
+          ei.billed_reason AS billedReason,
+          ei.left_reason AS leftReason,
           recruiter.rid AS recruiterRid,
           recruiter.name AS recruiterName,
           teamLeader.name AS teamLeaderName,
@@ -640,6 +664,8 @@ router.get(
         INNER JOIN jobs j
           ON j.jid = rd.job_jid
         LEFT JOIN candidate c ON c.res_id = rd.res_id
+        LEFT JOIN extra_info ei
+          ON ei.res_id = rd.res_id OR (ei.resume_id = rd.res_id AND ei.res_id IS NULL)
         INNER JOIN recruiter recruiter ON recruiter.rid = rd.rid
         LEFT JOIN recruiter teamLeader ON teamLeader.rid = j.recruiter_rid
         LEFT JOIN job_resume_selection jrs
@@ -653,6 +679,7 @@ router.get(
       const statusDrilldown = {
         submitted: [],
         verified: [],
+        others: [],
         walk_in: [],
         shortlisted: [],
         selected: [],
@@ -668,6 +695,7 @@ router.get(
           ...rawRow,
           submittedAt: normalizePerformanceTimestamp(rawRow.submittedAt),
           verifiedAt: normalizePerformanceTimestamp(rawRow.verifiedAt),
+          othersAt: normalizePerformanceTimestamp(rawRow.othersAt),
           walkInAt: normalizePerformanceTimestamp(rawRow.walkInAt),
           shortlistedAt: normalizePerformanceTimestamp(rawRow.shortlistedAt),
           selectedAt: normalizePerformanceTimestamp(rawRow.selectedAt),
@@ -685,6 +713,7 @@ router.get(
         const eventAtMap = {
           submitted: row.submittedAt,
           verified: row.verifiedAt,
+          others: row.othersAt,
           walk_in: row.walkInAt,
           shortlisted: row.shortlistedAt,
           selected: row.selectedAt,
@@ -718,6 +747,17 @@ router.get(
             joiningDate: row.joiningDate || null,
             status: workflowStatus,
             workflowStatus,
+            verifiedReason: row.verifiedReason || null,
+            othersReason: row.othersReason || null,
+            walkInReason: row.walkInReason || null,
+            shortlistedReason: row.shortlistedReason || null,
+            selectReason: row.selectReason || null,
+            rejectReason: row.rejectReason || null,
+            joinedReason: row.joinedReason || null,
+            joiningNote: row.joinedReason || null,
+            dropoutReason: row.dropoutReason || null,
+            billedReason: row.billedReason || null,
+            leftReason: row.leftReason || null,
             eventAt,
           });
         }
@@ -730,6 +770,7 @@ router.get(
         totalRecruiters: Number(recruiterOverview?.totalRecruiters) || 0,
         totalSubmitted: 0,
         totalVerified: 0,
+        totalOthers: 0,
         totalWalkIn: 0,
         totalShortlisted: 0,
         totalSelected: 0,
@@ -876,6 +917,7 @@ router.get(
           COALESCE(r.points, 0) AS points,
           COALESCE(rs.submitted, 0) AS submitted,
           COALESCE(rs.verified, 0) AS verified,
+          COALESCE(rs.others, 0) AS others,
           COALESCE(rs.walk_in, 0) AS walk_in,
           COALESCE(rs.further, 0) AS further,
           COALESCE(rs.shortlisted, 0) AS shortlisted,
@@ -892,6 +934,7 @@ router.get(
             rd.rid AS recruiter_rid,
             SUM(CASE WHEN ${submittedRangeCondition} THEN 1 ELSE 0 END) AS submitted,
             SUM(CASE WHEN jrs.selection_status = 'verified' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS verified,
+            SUM(CASE WHEN jrs.selection_status = 'others' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS others,
             SUM(CASE WHEN jrs.selection_status = 'walk_in' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS walk_in,
             SUM(CASE WHEN jrs.selection_status = 'further' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS further,
             SUM(CASE WHEN jrs.selection_status = 'selected' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS selected,

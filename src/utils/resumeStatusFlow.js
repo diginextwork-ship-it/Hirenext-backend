@@ -20,6 +20,7 @@ const CANONICAL_WORKFLOW_STATUSES = [
   "left",
   "dropout",
   "rejected",
+  "others",
 ];
 
 const CANONICAL_RESUME_STATUSES = new Set([
@@ -47,7 +48,8 @@ const isSupportedResumeStatus = (value) =>
 
 const ADMIN_STATUS_TRANSITIONS = {
   [DEFAULT_WORKFLOW_STATUS]: new Set([CANONICAL_VERIFY_STATUS, "rejected"]),
-  [CANONICAL_VERIFY_STATUS]: new Set(["walk_in", "rejected"]),
+  [CANONICAL_VERIFY_STATUS]: new Set(["walk_in", "others", "rejected"]),
+  others: new Set(["walk_in", "rejected"]),
   walk_in: new Set(["shortlisted", "rejected"]),
   shortlisted: new Set(["selected", "dropout"]),
   selected: new Set(["joined", "dropout"]),
@@ -59,7 +61,8 @@ const ADMIN_STATUS_TRANSITIONS = {
 };
 
 const RECRUITER_STATUS_TRANSITIONS = {
-  [CANONICAL_VERIFY_STATUS]: ["walk_in", "rejected"],
+  [CANONICAL_VERIFY_STATUS]: ["walk_in", "others", "rejected"],
+  others: ["walk_in", "rejected"],
   walk_in: ["shortlisted", "rejected"],
   shortlisted: ["selected", "dropout", "rejected"],
   selected: ["joined", "dropout", "rejected"],
@@ -68,6 +71,7 @@ const RECRUITER_STATUS_TRANSITIONS = {
 
 const WORKFLOW_PREVIOUS_STATUS = {
   [CANONICAL_VERIFY_STATUS]: DEFAULT_WORKFLOW_STATUS,
+  others: CANONICAL_VERIFY_STATUS,
   walk_in: CANONICAL_VERIFY_STATUS,
   shortlisted: "walk_in",
   selected: "shortlisted",

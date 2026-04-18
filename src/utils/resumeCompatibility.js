@@ -12,6 +12,7 @@ const STATUS_REASON_FIELD_MAP = Object.freeze({
   dropout: "dropoutReason",
   billed: "billedReason",
   left: "leftReason",
+  others: "othersReason",
 });
 
 const STATUS_REASON_INPUT_KEYS = Object.freeze({
@@ -36,6 +37,7 @@ const STATUS_REASON_INPUT_KEYS = Object.freeze({
   dropout: ["dropoutReason", "dropout_reason"],
   billed: ["billedReason", "billed_reason"],
   left: ["leftReason", "left_reason"],
+  others: ["othersReason", "others_reason"],
 });
 
 const isPresent = (value) =>
@@ -148,6 +150,11 @@ const buildResumeCompatibilityFields = (record = {}) => {
     record.verified_reason,
     workflowStatus === "verified" ? genericReason : null,
   );
+  const othersReason = firstPresent(
+    record.othersReason,
+    record.others_reason,
+    workflowStatus === "others" ? genericReason : null,
+  );
   const walkInReason = firstPresent(
     record.walkInReason,
     record.walk_in_reason,
@@ -216,6 +223,8 @@ const buildResumeCompatibilityFields = (record = {}) => {
     submitted_reason: submittedReason,
     verifiedReason,
     verified_reason: verifiedReason,
+    othersReason,
+    others_reason: othersReason,
     walkInReason,
     walk_in_reason: walkInReason,
     selectReason,

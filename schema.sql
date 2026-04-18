@@ -175,6 +175,10 @@ CREATE TABLE IF NOT EXISTS extra_info (
 ALTER TABLE extra_info
   ADD COLUMN IF NOT EXISTS walk_in_reason TEXT NULL;
 ALTER TABLE extra_info
+  ADD COLUMN IF NOT EXISTS others_reason TEXT NULL;
+ALTER TABLE extra_info
+  ADD COLUMN IF NOT EXISTS others_at TIMESTAMP NULL DEFAULT NULL;
+ALTER TABLE extra_info
   ADD COLUMN IF NOT EXISTS further_reason TEXT NULL;
 ALTER TABLE extra_info
   DROP COLUMN IF EXISTS candidate_name;
@@ -299,7 +303,7 @@ CREATE TABLE IF NOT EXISTS job_resume_selection (
 );
 
 ALTER TABLE job_resume_selection
-  MODIFY COLUMN selection_status ENUM('submitted', 'selected', 'rejected', 'on_hold', 'verified', 'walk_in', 'further', 'shortlisted', 'joined', 'dropout', 'pending', 'billed', 'left') NOT NULL DEFAULT 'selected';
+  MODIFY COLUMN selection_status ENUM('submitted', 'selected', 'rejected', 'on_hold', 'verified', 'others', 'walk_in', 'further', 'shortlisted', 'joined', 'dropout', 'pending', 'billed', 'left') NOT NULL DEFAULT 'selected';
 
 ALTER TABLE job_resume_selection
   ADD COLUMN IF NOT EXISTS joining_note TEXT NULL;
@@ -419,6 +423,7 @@ CREATE TABLE IF NOT EXISTS status (
 );
 
 ALTER TABLE status ADD COLUMN IF NOT EXISTS shortlisted INT NULL;
+ALTER TABLE status ADD COLUMN IF NOT EXISTS others INT NULL;
 ALTER TABLE status DROP COLUMN IF EXISTS pending_joining;
 ALTER TABLE status ADD COLUMN IF NOT EXISTS billed INT NULL;
 ALTER TABLE status ADD COLUMN IF NOT EXISTS `left` INT NULL;

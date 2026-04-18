@@ -109,6 +109,7 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
       : "";
   const hasSubmittedReason = columns.has("submitted_reason");
   const hasVerifiedReason = columns.has("verified_reason");
+  const hasOthersReason = columns.has("others_reason");
   const hasWalkInReason = columns.has("walk_in_reason");
   const hasFurtherReason = columns.has("further_reason");
   const hasSelectReason = columns.has("select_reason");
@@ -124,6 +125,7 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
   const hasAnyReason =
     hasSubmittedReason ||
     hasVerifiedReason ||
+    hasOthersReason ||
     hasWalkInReason ||
     hasFurtherReason ||
     hasSelectReason ||
@@ -142,6 +144,7 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
     selectColumns.push("submitted_reason AS submittedReason");
   if (hasVerifiedReason)
     selectColumns.push("verified_reason AS verifiedReason");
+  if (hasOthersReason) selectColumns.push("others_reason AS othersReason");
   if (hasWalkInReason) selectColumns.push("walk_in_reason AS walkInReason");
   if (hasFurtherReason) selectColumns.push("further_reason AS furtherReason");
   if (hasSelectReason) selectColumns.push("select_reason AS selectReason");
@@ -173,6 +176,7 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
         ...buildResumeCompatibilityFields({
           submittedReason: row.submittedReason || null,
           verifiedReason: row.verifiedReason || null,
+          othersReason: row.othersReason || null,
           walkInReason: row.walkInReason || null,
           furtherReason: row.furtherReason || null,
           selectReason: row.selectReason || null,
@@ -245,6 +249,13 @@ const upsertExtraInfoFields = async (connection, payload) => {
     insertValues.push(payload.verifiedReason);
     placeholders.push("?");
     updates.push("verified_reason = VALUES(verified_reason)");
+  }
+
+  if (payload.othersReason !== undefined && columns.has("others_reason")) {
+    insertColumns.push("others_reason");
+    insertValues.push(payload.othersReason);
+    placeholders.push("?");
+    updates.push("others_reason = VALUES(others_reason)");
   }
 
   if (payload.walkInReason !== undefined && columns.has("walk_in_reason")) {
@@ -324,6 +335,7 @@ const upsertExtraInfoFields = async (connection, payload) => {
   const timestampFieldMap = {
     submittedAt: "submitted_at",
     verifiedAt: "verified_at",
+    othersAt: "others_at",
     walkInAt: "walk_in_at",
     furtherAt: "further_at",
     selectedAt: "selected_at",

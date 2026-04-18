@@ -990,6 +990,9 @@ const getCandidateResumesHandler = async (req, res) => {
     const hasVerifiedReasonColumn =
       hasExtraInfoTable &&
       (await columnExists("extra_info", "verified_reason"));
+    const hasOthersReasonColumn =
+      hasExtraInfoTable &&
+      (await columnExists("extra_info", "others_reason"));
     const hasJoinedReasonColumn =
       hasExtraInfoTable && (await columnExists("extra_info", "joined_reason"));
     const hasOfficeLocationCityColumn =
@@ -1066,6 +1069,9 @@ const getCandidateResumesHandler = async (req, res) => {
     const verifiedReasonSelect = hasVerifiedReasonColumn
       ? "ei.verified_reason AS verifiedReason,"
       : "NULL AS verifiedReason,";
+    const othersReasonSelect = hasOthersReasonColumn
+      ? "ei.others_reason AS othersReason,"
+      : "NULL AS othersReason,";
     const extraInfoJoin = hasExtraInfoTable
       ? `LEFT JOIN extra_info ei
         ON ei.res_id = rd.res_id
@@ -1098,6 +1104,7 @@ const getCandidateResumesHandler = async (req, res) => {
         j.skills AS skills,
         ${submittedReasonSelect}
         ${verifiedReasonSelect}
+        ${othersReasonSelect}
         ${selectionSelect}
       FROM resumes_data rd
       LEFT JOIN candidate c ON c.res_id = rd.res_id
@@ -1123,6 +1130,7 @@ const getCandidateResumesHandler = async (req, res) => {
           joinedReason: row.joinedReason,
           joiningNote: row.joinedReason,
           verifiedReason: row.verifiedReason,
+          othersReason: row.othersReason,
           uploadedAt: row.uploadedAt,
         });
 
@@ -1168,6 +1176,7 @@ const getCandidateResumesHandler = async (req, res) => {
               : Number(row.atsMatchPercentage),
           submittedReason: row.submittedReason || null,
           verifiedReason: row.verifiedReason || null,
+          othersReason: row.othersReason || null,
           uploadedAt: row.uploadedAt || null,
           walkInDate: row.walkInDate || null,
           joiningDate: row.joiningDate || null,
@@ -1383,6 +1392,9 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
     const hasVerifiedReasonColumn =
       hasExtraInfoTable &&
       (await columnExists("extra_info", "verified_reason"));
+    const hasOthersReasonColumn =
+      hasExtraInfoTable &&
+      (await columnExists("extra_info", "others_reason"));
     const hasJoinedReasonColumn =
       hasExtraInfoTable && (await columnExists("extra_info", "joined_reason"));
 
@@ -1400,6 +1412,9 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
     const verifiedReasonSelect = hasVerifiedReasonColumn
       ? "ei.verified_reason AS verifiedReason,"
       : "NULL AS verifiedReason,";
+    const othersReasonSelect = hasOthersReasonColumn
+      ? "ei.others_reason AS othersReason,"
+      : "NULL AS othersReason,";
     const extraInfoJoin = hasExtraInfoTable
       ? `LEFT JOIN extra_info ei
         ON ei.res_id = rd.res_id
@@ -1422,6 +1437,7 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
         rd.uploaded_at AS uploadedAt,
         ${submittedReasonSelect}
         ${verifiedReasonSelect}
+        ${othersReasonSelect}
         jrs.selection_status AS selectionStatus,
         jrs.selection_note AS selectionNote,
         jrs.selected_by_admin AS selectedByAdmin,
@@ -1486,6 +1502,7 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
             joinedReason: row.joinedReason,
             joiningNote: row.joinedReason,
             verifiedReason: row.verifiedReason,
+            othersReason: row.othersReason,
             uploadedAt: row.uploadedAt,
           });
 
@@ -1508,6 +1525,7 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
                 : Number(row.atsMatchPercentage),
             submittedReason: row.submittedReason || null,
             verifiedReason: row.verifiedReason || null,
+            othersReason: row.othersReason || null,
             uploadedAt: row.uploadedAt,
             walkInDate: row.walkInDate || null,
             joiningDate: row.joiningDate || null,
@@ -2945,6 +2963,7 @@ const PERFORMANCE_EVENT_KEYS = [...CANONICAL_WORKFLOW_STATUSES];
 const PERFORMANCE_EVENT_META = {
   submitted: { recruiterField: "submitted", summaryField: "totalSubmitted" },
   verified: { recruiterField: "verified", summaryField: "totalVerified" },
+  others: { recruiterField: "others", summaryField: "totalOthers" },
   walk_in: { recruiterField: "walk_in", summaryField: "totalWalkIn" },
   selected: { recruiterField: "selected", summaryField: "totalSelected" },
   rejected: { recruiterField: "rejected", summaryField: "totalRejected" },
@@ -2998,6 +3017,7 @@ const resolveLatestPerformanceNote = (row = {}) => {
   const byStatus = {
     submitted: firstNonEmptyText(row.submittedReason),
     verified: firstNonEmptyText(row.verifiedReason, row.selectionNote),
+    others: firstNonEmptyText(row.othersReason, row.selectionNote),
     walk_in: firstNonEmptyText(row.walkInReason, row.selectionNote),
     shortlisted: firstNonEmptyText(row.shortlistedReason, row.selectionNote),
     selected: firstNonEmptyText(row.selectReason, row.selectionNote),
@@ -3026,6 +3046,7 @@ const resolveLatestPerformanceNote = (row = {}) => {
     row.shortlistedReason,
     row.rejectReason,
     row.walkInReason,
+    row.othersReason,
     row.verifiedReason,
     row.submittedReason,
     row.selectionNote,
@@ -3078,6 +3099,12 @@ const resolveRollbackSourceStatus = (resume) => {
       hasNonEmptyValue(resume.walkInAt)
     ) {
       return "walk_in";
+    }
+    if (
+      hasNonEmptyValue(resume.othersAt) ||
+      hasNonEmptyValue(resume.othersReason)
+    ) {
+      return "others";
     }
     if (
       hasNonEmptyValue(resume.verifiedAt) ||
@@ -3292,6 +3319,7 @@ const fetchAdminResumeWorkflowPayload = async (connection, resId) => {
       jrs.selected_at AS selectedAt,
       ei.submitted_reason AS submittedReason,
       ei.verified_reason AS verifiedReason,
+      ei.others_reason AS othersReason,
       ei.walk_in_reason AS walkInReason,
       ei.select_reason AS selectReason,
       ei.shortlisted_reason AS shortlistedReason,
@@ -3400,6 +3428,7 @@ router.post(
 
     const allowedNewStatuses = new Set([
       "verified",
+      "others",
       "walk_in",
       "selected",
       "shortlisted",
@@ -3622,6 +3651,7 @@ router.post(
         newStatus === "joined" ? joinedReason : effectiveReason || null;
       const statusTimestampFieldMap = {
         verified: "verifiedAt",
+        others: "othersAt",
         walk_in: "walkInAt",
         further: "furtherAt",
         selected: "selectedAt",
@@ -3766,18 +3796,21 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
       `SELECT
         rd.res_id AS resId,
         rd.rid,
-        rd.job_jid AS jobJid,
+        COALESCE(rd.job_jid, jrs.job_jid) AS jobJid,
         COALESCE(jrs.selection_status, 'submitted') AS currentStatus,
         c.joining_date AS currentJoiningDate,
         c.walk_in AS currentWalkInDate,
         ei.verified_reason AS verifiedReason,
+        ei.others_reason AS othersReason,
         ei.verified_at AS verifiedAt,
+        ei.others_at AS othersAt,
         ei.walk_in_at AS walkInAt,
         ei.selected_at AS selectedAtHistory,
         ei.shortlisted_at AS shortlistedAt
       FROM resumes_data rd
       LEFT JOIN job_resume_selection jrs
-        ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
+        ON jrs.res_id = rd.res_id
+        AND jrs.job_jid = COALESCE(rd.job_jid, jrs.job_jid)
       LEFT JOIN candidate c ON c.res_id = rd.res_id
       LEFT JOIN extra_info ei
         ON ei.res_id = rd.res_id OR (ei.resume_id = rd.res_id AND ei.res_id IS NULL)
@@ -3834,12 +3867,13 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
       );
     }
 
-    if (currentDerivedStatus === "verified") {
+    if (currentDerivedStatus === "verified" || currentDerivedStatus === "others") {
       await upsertExtraInfoFields(connection, {
         resId: normalizedResId,
         jobJid: resume.jobJid || undefined,
         recruiterRid: resume.rid || undefined,
-        verifiedReason: null,
+        verifiedReason: currentDerivedStatus === "verified" ? null : undefined,
+        othersReason: currentDerivedStatus === "others" ? null : undefined,
       });
     }
 
@@ -4153,6 +4187,13 @@ router.get("/api/admin/performance", async (req, res) => {
         ) AS leftAt,
         DATE_FORMAT(
           COALESCE(
+            ei.others_at,
+            CASE WHEN jrs.selection_status = 'others' THEN jrs.selected_at ELSE NULL END
+          ),
+          '%Y-%m-%d %H:%i:%s.%f'
+        ) AS othersAt,
+        DATE_FORMAT(
+          COALESCE(
             ei.further_at,
             CASE WHEN jrs.selection_status = 'further' THEN jrs.selected_at ELSE NULL END
           ),
@@ -4184,6 +4225,7 @@ router.get("/api/admin/performance", async (req, res) => {
         ei.office_location_city AS officeLocationCity,
         ei.submitted_reason AS submittedReason,
         ei.verified_reason AS verifiedReason,
+        ei.others_reason AS othersReason,
         ei.walk_in_reason AS walkInReason,
         ei.select_reason AS selectReason,
         ei.shortlisted_reason AS shortlistedReason,
@@ -4240,6 +4282,7 @@ router.get("/api/admin/performance", async (req, res) => {
         selectionNote: row.selectionNote || null,
         submittedReason: row.submittedReason || null,
         verifiedReason: row.verifiedReason || null,
+        othersReason: row.othersReason || null,
         walkInReason: row.walkInReason || null,
         selectReason: row.selectReason || null,
         shortlistedReason: row.shortlistedReason || null,
@@ -4261,6 +4304,7 @@ router.get("/api/admin/performance", async (req, res) => {
     const statusDrilldown = {
       submitted: [],
       verified: [],
+      others: [],
       walk_in: [],
       selected: [],
       shortlisted: [],
@@ -4287,6 +4331,7 @@ router.get("/api/admin/performance", async (req, res) => {
           points: Number(row.points) || 0,
           submitted: 0,
           verified: 0,
+          others: 0,
           walk_in: 0,
           further: 0,
           selected: 0,
@@ -4309,6 +4354,7 @@ router.get("/api/admin/performance", async (req, res) => {
         ...rawRow,
         submittedAt: normalizePerformanceTimestamp(rawRow.submittedAt),
         verifiedAt: normalizePerformanceTimestamp(rawRow.verifiedAt),
+        othersAt: normalizePerformanceTimestamp(rawRow.othersAt),
         walkInAt: normalizePerformanceTimestamp(rawRow.walkInAt),
         selectedAt: normalizePerformanceTimestamp(rawRow.selectedAt),
         rejectedAt: normalizePerformanceTimestamp(rawRow.rejectedAt),
@@ -4363,6 +4409,12 @@ router.get("/api/admin/performance", async (req, res) => {
       const statusEventMap = {
         verified: {
           eventAt: row.verifiedAt,
+          teamLeaderSource: row.statusActorRole,
+          teamLeaderRid: row.statusActorRid,
+          teamLeaderName: row.statusActorName,
+        },
+        others: {
+          eventAt: row.othersAt,
           teamLeaderSource: row.statusActorRole,
           teamLeaderRid: row.statusActorRid,
           teamLeaderName: row.statusActorName,
@@ -4495,6 +4547,7 @@ router.get("/api/admin/performance", async (req, res) => {
       ),
       totalSubmitted: 0,
       totalVerified: 0,
+      totalOthers: 0,
       totalWalkIn: 0,
       totalSelected: 0,
       totalShortlisted: 0,

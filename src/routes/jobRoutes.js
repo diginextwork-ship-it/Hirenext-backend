@@ -320,6 +320,7 @@ const resolveManualRollbackTarget = (resume = {}) => {
     if (resume.currentJoiningDate || resume.selectedAt) return "selected";
     if (resume.shortlistedAt) return "shortlisted";
     if (resume.currentWalkInDate || resume.walkInAt) return "walk_in";
+    if (resume.othersAt || resume.othersReason) return "others";
     if (resume.verifiedAt || resume.verifiedReason) return "verified";
     return "submitted";
   }
@@ -1169,6 +1170,7 @@ router.post(
 
         const statusTimestampFieldMap = {
           verified: "verifiedAt",
+          others: "othersAt",
           walk_in: "walkInAt",
           further: "furtherAt",
           selected: "selectedAt",
@@ -1246,6 +1248,9 @@ router.post(
           const verifiedDelta =
             (normalizedStatus === "verified" ? 1 : 0) -
             (previousStatus === "verified" ? 1 : 0);
+          const othersDelta =
+            (normalizedStatus === "others" ? 1 : 0) -
+            (previousStatus === "others" ? 1 : 0);
           const selectDelta =
             (normalizedStatus === "selected" ? 1 : 0) -
             (previousStatus === "selected" ? 1 : 0);
@@ -1261,16 +1266,18 @@ router.post(
 
           if (
             verifiedDelta !== 0 ||
+            othersDelta !== 0 ||
             selectDelta !== 0 ||
             rejectDelta !== 0 ||
             billedDelta !== 0 ||
             leftDelta !== 0
           ) {
             await connection.query(
-              `INSERT INTO status (recruiter_rid, submitted, verified, \`select\`, reject, billed, \`left\`, last_updated)
-               VALUES (?, 0, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+              `INSERT INTO status (recruiter_rid, submitted, verified, others, \`select\`, reject, billed, \`left\`, last_updated)
+               VALUES (?, 0, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                ON DUPLICATE KEY UPDATE
                  verified = GREATEST(0, COALESCE(verified, 0) + ?),
+                 others = GREATEST(0, COALESCE(others, 0) + ?),
                  \`select\` = GREATEST(0, COALESCE(\`select\`, 0) + ?),
                  reject = GREATEST(0, COALESCE(reject, 0) + ?),
                  billed = GREATEST(0, COALESCE(billed, 0) + ?),
@@ -1279,11 +1286,13 @@ router.post(
               [
                 recruiterRid,
                 Math.max(0, verifiedDelta),
+                Math.max(0, othersDelta),
                 Math.max(0, selectDelta),
                 Math.max(0, rejectDelta),
                 Math.max(0, billedDelta),
                 Math.max(0, leftDelta),
                 verifiedDelta,
+                othersDelta,
                 selectDelta,
                 rejectDelta,
                 billedDelta,
@@ -1335,6 +1344,8 @@ router.post(
             resId: normalizedResId,
             status: normalizedStatus,
             note: normalizedNote || null,
+            othersReason:
+              reasonField === "othersReason" ? (statusReasonValue ?? null) : null,
             joining_date:
               normalizedStatus === "selected" ? joiningDate : null,
             verifiedReason:
@@ -1556,18 +1567,21 @@ router.post(
           `SELECT
             rd.res_id AS resId,
             rd.rid AS recruiterRid,
-            rd.job_jid AS jobJid,
+            COALESCE(rd.job_jid, jrs.job_jid) AS jobJid,
             COALESCE(jrs.selection_status, 'submitted') AS currentStatus,
             c.joining_date AS currentJoiningDate,
             c.walk_in AS currentWalkInDate,
             ei.verified_reason AS verifiedReason,
+            ei.others_reason AS othersReason,
             ei.verified_at AS verifiedAt,
+            ei.others_at AS othersAt,
             ei.walk_in_at AS walkInAt,
             ei.selected_at AS selectedAt,
             ei.shortlisted_at AS shortlistedAt
           FROM resumes_data rd
           LEFT JOIN job_resume_selection jrs
-            ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
+            ON jrs.res_id = rd.res_id
+            AND jrs.job_jid = COALESCE(rd.job_jid, jrs.job_jid)
           LEFT JOIN candidate c ON c.res_id = rd.res_id
           LEFT JOIN extra_info ei
             ON ei.res_id = rd.res_id OR (ei.resume_id = rd.res_id AND ei.res_id IS NULL)
@@ -1632,12 +1646,13 @@ router.post(
           );
         }
 
-        if (currentDerivedStatus === "verified") {
+        if (currentDerivedStatus === "verified" || currentDerivedStatus === "others") {
           await upsertExtraInfoFields(connection, {
             resId: normalizedResId,
             jobJid: req.ownedJob.jid,
             recruiterRid: resume.recruiterRid || undefined,
-            verifiedReason: null,
+            verifiedReason: currentDerivedStatus === "verified" ? null : undefined,
+            othersReason: currentDerivedStatus === "others" ? null : undefined,
           });
         }
 
