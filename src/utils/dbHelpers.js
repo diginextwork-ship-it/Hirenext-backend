@@ -102,11 +102,9 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
   if (!(await tableExists("extra_info"))) return new Map();
 
   const columns = await getTableColumns("extra_info", connection);
-  const resumeIdColumn = columns.has("res_id")
-    ? "res_id"
-    : columns.has("resume_id")
-      ? "resume_id"
-      : "";
+  const resumeIdColumns = [];
+  if (columns.has("res_id")) resumeIdColumns.push("res_id");
+  if (columns.has("resume_id")) resumeIdColumns.push("resume_id");
   const hasSubmittedReason = columns.has("submitted_reason");
   const hasVerifiedReason = columns.has("verified_reason");
   const hasOthersReason = columns.has("others_reason");
@@ -137,9 +135,11 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
     hasBilledReason ||
     hasOfficeLocationCity;
 
-  if (!resumeIdColumn || !hasAnyReason) return new Map();
+  if (resumeIdColumns.length === 0 || !hasAnyReason) return new Map();
 
-  const selectColumns = [`${resumeIdColumn} AS resumeId`];
+  const selectColumns = [];
+  if (columns.has("res_id")) selectColumns.push("res_id AS resId");
+  if (columns.has("resume_id")) selectColumns.push("resume_id AS resumeId");
   if (hasSubmittedReason)
     selectColumns.push("submitted_reason AS submittedReason");
   if (hasVerifiedReason)
@@ -162,38 +162,61 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
     selectColumns.push("office_location_city AS officeLocationCity");
   }
 
+  const whereConditions = resumeIdColumns.map((column) => `${column} IN (?)`);
+  const queryParams = resumeIdColumns.map(() => normalizedResumeIds);
   const [rows] = await connection.query(
     `SELECT ${selectColumns.join(", ")}
      FROM extra_info
-     WHERE ${resumeIdColumn} IN (?)`,
-    [normalizedResumeIds],
+     WHERE ${whereConditions.join(" OR ")}`,
+    queryParams,
   );
 
-  return new Map(
-    rows.map((row) => [
-      String(row.resumeId || "").trim(),
-      {
-        ...buildResumeCompatibilityFields({
-          submittedReason: row.submittedReason || null,
-          verifiedReason: row.verifiedReason || null,
-          othersReason: row.othersReason || null,
-          walkInReason: row.walkInReason || null,
-          furtherReason: row.furtherReason || null,
-          selectReason: row.selectReason || null,
-          shortlistedReason: row.shortlistedReason || null,
-          joinedReason: row.joinedReason || null,
-          joiningNote: row.joinedReason || null,
-          dropoutReason: row.dropoutReason || null,
-          rejectReason: row.rejectReason || null,
-          leftReason: row.leftReason || null,
-          billedReason: row.billedReason || null,
-        }),
+  const isPresent = (value) =>
+    value !== null &&
+    value !== undefined &&
+    !(typeof value === "string" && value.trim() === "");
+  const mergeByPresence = (current, next) => {
+    const merged = { ...current };
+    for (const [key, value] of Object.entries(next)) {
+      if (!isPresent(merged[key]) && isPresent(value)) {
+        merged[key] = value;
+      }
+    }
+    return merged;
+  };
+
+  const extraInfoMap = new Map();
+  for (const row of rows) {
+    const resumeKey = String(row.resId || row.resumeId || "").trim();
+    if (!resumeKey) continue;
+    const normalizedRow = {
+      ...buildResumeCompatibilityFields({
+        submittedReason: row.submittedReason || null,
+        verifiedReason: row.verifiedReason || null,
+        othersReason: row.othersReason || null,
+        walkInReason: row.walkInReason || null,
         furtherReason: row.furtherReason || null,
-        officeLocationCity: row.officeLocationCity || null,
-        office_location_city: row.officeLocationCity || null,
-      },
-    ]),
-  );
+        selectReason: row.selectReason || null,
+        shortlistedReason: row.shortlistedReason || null,
+        joinedReason: row.joinedReason || null,
+        joiningNote: row.joinedReason || null,
+        dropoutReason: row.dropoutReason || null,
+        rejectReason: row.rejectReason || null,
+        leftReason: row.leftReason || null,
+        billedReason: row.billedReason || null,
+      }),
+      furtherReason: row.furtherReason || null,
+      officeLocationCity: row.officeLocationCity || null,
+      office_location_city: row.officeLocationCity || null,
+    };
+    const existing = extraInfoMap.get(resumeKey);
+    extraInfoMap.set(
+      resumeKey,
+      existing ? mergeByPresence(existing, normalizedRow) : normalizedRow,
+    );
+  }
+
+  return extraInfoMap;
 };
 
 const upsertExtraInfoFields = async (connection, payload) => {

@@ -1811,6 +1811,8 @@ router.get(
           const compatibilityFields = buildResumeCompatibilityFields({
             ...extraInfo,
             ...row,
+            othersReason:
+              extraInfo?.othersReason || row.workflowNote || null,
             candidateName: candidateSnapshot.name || row.candidateName || null,
             candidatePhone: candidateSnapshot.phone || row.candidatePhone || null,
             reason: row.workflowNote || null,
