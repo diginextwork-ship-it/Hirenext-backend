@@ -409,6 +409,67 @@ test("admin verify route accepts canonical verified and persists verify reason",
   }
 });
 
+test("admin advance-status moves a candidate to others and persists the others metadata", async () => {
+  const resId = buildTempResumeId("others");
+  await createTempResume(resId);
+
+  try {
+    const response = await requestJson(
+      `/api/admin/resumes/${resId}/advance-status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({
+          status: "others",
+          othersReason: "candidate asked to be reviewed later",
+        }),
+      },
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body?.data?.status, "others");
+    assert.equal(response.body?.data?.workflowStatus, "others");
+    assert.equal(response.body?.data?.selection?.status, "others");
+    assert.equal(
+      response.body?.data?.othersReason,
+      "candidate asked to be reviewed later",
+    );
+    assert.deepEqual(response.body?.data?.allowedNextStatuses, [
+      "walk_in",
+      "rejected",
+    ]);
+    assert.equal(response.body?.data?.canRollback, true);
+
+    const [selectionRows] = await pool.query(
+      `SELECT selection_status AS status, selection_note AS note
+       FROM job_resume_selection
+       WHERE res_id = ?
+       LIMIT 1`,
+      [resId],
+    );
+    assert.equal(selectionRows[0]?.status, "others");
+    assert.equal(selectionRows[0]?.note, "candidate asked to be reviewed later");
+
+    const [extraInfoRows] = await pool.query(
+      `SELECT others_reason AS othersReason, others_at AS othersAt
+       FROM extra_info
+       WHERE res_id = ? OR resume_id = ?
+       LIMIT 1`,
+      [resId, resId],
+    );
+    assert.equal(
+      extraInfoRows[0]?.othersReason,
+      "candidate asked to be reviewed later",
+    );
+    assert.ok(extraInfoRows[0]?.othersAt);
+  } finally {
+    await cleanupTempResume(resId);
+  }
+});
+
 test("legacy verify aliases are normalized to canonical verified on admin and team leader routes", async () => {
   const adminResId = buildTempResumeId("alias_admin");
   const jobResId = buildTempResumeId("alias_job");
