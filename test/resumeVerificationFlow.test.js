@@ -110,6 +110,7 @@ const cleanupTempResume = async (resId) => {
     resId,
     resId,
   ]);
+  await pool.query("DELETE FROM applications WHERE res_id = ?", [resId]);
   await pool.query("DELETE FROM candidate WHERE res_id = ?", [resId]);
   await pool.query("DELETE FROM job_resume_selection WHERE res_id = ?", [resId]);
   await pool.query("DELETE FROM resumes_data WHERE res_id = ?", [resId]);

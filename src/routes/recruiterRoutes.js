@@ -2402,14 +2402,22 @@ router.get(
         a.ats_match_percentage AS atsMatchPercentage,
         a.resume_filename AS resumeFilename,
         a.created_at AS createdAt,
+        COALESCE(jrs.selection_status, 'pending') AS workflowStatus,
+        jrs.selection_note AS workflowNote,
+        jrs.selected_at AS workflowUpdatedAt,
         j.role_name AS roleName,
         j.company_name AS companyName,
         j.city AS city,
-        ei.office_location_city AS officeLocationCity
+        ei.office_location_city AS officeLocationCity,
+        ei.submitted_reason AS submittedReason,
+        ei.verified_reason AS verifiedReason,
+        ei.others_reason AS othersReason
       FROM applications a
       LEFT JOIN candidate c ON c.res_id = a.res_id
       INNER JOIN jobs j ON j.jid = a.job_jid
       LEFT JOIN recruiter creator ON creator.rid = j.${jobsRecruiterIdColumn}
+      LEFT JOIN job_resume_selection jrs
+        ON jrs.job_jid = a.job_jid AND jrs.res_id = a.res_id
       LEFT JOIN extra_info ei
         ON ei.res_id = a.res_id OR ei.resume_id = a.res_id
       WHERE ${whereClause}
@@ -2418,27 +2426,43 @@ router.get(
       );
 
       return res.status(200).json({
-        applications: rows.map((row) => ({
-          id: row.id,
-          name: row.candidateName || null,
-          candidateName: row.candidateName,
-          candidatePhone: row.candidatePhone || null,
-          email: row.email,
-          jobJid: row.jobJid === null ? null : Number(row.jobJid),
-          atsScore: row.atsScore === null ? null : Number(row.atsScore),
-          atsMatchPercentage:
-            row.atsMatchPercentage === null
-              ? null
-              : Number(row.atsMatchPercentage),
-          resumeFilename: row.resumeFilename || null,
-          createdAt: row.createdAt,
-          job: {
-            roleName: row.roleName,
-            companyName: row.companyName,
-            officeLocationCity: row.officeLocationCity || null,
-            city: row.city || null,
-          },
-        })),
+        applications: rows.map((row) => {
+          const compatibilityFields = buildResumeCompatibilityFields({
+            ...row,
+            reason: row.workflowNote || null,
+            note: row.workflowNote || null,
+          });
+
+          return {
+            ...row,
+            ...compatibilityFields,
+            id: row.id,
+            name: compatibilityFields.candidateName || row.candidateName || null,
+            candidateName:
+              compatibilityFields.candidateName || row.candidateName || null,
+            candidatePhone:
+              compatibilityFields.candidatePhone || row.candidatePhone || null,
+            email: row.email,
+            jobJid:
+              row.jobJid === null || row.jobJid === undefined
+                ? null
+                : String(row.jobJid),
+            atsScore: row.atsScore === null ? null : Number(row.atsScore),
+            atsMatchPercentage:
+              row.atsMatchPercentage === null
+                ? null
+                : Number(row.atsMatchPercentage),
+            resumeFilename: row.resumeFilename || null,
+            createdAt: row.createdAt,
+            workflowUpdatedAt: row.workflowUpdatedAt || null,
+            job: {
+              roleName: compatibilityFields.roleName || row.roleName,
+              companyName: compatibilityFields.companyName || row.companyName,
+              officeLocationCity: row.officeLocationCity || null,
+              city: compatibilityFields.city || row.city || null,
+            },
+          };
+        }),
       });
     } catch (error) {
       return res.status(500).json({
