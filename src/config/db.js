@@ -1230,6 +1230,7 @@ const ensureJobResumeSelectionTable = async () => {
   const requiredStatuses = [
     "submitted",
     "verified",
+    "others",
     "walk_in",
     "further",
     "selected",
@@ -1250,7 +1251,7 @@ const ensureJobResumeSelectionTable = async () => {
     await pool.query(
       `ALTER TABLE job_resume_selection
        MODIFY COLUMN selection_status
-       ENUM('submitted','verified','walk_in','further','selected','shortlisted','pending_joining','rejected','joined','dropout','on_hold','billed','left')
+       ENUM('submitted','verified','others','walk_in','further','selected','shortlisted','pending_joining','rejected','joined','dropout','on_hold','billed','left')
        NOT NULL DEFAULT 'selected'`,
     );
   }

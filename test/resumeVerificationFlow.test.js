@@ -375,6 +375,7 @@ test("admin verify route accepts canonical verified and persists verify reason",
     assert.equal(response.body?.data?.selection?.status, "verified");
     assert.deepEqual(response.body?.data?.allowedNextStatuses, [
       "walk_in",
+      "others",
       "rejected",
     ]);
     assert.equal(response.body?.data?.canRollback, true);
@@ -900,6 +901,7 @@ test("admin billed transition still rejects invalid workflow transitions", async
     assert.equal(response.body?.requestedStatus, "billed");
     assert.deepEqual(response.body?.allowedNextStatuses, [
       "verified",
+      "others",
       "rejected",
     ]);
   } finally {
