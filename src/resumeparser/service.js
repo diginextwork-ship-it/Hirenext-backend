@@ -60,6 +60,33 @@ const pickFirstNonEmpty = (...values) => {
   return "";
 };
 
+const normalizeComparableText = (value) =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+const normalizePhoneDigits = (value) => {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (digits.length < 10) return "";
+  return digits.slice(-10);
+};
+
+const pickStructuredEducation = (primary, fallback) => {
+  const primaryEducation = Array.isArray(primary?.education)
+    ? primary.education.filter((item) => item && typeof item === "object")
+    : primary?.education && typeof primary.education === "object"
+      ? [primary.education]
+      : [];
+  const fallbackEducation = Array.isArray(fallback?.education)
+    ? fallback.education.filter((item) => item && typeof item === "object")
+    : fallback?.education && typeof fallback.education === "object"
+      ? [fallback.education]
+      : [];
+
+  return primaryEducation.length ? primaryEducation : fallbackEducation;
+};
+
 const extractApplicantName = (parsedData) => {
   if (
     !parsedData ||
@@ -84,6 +111,226 @@ const extractApplicantName = (parsedData) => {
   return candidate || null;
 };
 
+const CONTACT_LINE_WINDOW = 12;
+const PHONE_PATTERN =
+  /(?:\+?\d{1,3}[\s\-().]*)?(?:\(?\d{3,5}\)?[\s\-().]*)\d{3,5}[\s\-().]*\d{3,5}/g;
+const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
+
+const collectTextMatches = ({ text, lines, pattern, normalizeValue, scoreLine }) => {
+  const matches = [];
+  const seen = new Set();
+
+  for (const [index, line] of lines.entries()) {
+    pattern.lastIndex = 0;
+    let match = pattern.exec(line);
+    while (match) {
+      const rawValue = String(match[0] || "").trim();
+      const normalizedValue = normalizeValue(rawValue);
+      if (normalizedValue && !seen.has(normalizedValue)) {
+        seen.add(normalizedValue);
+        matches.push({
+          raw: rawValue,
+          value: normalizedValue,
+          lineIndex: index,
+          line,
+          score: scoreLine({ line, lineIndex: index, rawValue, normalizedValue }),
+        });
+      }
+
+      match = pattern.exec(line);
+    }
+  }
+
+  return matches.sort((left, right) => right.score - left.score);
+};
+
+const findBestEmail = (lines, text) => {
+  const matches = collectTextMatches({
+    text,
+    lines,
+    pattern: EMAIL_PATTERN,
+    normalizeValue: (value) => String(value || "").trim().toLowerCase(),
+    scoreLine: ({ line, lineIndex, normalizedValue }) => {
+      const lower = line.toLowerCase();
+      const localPart = normalizedValue.split("@")[0] || "";
+      let score = 0;
+
+      if (lineIndex < 5) score += 40 - lineIndex * 4;
+      else if (lineIndex < CONTACT_LINE_WINDOW) score += 12;
+
+      if (/\b(email|mail|e-mail)\b/i.test(line)) score += 45;
+      if (/^(contact|connect|reach me)\b/i.test(lower)) score += 12;
+      if (/\blinkedin|github|portfolio|www\.|http\b/i.test(lower)) score -= 25;
+      if (/\breference|referee|manager|supervisor\b/i.test(lower)) score -= 18;
+      if (/[|/]/.test(line)) score += 6;
+      if (localPart.includes("hr") || localPart.includes("recruit")) score -= 10;
+
+      return score;
+    },
+  });
+
+  return matches[0]?.value || null;
+};
+
+const findBestPhone = (lines, text) => {
+  const matches = collectTextMatches({
+    text,
+    lines,
+    pattern: PHONE_PATTERN,
+    normalizeValue: normalizePhoneDigits,
+    scoreLine: ({ line, lineIndex, normalizedValue }) => {
+      const lower = line.toLowerCase();
+      let score = 0;
+
+      if (!normalizedValue) return -100;
+      if (lineIndex < 5) score += 35 - lineIndex * 4;
+      else if (lineIndex < CONTACT_LINE_WINDOW) score += 10;
+
+      if (/\b(phone|mobile|mob|contact|call|tel)\b/i.test(line)) score += 55;
+      if (/\bwhatsapp\b/i.test(line)) score += 20;
+      if (/\bfax\b/i.test(line)) score -= 50;
+      if (/\bexperience|salary|year|years|dob|age\b/i.test(lower)) score -= 18;
+      if (/[|/]/.test(line)) score += 4;
+
+      return score;
+    },
+  });
+
+  return matches[0]?.value || null;
+};
+
+const scoreNameCandidate = (line, index) => {
+  const trimmed = String(line || "").trim();
+  const lower = trimmed.toLowerCase();
+  const tokens = trimmed.split(/\s+/).filter(Boolean);
+
+  if (!trimmed) return -100;
+  if (tokens.length < 2 || tokens.length > 5) return -100;
+  if (!/^[a-z .'-]+$/i.test(trimmed)) return -100;
+  if (lower.includes("@") || /\d/.test(trimmed)) return -100;
+  if (
+    /^(resume|curriculum vitae|cv|profile|summary|objective|education|experience|skills|projects|declaration|references?)$/i.test(
+      lower,
+    )
+  )
+    return -100;
+  if (
+    /\b(email|phone|mobile|address|contact|linkedin|github|portfolio|engineer|developer|manager|analyst|specialist|consultant)\b/i.test(
+      lower,
+    )
+  )
+    return -50;
+
+  let score = 0;
+  if (index < 3) score += 60 - index * 10;
+  else if (index < 8) score += 20 - index;
+
+  if (tokens.length === 2 || tokens.length === 3) score += 30;
+  if (tokens.every((token) => /^[A-Z][a-z'-]+$/.test(token))) score += 40;
+  else if (tokens.every((token) => /^[A-Z][A-Z'-]+$/.test(token))) score += 28;
+  if (trimmed.length >= 8 && trimmed.length <= 32) score += 18;
+  if (/^[A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+)+$/.test(trimmed)) score += 18;
+  if (/\b(and|with|for|at|in|to)\b/i.test(lower)) score -= 25;
+
+  return score;
+};
+
+const findBestName = (lines) => {
+  const candidates = lines
+    .slice(0, 15)
+    .map((line, index) => ({
+      line,
+      score: scoreNameCandidate(line, index),
+    }))
+    .filter((item) => item.score > 0)
+    .sort((left, right) => right.score - left.score);
+
+  return candidates[0]?.line || null;
+};
+
+const isLikelyNamePresentInText = (name, lines, text) => {
+  const normalizedName = normalizeComparableText(name);
+  if (!normalizedName) return false;
+
+  const topSection = lines.slice(0, 20).map(normalizeComparableText).join(" ");
+  if (topSection.includes(normalizedName)) return true;
+
+  return normalizeComparableText(text).includes(normalizedName);
+};
+
+const mergeParsedDataWithFallback = ({ aiParsedData, fallbackParsedData, resumeText }) => {
+  const safeAi =
+    aiParsedData && typeof aiParsedData === "object" && !Array.isArray(aiParsedData)
+      ? aiParsedData
+      : {};
+  const safeFallback =
+    fallbackParsedData &&
+    typeof fallbackParsedData === "object" &&
+    !Array.isArray(fallbackParsedData)
+      ? fallbackParsedData
+      : {};
+  const text = String(resumeText || "");
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const aiName = extractApplicantName(safeAi);
+  const fallbackName = extractApplicantName(safeFallback);
+  const mergedName = isLikelyNamePresentInText(aiName, lines, text)
+    ? aiName
+    : fallbackName;
+
+  const aiEmail = pickFirstNonEmpty(safeAi.email, safeAi.mail).toLowerCase();
+  const fallbackEmail = pickFirstNonEmpty(safeFallback.email, safeFallback.mail).toLowerCase();
+  const mergedEmail =
+    aiEmail && text.toLowerCase().includes(aiEmail) ? aiEmail : fallbackEmail;
+
+  const aiPhone = normalizePhoneDigits(
+    pickFirstNonEmpty(
+      safeAi.phone,
+      safeAi.phone_number,
+      safeAi.phoneNumber,
+      safeAi.mobile,
+      safeAi.mobile_number,
+      safeAi.mobileNumber,
+    ),
+  );
+  const fallbackPhone = normalizePhoneDigits(
+    pickFirstNonEmpty(
+      safeFallback.phone,
+      safeFallback.phone_number,
+      safeFallback.phoneNumber,
+      safeFallback.mobile,
+      safeFallback.mobile_number,
+      safeFallback.mobileNumber,
+    ),
+  );
+  const mergedPhone = aiPhone && text.replace(/\D/g, "").includes(aiPhone) ? aiPhone : fallbackPhone;
+
+  const merged = {
+    ...safeFallback,
+    ...safeAi,
+    full_name: mergedName || null,
+    email: mergedEmail || null,
+    phone: mergedPhone || null,
+    education: pickStructuredEducation(safeAi, safeFallback),
+    age: pickFirstNonEmpty(safeAi.age, safeAi.current_age, safeFallback.age) || null,
+  };
+
+  if (!merged.education?.length) {
+    merged.education = [
+      {
+        latest_education_level: null,
+        board_university: null,
+        institution_name: null,
+      },
+    ];
+  }
+
+  return merged;
+};
+
 const extractAutofillFallbackFromText = (resumeText) => {
   const text = String(resumeText || "");
   const lines = text
@@ -91,44 +338,15 @@ const extractAutofillFallbackFromText = (resumeText) => {
     .map((line) => line.trim())
     .filter(Boolean);
 
-  const emailMatch = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-  const phoneMatch =
-    text.match(
-      /(?:\+?\d{1,3}[\s-]?)?(?:\(?\d{3,5}\)?[\s-]?)\d{3,5}[\s-]?\d{3,5}/,
-    ) || null;
+  const email = findBestEmail(lines, text);
+  const phone = findBestPhone(lines, text);
   const ageMatch = text.match(/\bage\s*[:\-]?\s*(\d{2})\b/i);
   const dobMatch =
     text.match(
       /\b(?:dob|date of birth)\s*[:\-]?\s*([0-3]?\d[\/\-][01]?\d[\/\-](?:19|20)\d{2})\b/i,
     ) || text.match(/\b([0-3]?\d[\/\-][01]?\d[\/\-](?:19|20)\d{2})\b/);
 
-  const normalizedPhoneDigits = String(phoneMatch?.[0] || "").replace(
-    /\D/g,
-    "",
-  );
-  const phone =
-    normalizedPhoneDigits.length >= 10
-      ? normalizedPhoneDigits.slice(normalizedPhoneDigits.length - 10)
-      : "";
-
-  const ignoreLine = (line) => {
-    const lower = line.toLowerCase();
-    return (
-      lower.includes("@") ||
-      /^(resume|curriculum vitae|cv)$/i.test(line) ||
-      /^(phone|mobile|email|address|contact)\b/i.test(lower) ||
-      /\d{5,}/.test(line)
-    );
-  };
-
-  const name =
-    lines.find((line) => {
-      if (ignoreLine(line)) return false;
-      const tokens = line.split(/\s+/).filter(Boolean);
-      return (
-        tokens.length >= 2 && tokens.length <= 5 && /^[a-z .'-]+$/i.test(line)
-      );
-    }) || "";
+  const name = findBestName(lines) || "";
 
   const toAgeFromDob = (dobText) => {
     const normalized = String(dobText || "").trim();
@@ -181,7 +399,7 @@ const extractAutofillFallbackFromText = (resumeText) => {
 
   return {
     full_name: name || null,
-    email: emailMatch ? emailMatch[0] : null,
+    email: email || null,
     phone: phone || null,
     education: [
       {
@@ -342,7 +560,11 @@ const parseResumeWithAts = async ({
     const aiParsedData = safeJson(rawAiParsedData, "resume data");
     const fallbackParsedData = extractAutofillFallbackFromText(resumeText);
     const parsedData = hasParsedAutofillSignal(aiParsedData)
-      ? aiParsedData
+      ? mergeParsedDataWithFallback({
+          aiParsedData,
+          fallbackParsedData,
+          resumeText,
+        })
       : fallbackParsedData;
     const aiAtsRawJson = normalizedJobDescription
       ? safeJson(rawAiAtsData, "ATS score")
@@ -371,7 +593,7 @@ const parseResumeWithAts = async ({
       atsRawJson,
       parserMeta: {
         parsedDataSource: hasParsedAutofillSignal(aiParsedData)
-          ? "ai"
+          ? "hybrid_ai_fallback"
           : "fallback",
         atsSource:
           aiAtsRawJson &&
@@ -452,5 +674,7 @@ module.exports = {
   parseResumeWithAts,
   extractResumeAts,
   extractApplicantName,
+  extractAutofillFallbackFromText,
+  mergeParsedDataWithFallback,
   isImageResumeType,
 };

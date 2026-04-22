@@ -3901,7 +3901,9 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
         jobJid: resume.jobJid || undefined,
         recruiterRid: resume.rid || undefined,
         verifiedReason: currentDerivedStatus === "verified" ? null : undefined,
+        verifiedAt: currentDerivedStatus === "verified" ? null : undefined,
         othersReason: currentDerivedStatus === "others" ? null : undefined,
+        othersAt: currentDerivedStatus === "others" ? null : undefined,
       });
     }
 
@@ -3915,6 +3917,7 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
         jobJid: resume.jobJid || undefined,
         recruiterRid: resume.rid || undefined,
         walkInReason: null,
+        walkInAt: null,
       });
     }
 
@@ -3924,6 +3927,7 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
         jobJid: resume.jobJid || undefined,
         recruiterRid: resume.rid || undefined,
         selectReason: null,
+        selectedAt: null,
       });
     }
 
@@ -3933,6 +3937,7 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
         jobJid: resume.jobJid || undefined,
         recruiterRid: resume.rid || undefined,
         rejectReason: null,
+        rejectedAt: null,
       });
     }
 
@@ -3942,6 +3947,12 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
         joiningDate: null,
         revenue: null,
       });
+      await upsertExtraInfoFields(connection, {
+        resId: normalizedResId,
+        jobJid: resume.jobJid || undefined,
+        recruiterRid: resume.rid || undefined,
+        shortlistedAt: null,
+      });
     }
 
     if (currentDerivedStatus === "joined") {
@@ -3950,6 +3961,7 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
         jobJid: resume.jobJid || undefined,
         recruiterRid: resume.rid || undefined,
         joinedReason: null,
+        joinedAt: null,
       });
     }
 
@@ -3959,6 +3971,7 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
         jobJid: resume.jobJid || undefined,
         recruiterRid: resume.rid || undefined,
         dropoutReason: null,
+        dropoutAt: null,
       });
     }
 
@@ -3968,6 +3981,7 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
         jobJid: resume.jobJid || undefined,
         recruiterRid: resume.rid || undefined,
         leftReason: null,
+        leftAt: null,
       });
     }
 
@@ -3977,6 +3991,7 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
         jobJid: resume.jobJid || undefined,
         recruiterRid: resume.rid || undefined,
         billedReason: null,
+        billedAt: null,
       });
     }
 

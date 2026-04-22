@@ -135,6 +135,87 @@ const resolveRevenueAmount = (...candidates) => {
   return null;
 };
 
+const mergeCandidateSnapshotIntoParsedData = (parsedData, candidateSnapshot = {}) => {
+  const safeParsedData =
+    parsedData && typeof parsedData === "object" && !Array.isArray(parsedData)
+      ? parsedData
+      : null;
+
+  if (!safeParsedData) {
+    return parsedData || null;
+  }
+
+  const mergedParsedData = { ...safeParsedData };
+  const primaryEducation =
+    Array.isArray(safeParsedData.education) && safeParsedData.education.length > 0
+      ? safeParsedData.education[0]
+      : {};
+  const mergedEducation = {
+    ...(primaryEducation && typeof primaryEducation === "object"
+      ? primaryEducation
+      : {}),
+  };
+
+  if (candidateSnapshot.name) {
+    mergedParsedData.full_name = candidateSnapshot.name;
+    mergedParsedData.fullName = candidateSnapshot.name;
+    mergedParsedData.name = candidateSnapshot.name;
+    mergedParsedData.candidate_name = candidateSnapshot.name;
+    mergedParsedData.candidateName = candidateSnapshot.name;
+    mergedParsedData.applicant_name = candidateSnapshot.name;
+    mergedParsedData.applicantName = candidateSnapshot.name;
+  }
+
+  if (candidateSnapshot.phone) {
+    mergedParsedData.phone = candidateSnapshot.phone;
+    mergedParsedData.phone_number = candidateSnapshot.phone;
+    mergedParsedData.phoneNumber = candidateSnapshot.phone;
+    mergedParsedData.mobile = candidateSnapshot.phone;
+    mergedParsedData.mobile_number = candidateSnapshot.phone;
+    mergedParsedData.mobileNumber = candidateSnapshot.phone;
+  }
+
+  if (candidateSnapshot.email) {
+    mergedParsedData.email = candidateSnapshot.email;
+    mergedParsedData.mail = candidateSnapshot.email;
+  }
+
+  if (candidateSnapshot.age !== null && candidateSnapshot.age !== undefined) {
+    mergedParsedData.age = String(candidateSnapshot.age);
+  }
+
+  if (candidateSnapshot.levelOfEdu) {
+    mergedEducation.latest_education_level = candidateSnapshot.levelOfEdu;
+    mergedEducation.latestEducationLevel = candidateSnapshot.levelOfEdu;
+    mergedEducation.education_level = candidateSnapshot.levelOfEdu;
+    mergedEducation.degree = candidateSnapshot.levelOfEdu;
+    mergedEducation.qualification = candidateSnapshot.levelOfEdu;
+  }
+
+  if (candidateSnapshot.boardUni) {
+    mergedEducation.board_university = candidateSnapshot.boardUni;
+    mergedEducation.boardUniversity = candidateSnapshot.boardUni;
+    mergedEducation.university = candidateSnapshot.boardUni;
+    mergedEducation.university_name = candidateSnapshot.boardUni;
+    mergedEducation.board = candidateSnapshot.boardUni;
+  }
+
+  if (candidateSnapshot.institutionName) {
+    mergedEducation.institution_name = candidateSnapshot.institutionName;
+    mergedEducation.institutionName = candidateSnapshot.institutionName;
+    mergedEducation.college_name = candidateSnapshot.institutionName;
+    mergedEducation.college = candidateSnapshot.institutionName;
+    mergedEducation.school_name = candidateSnapshot.institutionName;
+    mergedEducation.school = candidateSnapshot.institutionName;
+  }
+
+  if (Object.keys(mergedEducation).length > 0) {
+    mergedParsedData.education = [mergedEducation];
+  }
+
+  return mergedParsedData;
+};
+
 const getRecruiterIdColumn = async (tableName) => {
   if (await columnExists(tableName, "recruiter_rid")) return "recruiter_rid";
   if (await columnExists(tableName, "rid")) return "rid";
@@ -1092,6 +1173,10 @@ router.post(
           req.body?.notes ??
           "",
       ).trim();
+      const storedParsedData = mergeCandidateSnapshotIntoParsedData(
+        parsed.parsedData,
+        candidateSnapshot,
+      );
 
       if (
         !candidateName ||
@@ -1179,14 +1264,14 @@ router.post(
             safeJobId,
             resId,
             originalName,
-            safeJsonOrNull(parsed.parsedData),
+            safeJsonOrNull(storedParsedData),
             parsed.atsScore,
             parsed.atsMatchPercentage,
             safeJsonOrNull({
               ats_score: parsed.atsScore,
               ats_match_percentage: parsed.atsMatchPercentage,
               ats_details: parsed.atsRawJson,
-              parsed_data: parsed.parsedData,
+              parsed_data: storedParsedData,
             }),
           ],
         );
@@ -1235,7 +1320,7 @@ router.post(
             ats_score: parsed.atsScore,
             ats_match_percentage: parsed.atsMatchPercentage,
             ats_details: parsed.atsRawJson,
-            parsed_data: parsed.parsedData,
+            parsed_data: storedParsedData,
           }),
         );
 
@@ -2797,7 +2882,9 @@ router.post(
           jobJid: resume.jobJid || undefined,
           recruiterRid: rid || undefined,
           verifiedReason: currentStatus === "verified" ? null : undefined,
+          verifiedAt: currentStatus === "verified" ? null : undefined,
           othersReason: currentStatus === "others" ? null : undefined,
+          othersAt: currentStatus === "others" ? null : undefined,
         });
       }
 
@@ -2811,6 +2898,7 @@ router.post(
           jobJid: resume.jobJid || undefined,
           recruiterRid: rid || undefined,
           walkInReason: null,
+          walkInAt: null,
         });
       }
 
@@ -2825,6 +2913,7 @@ router.post(
           jobJid: resume.jobJid || undefined,
           recruiterRid: rid || undefined,
           selectReason: null,
+          selectedAt: null,
         });
       }
 
@@ -2834,6 +2923,7 @@ router.post(
           jobJid: resume.jobJid || undefined,
           recruiterRid: rid || undefined,
           rejectReason: null,
+          rejectedAt: null,
         });
       }
 
@@ -2843,6 +2933,12 @@ router.post(
           joiningDate: null,
           revenue: null,
         });
+        await upsertExtraInfoFields(connection, {
+          resId: normalizedResId,
+          jobJid: resume.jobJid || undefined,
+          recruiterRid: rid || undefined,
+          shortlistedAt: null,
+        });
       }
 
       if (currentStatus === "joined") {
@@ -2851,6 +2947,7 @@ router.post(
           jobJid: resume.jobJid || undefined,
           recruiterRid: rid || undefined,
           joinedReason: null,
+          joinedAt: null,
         });
       }
 
@@ -2860,6 +2957,7 @@ router.post(
           jobJid: resume.jobJid || undefined,
           recruiterRid: rid || undefined,
           dropoutReason: null,
+          dropoutAt: null,
         });
       }
 
