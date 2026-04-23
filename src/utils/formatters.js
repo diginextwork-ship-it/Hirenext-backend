@@ -78,17 +78,36 @@ const dedupeStringList = (values) => {
   return result;
 };
 
+const unwrapRepeatedFieldValue = (value) => {
+  if (!Array.isArray(value)) return value;
+
+  for (let index = value.length - 1; index >= 0; index -= 1) {
+    const candidate = unwrapRepeatedFieldValue(value[index]);
+    if (candidate === undefined || candidate === null) continue;
+    if (typeof candidate === "string") {
+      if (candidate.trim()) return candidate;
+      continue;
+    }
+    return candidate;
+  }
+
+  return undefined;
+};
+
 const pickFirstFilled = (...values) => {
   for (const value of values) {
-    if (value === undefined || value === null) continue;
-    if (typeof value === "string") {
-      const trimmed = value.trim();
+    const normalizedValue = unwrapRepeatedFieldValue(value);
+    if (normalizedValue === undefined || normalizedValue === null) continue;
+    if (typeof normalizedValue === "string") {
+      const trimmed = normalizedValue.trim();
       if (trimmed) return trimmed;
       continue;
     }
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-    const normalized = String(value).trim();
-    if (normalized) return value;
+    if (typeof normalizedValue === "number" && Number.isFinite(normalizedValue)) {
+      return normalizedValue;
+    }
+    const normalized = String(normalizedValue).trim();
+    if (normalized) return normalizedValue;
   }
   return undefined;
 };
