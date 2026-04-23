@@ -116,6 +116,75 @@ const cleanupTempResume = async (resId) => {
   await pool.query("DELETE FROM resumes_data WHERE res_id = ?", [resId]);
 };
 
+const createDuplicateResumeFixture = async ({
+  resId,
+  candidateName,
+  candidatePhone,
+  candidateEmail,
+  status = null,
+  jobJid = "JID-5",
+  recruiterRid = "hnr-2",
+  uploadedAt = "2026-04-01 09:00:00",
+}) => {
+  await pool.query(
+    `INSERT INTO resumes_data
+      (res_id, resume, rid, job_jid, resume_filename, resume_type, submitted_by_role, uploaded_at, ats_raw_json, source)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      resId,
+      Buffer.from(`duplicate-fixture-${resId}`),
+      recruiterRid,
+      jobJid,
+      `${resId}.pdf`,
+      "pdf",
+      "recruiter",
+      uploadedAt,
+      JSON.stringify({
+        parsedData: {
+          name: candidateName,
+          phone: candidatePhone,
+          email: candidateEmail,
+        },
+      }),
+      "test",
+    ],
+  );
+
+  await pool.query(
+    `INSERT INTO candidate
+      (cid, res_id, job_jid, recruiter_rid, name, phone, email)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+      job_jid = VALUES(job_jid),
+      recruiter_rid = VALUES(recruiter_rid),
+      name = VALUES(name),
+      phone = VALUES(phone),
+      email = VALUES(email)`,
+    [
+      `c_${resId.replace(/^res_/, "").slice(0, 16)}`,
+      resId,
+      jobJid,
+      recruiterRid,
+      candidateName,
+      candidatePhone,
+      candidateEmail,
+    ],
+  );
+
+  if (status) {
+    await pool.query(
+      `INSERT INTO job_resume_selection
+        (job_jid, res_id, selected_by_admin, selection_status, selection_note, selected_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+        selection_status = VALUES(selection_status),
+        selection_note = VALUES(selection_note),
+        selected_at = VALUES(selected_at)`,
+      [jobJid, resId, "test-suite", status, `${status} fixture`, uploadedAt],
+    );
+  }
+};
+
 const createTempRecruiter = async ({ rid, name, email, role, points = 0 }) => {
   await pool.query(
     `INSERT INTO recruiter (rid, name, email, password, role, points)
@@ -610,6 +679,189 @@ test("recruiter resumes endpoint returns recruiter frontend compatibility fields
     assert.equal(resume?.city, resume?.job?.city);
   } finally {
     await cleanupTempResume(resId);
+  }
+});
+
+test("resume submission blocks duplicate candidate identities when an active status already exists", async () => {
+  const existingResId = buildTempResumeId("dupact");
+  const recruiterStatusSnapshot = await snapshotStatusRow("hnr-2");
+
+  await createDuplicateResumeFixture({
+    resId: existingResId,
+    candidateName: "Duplicate Active Candidate",
+    candidatePhone: "9876501234",
+    candidateEmail: "duplicate.active@example.com",
+    status: "verified",
+  });
+
+  try {
+    const response = await requestMultipart("/api/resumes/submit", {
+      headers: {
+        Authorization: `Bearer ${recruiterToken}`,
+      },
+      fields: {
+        recruiter_rid: "hnr-2",
+        job_jid: "JID-5",
+        source: "Naukri",
+        office_location_option: "jd",
+        candidate_name: "Duplicate Active Candidate",
+        phone: "9876501234",
+        email: "duplicate.active@example.com",
+        latest_education_level: "B.Tech",
+        institution_name: "Test Institute",
+        age: "25",
+        parsedData: "{}",
+      },
+      file: {
+        fieldName: "resume_file",
+        filename: "duplicate-active.pdf",
+        type: "application/pdf",
+        content: "%PDF-1.4 duplicate active candidate",
+      },
+    });
+
+    assert.equal(response.status, 409);
+    assert.equal(
+      response.body?.error,
+      "Duplicate entry of resume already exists.",
+    );
+    assert.equal(response.body?.existingResume?.resId, existingResId);
+    assert.equal(response.body?.existingResume?.workflowStatus, "verified");
+  } finally {
+    await cleanupTempResume(existingResId);
+    await restoreStatusRow("hnr-2", recruiterStatusSnapshot);
+  }
+});
+
+test("resume submission allows duplicate candidate identities when the latest status is rejected and stores submission time", async () => {
+  const existingResId = buildTempResumeId("duprej");
+  const recruiterStatusSnapshot = await snapshotStatusRow("hnr-2");
+  let newResId = null;
+
+  await createDuplicateResumeFixture({
+    resId: existingResId,
+    candidateName: "Duplicate Rejected Candidate",
+    candidatePhone: "9876505678",
+    candidateEmail: "duplicate.rejected@example.com",
+    status: "rejected",
+  });
+
+  try {
+    const response = await requestMultipart("/api/resumes/submit", {
+      headers: {
+        Authorization: `Bearer ${recruiterToken}`,
+      },
+      fields: {
+        recruiter_rid: "hnr-2",
+        job_jid: "JID-5",
+        source: "Indeed",
+        office_location_option: "jd",
+        candidate_name: "Duplicate Rejected Candidate",
+        phone: "9876505678",
+        email: "duplicate.rejected@example.com",
+        latest_education_level: "MBA",
+        institution_name: "Retry Institute",
+        age: "27",
+        parsedData: "{}",
+      },
+      file: {
+        fieldName: "resume_file",
+        filename: "duplicate-rejected.pdf",
+        type: "application/pdf",
+        content: "%PDF-1.4 duplicate rejected candidate",
+      },
+    });
+
+    assert.equal(response.status, 201);
+    assert.equal(response.body?.success, true);
+    newResId = response.body?.resumeId || null;
+    assert.ok(newResId);
+    assert.notEqual(newResId, existingResId);
+
+    const [timestampRows] = await pool.query(
+      `SELECT
+         rd.uploaded_at AS uploadedAt,
+         ei.submitted_at AS submittedAt
+       FROM resumes_data rd
+       LEFT JOIN extra_info ei
+         ON ei.res_id = rd.res_id OR ei.resume_id = rd.res_id
+       WHERE rd.res_id = ?
+       LIMIT 1`,
+      [newResId],
+    );
+
+    assert.ok(timestampRows[0]?.uploadedAt);
+    assert.ok(timestampRows[0]?.submittedAt);
+  } finally {
+    if (newResId) {
+      await cleanupTempResume(newResId);
+    }
+    await cleanupTempResume(existingResId);
+    await restoreStatusRow("hnr-2", recruiterStatusSnapshot);
+  }
+});
+
+test("resume submission uses the latest duplicate candidate status when deciding resubmission", async () => {
+  const olderResId = buildTempResumeId("dupold");
+  const latestResId = buildTempResumeId("duplatest");
+  const recruiterStatusSnapshot = await snapshotStatusRow("hnr-2");
+  let newResId = null;
+
+  await createDuplicateResumeFixture({
+    resId: olderResId,
+    candidateName: "Duplicate Latest Candidate",
+    candidatePhone: "9876511111",
+    candidateEmail: "duplicate.latest@example.com",
+    status: "verified",
+    uploadedAt: "2026-04-01 09:00:00",
+  });
+  await createDuplicateResumeFixture({
+    resId: latestResId,
+    candidateName: "Duplicate Latest Candidate",
+    candidatePhone: "9876511111",
+    candidateEmail: "duplicate.latest@example.com",
+    status: "rejected",
+    uploadedAt: "2026-04-02 09:00:00",
+  });
+
+  try {
+    const response = await requestMultipart("/api/resumes/submit", {
+      headers: {
+        Authorization: `Bearer ${recruiterToken}`,
+      },
+      fields: {
+        recruiter_rid: "hnr-2",
+        job_jid: "JID-5",
+        source: "Indeed",
+        office_location_option: "jd",
+        candidate_name: "Duplicate Latest Candidate",
+        phone: "9876511111",
+        email: "duplicate.latest@example.com",
+        latest_education_level: "MBA",
+        institution_name: "Retry Institute",
+        age: "27",
+        parsedData: "{}",
+      },
+      file: {
+        fieldName: "resume_file",
+        filename: "duplicate-latest.pdf",
+        type: "application/pdf",
+        content: "%PDF-1.4 duplicate latest candidate",
+      },
+    });
+
+    assert.equal(response.status, 201);
+    newResId = response.body?.resumeId || null;
+    assert.ok(newResId);
+    assert.notEqual(newResId, olderResId);
+    assert.notEqual(newResId, latestResId);
+  } finally {
+    if (newResId) {
+      await cleanupTempResume(newResId);
+    }
+    await cleanupTempResume(latestResId);
+    await cleanupTempResume(olderResId);
+    await restoreStatusRow("hnr-2", recruiterStatusSnapshot);
   }
 });
 
@@ -1638,6 +1890,10 @@ test("admin performance endpoint applies inclusive date filters across summary, 
     assert.equal(
       todayResponse.body?.statusDrilldown?.billed?.[0]?.status,
       "billed",
+    );
+    assert.equal(
+      todayResponse.body?.statusDrilldown?.billed?.[0]?.submittedAt,
+      `${todayDate} 09:00:00.000000`,
     );
 
     const todayRecruiter = todayResponse.body?.recruiters?.find(

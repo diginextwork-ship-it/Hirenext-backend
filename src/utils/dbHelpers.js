@@ -1,5 +1,12 @@
 const pool = require("../config/db");
+const { normalizeWorkflowStatus } = require("./resumeStatusFlow");
 const { buildResumeCompatibilityFields } = require("./resumeCompatibility");
+
+const DUPLICATE_RESUME_ALLOWED_STATUSES = new Set([
+  "rejected",
+  "dropout",
+  "left",
+]);
 
 const tableExists = async (tableName) => {
   try {
@@ -218,6 +225,78 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
 
   return extraInfoMap;
 };
+
+const findExistingResumeMatches = async (
+  connection,
+  { candidateName, phone, email } = {},
+) => {
+  const normalizedName = String(candidateName || "").trim().toLowerCase();
+  const normalizedPhone = String(phone || "").trim();
+  const normalizedEmail = String(email || "")
+    .trim()
+    .toLowerCase();
+
+  if (!normalizedName || !normalizedPhone || !normalizedEmail) {
+    return [];
+  }
+  if (!(await tableExists("candidate"))) {
+    return [];
+  }
+
+  const [rows] = await connection.query(
+    `SELECT
+      rd.res_id AS resId,
+      rd.job_jid AS jobJid,
+      rd.uploaded_at AS uploadedAt,
+      COALESCE(jrs.selection_status, 'submitted') AS workflowStatus
+    FROM candidate c
+    INNER JOIN resumes_data rd
+      ON rd.res_id = c.res_id
+    LEFT JOIN job_resume_selection jrs
+      ON jrs.res_id = rd.res_id
+     AND (jrs.job_jid = rd.job_jid OR (jrs.job_jid IS NULL AND rd.job_jid IS NULL))
+    WHERE LOWER(TRIM(COALESCE(c.name, ''))) = ?
+      AND TRIM(COALESCE(c.phone, '')) = ?
+      AND LOWER(TRIM(COALESCE(c.email, ''))) = ?
+    ORDER BY rd.uploaded_at DESC, rd.res_id DESC`,
+    [normalizedName, normalizedPhone, normalizedEmail],
+  );
+
+  return rows.map((row) => ({
+    resId: row.resId ? String(row.resId).trim() : null,
+    jobJid:
+      row.jobJid === null || row.jobJid === undefined
+        ? null
+        : String(row.jobJid).trim(),
+    uploadedAt: row.uploadedAt || null,
+    workflowStatus: normalizeWorkflowStatus(row.workflowStatus),
+  }));
+};
+
+const evaluateResumeDuplicateDecision = (matches = []) => {
+  const normalizedMatches = Array.isArray(matches) ? matches : [];
+  const latestMatch = normalizedMatches[0] || null;
+  const blockingMatch =
+    latestMatch &&
+    !DUPLICATE_RESUME_ALLOWED_STATUSES.has(
+      normalizeWorkflowStatus(latestMatch.workflowStatus),
+    )
+      ? latestMatch
+      : null;
+
+  return {
+    hasMatch: normalizedMatches.length > 0,
+    latestMatch,
+    allowSubmission: !blockingMatch,
+    blockingMatch,
+    matches: normalizedMatches,
+  };
+};
+
+const findResumeDuplicateDecision = async (connection, candidateIdentity) =>
+  evaluateResumeDuplicateDecision(
+    await findExistingResumeMatches(connection, candidateIdentity),
+  );
 
 const upsertExtraInfoFields = async (connection, payload) => {
   if (!(await tableExists("extra_info"))) return;
@@ -686,6 +765,7 @@ module.exports = {
   getColumnMetadata,
   constraintExists,
   getColumnMaxLength,
+  findResumeDuplicateDecision,
   fetchExtraInfoByResumeIds,
   upsertExtraInfoFields,
   upsertCandidateFields,

@@ -4321,6 +4321,8 @@ router.get("/api/admin/performance", async (req, res) => {
         city: row.city || null,
         resumeFilename: row.resumeFilename || null,
         candidateName: row.candidateName || null,
+        submittedAt: row.submittedAt || row.uploadedAt || null,
+        uploadedAt: row.submittedAt || row.uploadedAt || null,
         walkInDate: row.walkInDate || null,
         joiningDate: row.joiningDate || null,
         selectionNote: row.selectionNote || null,

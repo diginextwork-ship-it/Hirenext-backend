@@ -19,6 +19,7 @@ const {
   columnExists,
   getTableColumns,
   getColumnMaxLength,
+  findResumeDuplicateDecision,
   fetchExtraInfoByResumeIds,
   upsertExtraInfoFields,
   upsertCandidateFields,
@@ -32,7 +33,6 @@ const {
   normalizePhoneForStorage,
   safeJsonOrNull,
   parseJsonField,
-  sha256Hex,
   dedupeStringList,
   buildAutofillFromParsedData,
   extractCandidateSnapshot,
@@ -2236,6 +2236,19 @@ router.post("/api/applications", async (req, res) => {
     try {
       await connection.beginTransaction();
 
+      const duplicateCheck = await findResumeDuplicateDecision(connection, {
+        candidateName: finalName,
+        phone: finalPhone,
+        email: finalEmail,
+      });
+      if (!duplicateCheck.allowSubmission) {
+        await connection.rollback();
+        return res.status(409).json({
+          message: "Duplicate entry of resume already exists.",
+          existingResume: duplicateCheck.blockingMatch,
+        });
+      }
+
       const [sequenceResult] = await connection.query(
         "INSERT INTO resume_id_sequence VALUES ()",
       );
@@ -2266,22 +2279,6 @@ router.post("/api/applications", async (req, res) => {
         ],
       );
 
-      const hasFileHashColumn = await columnExists("resumes_data", "file_hash");
-      const fileHash = hasFileHashColumn ? sha256Hex(resumeBuffer) : null;
-      if (hasFileHashColumn && fileHash) {
-        const [duplicateRows] = await connection.query(
-          "SELECT res_id AS resId FROM resumes_data WHERE file_hash = ? LIMIT 1",
-          [fileHash],
-        );
-        if (duplicateRows.length > 0) {
-          await connection.rollback();
-          return res.status(409).json({
-            message:
-              "A copy of the provided resume already exists in our database.",
-          });
-        }
-      }
-
       const insertColumns = ["res_id", "rid"];
       const insertValues = [resId, selectedJob.recruiter_rid];
 
@@ -2292,11 +2289,6 @@ router.post("/api/applications", async (req, res) => {
 
       insertColumns.push("resume", "resume_filename", "resume_type");
       insertValues.push(resumeBuffer, normalizedFilename, extension);
-
-      if (hasFileHashColumn) {
-        insertColumns.push("file_hash");
-        insertValues.push(fileHash);
-      }
 
       if (hasSubmittedByRoleColumn) {
         insertColumns.push("submitted_by_role");
@@ -2352,6 +2344,16 @@ router.post("/api/applications", async (req, res) => {
         noticePeriod: finalHasPriorExperience ? finalNoticePeriod : null,
         experience: finalHasPriorExperience,
         yearsOfExp: finalHasPriorExperience ? finalYearsOfExperience : null,
+      });
+
+      await upsertExtraInfoFields(connection, {
+        resId,
+        jobJid: safeJobId,
+        recruiterRid: selectedJob.recruiter_rid,
+        candidateName: finalName,
+        email: finalEmail,
+        phone: finalPhone,
+        submittedAt: "__CURRENT_TIMESTAMP__",
       });
 
       await connection.commit();

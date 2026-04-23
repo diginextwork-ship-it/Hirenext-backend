@@ -18,6 +18,7 @@ const { validateResumeFile } = require("../middleware/uploadValidation");
 const {
   tableExists,
   columnExists,
+  findResumeDuplicateDecision,
   fetchExtraInfoByResumeIds,
   upsertExtraInfoFields,
   upsertCandidateFields,
@@ -33,7 +34,6 @@ const {
   safeJsonOrNull,
   parseJsonField,
   escapeLike,
-  sha256Hex,
   extractCandidateSnapshot,
   buildJobAtsContext,
 } = require("../utils/formatters");
@@ -1218,27 +1218,19 @@ router.post(
       try {
         await connection.beginTransaction();
 
-        const hasFileHashColumn = await columnExists(
-          "resumes_data",
-          "file_hash",
-        );
         const hasSourceColumn = await columnExists("resumes_data", "source");
-        const fileHash = hasFileHashColumn
-          ? sha256Hex(resumeFile.buffer)
-          : null;
-        if (hasFileHashColumn && fileHash) {
-          const [duplicateRows] = await connection.query(
-            "SELECT res_id AS resId FROM resumes_data WHERE file_hash = ? LIMIT 1",
-            [fileHash],
-          );
-          if (duplicateRows.length > 0) {
-            await connection.rollback();
-            return res.status(409).json({
-              success: false,
-              error:
-                "A copy of the provided resume already exists in our database.",
-            });
-          }
+        const duplicateCheck = await findResumeDuplicateDecision(connection, {
+          candidateName,
+          phone,
+          email,
+        });
+        if (!duplicateCheck.allowSubmission) {
+          await connection.rollback();
+          return res.status(409).json({
+            success: false,
+            error: "Duplicate entry of resume already exists.",
+            existingResume: duplicateCheck.blockingMatch,
+          });
         }
 
         const [sequenceResult] = await connection.query(
@@ -1293,12 +1285,6 @@ router.post(
           originalName,
           validation.extension,
         ];
-
-        if (hasFileHashColumn) {
-          resumeInsertColumns.push("file_hash");
-          resumeInsertValuesSql.push("?");
-          resumeInsertValues.push(fileHash);
-        }
 
         if (hasSourceColumn) {
           resumeInsertColumns.push("source");
@@ -1523,7 +1509,6 @@ router.post(
         "resumes_data",
         "submitted_by_role",
       );
-      const hasFileHashColumn = await columnExists("resumes_data", "file_hash");
       const hasSourceColumn = await columnExists("resumes_data", "source");
       const normalizedMimeType = String(resumeMimeType || "")
         .trim()
@@ -1548,24 +1533,53 @@ router.post(
             atsStatus: "not_stored",
           };
 
-      const fileHash = hasFileHashColumn ? sha256Hex(resumeBuffer) : null;
+      const requestParsedData = parseJsonField(
+        req.body?.parsedData ?? req.body?.parsed_data,
+      );
+      const requestAtsRawJson = parseJsonField(
+        req.body?.atsRawJson ?? req.body?.ats_raw_json,
+      );
+      const candidateSnapshot = extractCandidateSnapshot({
+        source: req.body,
+        parsedData: requestParsedData,
+        fallback: {
+          name: resumeAts.applicantName || "",
+          jobJid: safeJobId,
+          recruiterRid: rid,
+          location:
+            String(
+              candidate_location ?? candidateLocation ?? location ?? "",
+            ).trim() || null,
+        },
+      });
+      const storedAtsRawJson =
+        requestAtsRawJson !== null
+          ? {
+              ...(requestAtsRawJson &&
+              typeof requestAtsRawJson === "object" &&
+              !Array.isArray(requestAtsRawJson)
+                ? requestAtsRawJson
+                : {}),
+              parsed_data: requestParsedData ?? null,
+            }
+          : resumeAts.atsRawJson ?? null;
 
       const connection = await pool.getConnection();
       try {
         await connection.beginTransaction();
 
-        if (hasFileHashColumn && fileHash) {
-          const [duplicateRows] = await connection.query(
-            "SELECT res_id AS resId FROM resumes_data WHERE file_hash = ? LIMIT 1",
-            [fileHash],
-          );
-          if (duplicateRows.length > 0) {
-            await connection.rollback();
-            return res.status(409).json({
-              message:
-                "A copy of the provided resume already exists in our database.",
-            });
-          }
+        const duplicateCheck = await findResumeDuplicateDecision(connection, {
+          candidateName:
+            candidateSnapshot.name || resumeAts.applicantName || null,
+          phone: candidateSnapshot.phone || null,
+          email: candidateSnapshot.email || null,
+        });
+        if (!duplicateCheck.allowSubmission) {
+          await connection.rollback();
+          return res.status(409).json({
+            message: "Duplicate entry of resume already exists.",
+            existingResume: duplicateCheck.blockingMatch,
+          });
         }
 
         const [sequenceResult] = await connection.query(
@@ -1574,37 +1588,6 @@ router.post(
         const sequenceValue = Number(sequenceResult.insertId);
         const resId = `res_${sequenceValue}`;
         const cid = buildCandidateId(sequenceValue);
-
-        const requestParsedData = parseJsonField(
-          req.body?.parsedData ?? req.body?.parsed_data,
-        );
-        const requestAtsRawJson = parseJsonField(
-          req.body?.atsRawJson ?? req.body?.ats_raw_json,
-        );
-        const candidateSnapshot = extractCandidateSnapshot({
-          source: req.body,
-          parsedData: requestParsedData,
-          fallback: {
-            name: resumeAts.applicantName || "",
-            jobJid: safeJobId,
-            recruiterRid: rid,
-            location:
-              String(
-                candidate_location ?? candidateLocation ?? location ?? "",
-              ).trim() || null,
-          },
-        });
-        const storedAtsRawJson =
-          requestAtsRawJson !== null
-            ? {
-                ...(requestAtsRawJson &&
-                typeof requestAtsRawJson === "object" &&
-                !Array.isArray(requestAtsRawJson)
-                  ? requestAtsRawJson
-                  : {}),
-                parsed_data: requestParsedData ?? null,
-              }
-            : resumeAts.atsRawJson ?? null;
 
         const insertColumns = ["res_id", "rid"];
         const insertValues = [resId, rid];
@@ -1620,11 +1603,6 @@ router.post(
           normalizedFilename,
           validation.extension,
         );
-
-        if (hasFileHashColumn) {
-          insertColumns.push("file_hash");
-          insertValues.push(fileHash);
-        }
 
         if (hasSubmittedByRoleColumn) {
           insertColumns.push("submitted_by_role");
@@ -1682,6 +1660,17 @@ router.post(
           institutionName: candidateSnapshot.institutionName || undefined,
           location: candidateSnapshot.location || undefined,
           age: candidateSnapshot.age,
+        });
+
+        await upsertExtraInfoFields(connection, {
+          resId,
+          jobJid: safeJobId,
+          recruiterRid: rid,
+          candidateName:
+            candidateSnapshot.name || resumeAts.applicantName || "Unknown Candidate",
+          email: candidateSnapshot.email || undefined,
+          phone: candidateSnapshot.phone || undefined,
+          submittedAt: "__CURRENT_TIMESTAMP__",
         });
 
         await connection.commit();
