@@ -827,6 +827,7 @@ router.get("/api/admin/dashboard", async (_req, res) => {
           j.company_name AS companyName,
           j.city AS city,
           ei.office_location_city AS officeLocationCity,
+          ei.submitted_reason AS submittedReason,
           j.points_per_joining AS pointsPerJoining,
           j.revenue AS revenue,
           COALESCE(jrs.selection_status, 'submitted') AS workflowStatus,
@@ -879,6 +880,7 @@ router.get("/api/admin/dashboard", async (_req, res) => {
           phone: row.candidatePhone || null,
           companyName: row.companyName || null,
           officeLocationCity: row.officeLocationCity || null,
+          submittedReason: row.submittedReason || null,
           city: row.city || null,
           joiningDate: row.joiningDate || null,
           pointsPerJoining:

@@ -682,6 +682,37 @@ test("recruiter resumes endpoint returns recruiter frontend compatibility fields
   }
 });
 
+test("admin dashboard recruiter uploads include recruiter submitted notes", async () => {
+  const resId = buildTempResumeId("admindash");
+
+  try {
+    await createTempResume(resId);
+    await pool.query(
+      `INSERT INTO extra_info
+        (res_id, resume_id, job_jid, recruiter_rid, submitted_reason)
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+        submitted_reason = VALUES(submitted_reason)`,
+      [resId, resId, "JID-5", "hnr-2", "note visible to admin"],
+    );
+
+    const response = await requestJson("/api/admin/dashboard", {
+      headers: {
+        Authorization: `Bearer ${adminToken}`,
+      },
+    });
+
+    assert.equal(response.status, 200);
+    const resume = response.body?.recruiterResumeUploads?.find(
+      (item) => item.resId === resId,
+    );
+    assert.ok(resume);
+    assert.equal(resume?.submittedReason, "note visible to admin");
+  } finally {
+    await cleanupTempResume(resId);
+  }
+});
+
 test("resume submission blocks duplicate candidate identities when an active status already exists", async () => {
   const existingResId = buildTempResumeId("dupact");
   const recruiterStatusSnapshot = await snapshotStatusRow("hnr-2");
