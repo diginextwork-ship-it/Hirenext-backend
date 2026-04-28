@@ -2,7 +2,7 @@ const express = require("express");
 const pool = require("../config/db");
 const { requireAuth, requireRoles } = require("../middleware/auth");
 const { escapeLike } = require("../utils/formatters");
-const { tableExists } = require("../utils/dbHelpers");
+const { tableExists, buildResumeBinarySelect } = require("../utils/dbHelpers");
 const { parseInclusiveDateRange } = require("../utils/dateTime");
 
 const router = express.Router();
@@ -822,12 +822,17 @@ router.get(
     }
 
     try {
+      const { resumeSelectSql, resumeJoinSql } = await buildResumeBinarySelect(
+        pool,
+        { resumesAlias: "rd", blobAlias: "rb" },
+      );
       const [rows] = await pool.query(
         `SELECT
-          rd.resume,
+          ${resumeSelectSql},
           rd.resume_filename AS resumeFilename,
           rd.resume_type AS resumeType
         FROM resumes_data rd
+        ${resumeJoinSql}
         INNER JOIN jobs j
           ON j.jid = rd.job_jid
         LEFT JOIN recruiter teamLeader

@@ -12,6 +12,7 @@ const {
   columnExists,
   getColumnMetadata,
   constraintExists,
+  buildResumeBinarySelect,
   upsertExtraInfoFields,
   upsertCandidateFields,
   addCandidateBillIntakeEntry,
@@ -224,6 +225,7 @@ const ensureRecruiterAttendanceTable = async () => {
       recruiter_rid VARCHAR(20) NOT NULL,
       attendance_date DATE NOT NULL,
       status ENUM('present', 'absent', 'half_day') NOT NULL DEFAULT 'absent',
+      hours_worked DECIMAL(3,1) NULL,
       salary_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
       money_sum_id BIGINT NULL,
       marked_by VARCHAR(50) NOT NULL DEFAULT 'admin',
@@ -244,6 +246,11 @@ const ensureRecruiterAttendanceTable = async () => {
   if (!(await columnExists("recruiter_attendance", "salary_amount"))) {
     await pool.query(
       "ALTER TABLE recruiter_attendance ADD COLUMN salary_amount DECIMAL(12,2) NOT NULL DEFAULT 0",
+    );
+  }
+  if (!(await columnExists("recruiter_attendance", "hours_worked"))) {
+    await pool.query(
+      "ALTER TABLE recruiter_attendance ADD COLUMN hours_worked DECIMAL(3,1) NULL AFTER status",
     );
   }
   if (!(await columnExists("recruiter_attendance", "money_sum_id"))) {
@@ -379,6 +386,16 @@ const normalizeAttendanceDate = (value) => {
     return new Date().toISOString().slice(0, 10);
   }
   return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : "";
+};
+
+const normalizeAttendanceHours = (value) => {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  if (parsed < 1 || parsed > 8) return null;
+  const doubled = Math.round(parsed * 2);
+  if (Math.abs(parsed * 2 - doubled) > 0.0001) return null;
+  return doubled / 2;
 };
 
 const normalizeSalaryEffectiveDate = (value) => {
@@ -582,11 +599,14 @@ const syncRecruiterCurrentSalaryColumns = async (
   return salarySnapshot;
 };
 
-const calculateAttendanceExpense = (status, dailySalary) => {
+const calculateAttendanceExpense = (status, dailySalary, hoursWorked = null) => {
   const safeDailySalary = toMoneyNumber(dailySalary);
   if (status === "present") return safeDailySalary;
-  if (status === "half_day")
-    return Math.round((safeDailySalary / 2) * 100) / 100;
+  if (status === "half_day") {
+    const safeHoursWorked = normalizeAttendanceHours(hoursWorked);
+    if (safeHoursWorked === null) return 0;
+    return Math.round(safeDailySalary * (safeHoursWorked / 9) * 100) / 100;
+  }
   return 0;
 };
 
@@ -595,9 +615,13 @@ const buildAttendanceReason = ({
   recruiterName,
   attendanceDate,
   status,
+  hoursWorked,
 }) => {
   const label = String(recruiterName || "").trim();
-  const suffix = status === "half_day" ? "half day" : status;
+  const suffix =
+    status === "half_day"
+      ? `half day${hoursWorked ? ` (${hoursWorked}h)` : ""}`
+      : status;
   return label
     ? `attendance salary - ${attendanceDate} - ${recruiterRid} (${label}) - ${suffix}`
     : `attendance salary - ${attendanceDate} - ${recruiterRid} - ${suffix}`;
@@ -1763,6 +1787,7 @@ router.get("/api/admin/attendance", async (req, res) => {
         ) AS dailySalary,
         ra.id AS attendanceId,
         ra.status,
+        ra.hours_worked AS hoursWorked,
         ra.salary_amount AS salaryAmount,
         ra.money_sum_id AS moneySumId,
         ra.marked_by AS markedBy,
@@ -1794,6 +1819,7 @@ router.get("/api/admin/attendance", async (req, res) => {
         role: normalizeStaffRole(row.role),
         dailySalary,
         status,
+        hoursWorked: normalizeAttendanceHours(row.hoursWorked),
         salaryAmount,
         moneySumId: row.moneySumId ? Number(row.moneySumId) : null,
         markedBy: row.markedBy || null,
@@ -1843,11 +1869,17 @@ router.put("/api/admin/attendance", async (req, res) => {
   const recruiterRid = String(req.body?.recruiterRid || "").trim();
   const attendanceDate = normalizeAttendanceDate(req.body?.attendanceDate);
   const status = normalizeAttendanceStatus(req.body?.status);
+  const hoursWorked = normalizeAttendanceHours(req.body?.hoursWorked);
   const markedBy = String(req.body?.markedBy || "admin").trim() || "admin";
 
   if (!recruiterRid || !attendanceDate || !status) {
     return res.status(400).json({
       message: "recruiterRid, attendanceDate, and status are required.",
+    });
+  }
+  if (status === "half_day" && hoursWorked === null) {
+    return res.status(400).json({
+      message: "hoursWorked is required for half day. Use 1 to 8 in 0.5 steps.",
     });
   }
 
@@ -1901,6 +1933,7 @@ router.put("/api/admin/attendance", async (req, res) => {
     const expenseAmount = calculateAttendanceExpense(
       status,
       recruiter.dailySalary,
+      hoursWorked,
     );
 
     const [attendanceRows] = await connection.query(
@@ -1930,6 +1963,7 @@ router.put("/api/admin/attendance", async (req, res) => {
         recruiterName: recruiter.name,
         attendanceDate,
         status,
+        hoursWorked,
       });
 
       let hasExistingMoneyRow = false;
@@ -1966,22 +2000,31 @@ router.put("/api/admin/attendance", async (req, res) => {
       await connection.query(
         `UPDATE recruiter_attendance
          SET status = ?,
+             hours_worked = ?,
              salary_amount = ?,
              money_sum_id = ?,
              marked_by = ?,
              marked_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
-        [status, expenseAmount, moneySumId, markedBy, existingAttendance.id],
+        [
+          status,
+          status === "half_day" ? hoursWorked : null,
+          expenseAmount,
+          moneySumId,
+          markedBy,
+          existingAttendance.id,
+        ],
       );
     } else {
       await connection.query(
         `INSERT INTO recruiter_attendance
-          (recruiter_rid, attendance_date, status, salary_amount, money_sum_id, marked_by)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+          (recruiter_rid, attendance_date, status, hours_worked, salary_amount, money_sum_id, marked_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
           recruiterRid,
           attendanceDate,
           status,
+          status === "half_day" ? hoursWorked : null,
           expenseAmount,
           moneySumId,
           markedBy,
@@ -1998,6 +2041,7 @@ router.put("/api/admin/attendance", async (req, res) => {
         recruiterRid,
         attendanceDate,
         status,
+        hoursWorked: status === "half_day" ? hoursWorked : null,
         salaryAmount: expenseAmount,
         moneySumId,
         role: normalizeStaffRole(recruiter.role),
@@ -4031,13 +4075,18 @@ router.get("/api/admin/resumes/:resId/file", async (req, res) => {
   }
 
   try {
+    const { resumeSelectSql, resumeJoinSql } = await buildResumeBinarySelect(
+      pool,
+      { resumesAlias: "rd", blobAlias: "rb" },
+    );
     const [rows] = await pool.query(
       `SELECT
-        resume,
-        resume_filename AS resumeFilename,
-        resume_type AS resumeType
-      FROM resumes_data
-      WHERE res_id = ?
+        ${resumeSelectSql},
+        rd.resume_filename AS resumeFilename,
+        rd.resume_type AS resumeType
+      FROM resumes_data rd
+      ${resumeJoinSql}
+      WHERE rd.res_id = ?
       LIMIT 1`,
       [resId],
     );

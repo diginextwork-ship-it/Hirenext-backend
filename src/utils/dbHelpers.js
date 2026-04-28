@@ -298,6 +298,83 @@ const findResumeDuplicateDecision = async (connection, candidateIdentity) =>
     await findExistingResumeMatches(connection, candidateIdentity),
   );
 
+const resolveResumeBinaryStorage = async (connection = pool) => {
+  const [hasBlobTable, hasInlineResumeColumn] = await Promise.all([
+    tableExists("resumes_blob"),
+    columnExists("resumes_data", "resume"),
+  ]);
+
+  return {
+    hasBlobTable,
+    hasInlineResumeColumn,
+  };
+};
+
+const buildResumeBinarySelect = async (
+  connection = pool,
+  { resumesAlias = "rd", blobAlias = "rb" } = {},
+) => {
+  const storage = await resolveResumeBinaryStorage(connection);
+
+  if (storage.hasBlobTable) {
+    return {
+      resumeSelectSql: `${blobAlias}.resume AS resume`,
+      resumeJoinSql: `LEFT JOIN resumes_blob ${blobAlias} ON ${blobAlias}.res_id = ${resumesAlias}.res_id`,
+      storage,
+    };
+  }
+
+  if (storage.hasInlineResumeColumn) {
+    return {
+      resumeSelectSql: `${resumesAlias}.resume AS resume`,
+      resumeJoinSql: "",
+      storage,
+    };
+  }
+
+  throw new Error(
+    "Resume binary storage is unavailable. Neither resumes_blob nor resumes_data.resume exists.",
+  );
+};
+
+const storeResumeBinary = async (connection, resId, resumeBuffer) => {
+  const normalizedResId = String(resId || "").trim();
+  if (!normalizedResId) {
+    throw new Error("resId is required to store the resume binary.");
+  }
+
+  const storage = await resolveResumeBinaryStorage(connection);
+  let stored = false;
+
+  if (storage.hasBlobTable) {
+    await connection.query(
+      `INSERT INTO resumes_blob (res_id, resume)
+       VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE resume = VALUES(resume)`,
+      [normalizedResId, resumeBuffer],
+    );
+    stored = true;
+  }
+
+  if (storage.hasInlineResumeColumn) {
+    await connection.query(
+      `UPDATE resumes_data
+       SET resume = ?
+       WHERE res_id = ?`,
+      [resumeBuffer, normalizedResId],
+    );
+    stored = true;
+  }
+
+  if (!stored) {
+    throw new Error(
+      "Resume binary storage is unavailable. Neither resumes_blob nor resumes_data.resume exists.",
+    );
+  }
+
+  return storage;
+};
+
 const upsertExtraInfoFields = async (connection, payload) => {
   if (!(await tableExists("extra_info"))) return;
 
@@ -766,6 +843,9 @@ module.exports = {
   constraintExists,
   getColumnMaxLength,
   findResumeDuplicateDecision,
+  resolveResumeBinaryStorage,
+  buildResumeBinarySelect,
+  storeResumeBinary,
   fetchExtraInfoByResumeIds,
   upsertExtraInfoFields,
   upsertCandidateFields,

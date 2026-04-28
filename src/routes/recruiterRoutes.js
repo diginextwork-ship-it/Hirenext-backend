@@ -19,7 +19,9 @@ const {
   tableExists,
   columnExists,
   findResumeDuplicateDecision,
+  buildResumeBinarySelect,
   fetchExtraInfoByResumeIds,
+  storeResumeBinary,
   upsertExtraInfoFields,
   upsertCandidateFields,
   addCandidateBillIntakeEntry,
@@ -1272,19 +1274,23 @@ router.post(
           "res_id",
           "rid",
           "job_jid",
-          "resume",
           "resume_filename",
           "resume_type",
         ];
-        const resumeInsertValuesSql = ["?", "?", "?", "?", "?", "?"];
+        const resumeInsertValuesSql = ["?", "?", "?", "?", "?"];
         const resumeInsertValues = [
           resId,
           recruiterRid,
           safeJobId,
-          resumeFile.buffer,
           originalName,
           validation.extension,
         ];
+
+        if (await columnExists("resumes_data", "resume")) {
+          resumeInsertColumns.splice(3, 0, "resume");
+          resumeInsertValuesSql.splice(3, 0, "?");
+          resumeInsertValues.splice(3, 0, resumeFile.buffer);
+        }
 
         if (hasSourceColumn) {
           resumeInsertColumns.push("source");
@@ -1314,6 +1320,7 @@ router.post(
           `INSERT INTO resumes_data (${resumeInsertColumns.join(", ")}) VALUES (${resumeInsertValuesSql.join(", ")})`,
           resumeInsertValues,
         );
+        await storeResumeBinary(connection, resId, resumeFile.buffer);
 
         await upsertCandidateFields(connection, {
           cid,
@@ -1597,12 +1604,12 @@ router.post(
           insertValues.push(safeJobId);
         }
 
-        insertColumns.push("resume", "resume_filename", "resume_type");
-        insertValues.push(
-          resumeBuffer,
-          normalizedFilename,
-          validation.extension,
-        );
+        if (await columnExists("resumes_data", "resume")) {
+          insertColumns.push("resume");
+          insertValues.push(resumeBuffer);
+        }
+        insertColumns.push("resume_filename", "resume_type");
+        insertValues.push(normalizedFilename, validation.extension);
 
         if (hasSubmittedByRoleColumn) {
           insertColumns.push("submitted_by_role");
@@ -1645,6 +1652,7 @@ router.post(
           `INSERT INTO resumes_data (${insertColumns.join(", ")}) VALUES (${placeholders})`,
           insertValues,
         );
+        await storeResumeBinary(connection, resId, resumeBuffer);
 
         await upsertCandidateFields(connection, {
           cid,
@@ -1846,13 +1854,18 @@ router.get(
     if (!authorizeRecruiterResourceView(req, res, rid)) return;
 
     try {
+      const { resumeSelectSql, resumeJoinSql } = await buildResumeBinarySelect(
+        pool,
+        { resumesAlias: "rd", blobAlias: "rb" },
+      );
       const [rows] = await pool.query(
         `SELECT
-        resume,
-        resume_filename AS resumeFilename,
-        resume_type AS resumeType
-      FROM resumes_data
-      WHERE res_id = ? AND rid = ?
+        ${resumeSelectSql},
+        rd.resume_filename AS resumeFilename,
+        rd.resume_type AS resumeType
+      FROM resumes_data rd
+      ${resumeJoinSql}
+      WHERE rd.res_id = ? AND rd.rid = ?
       LIMIT 1`,
         [resId, rid],
       );

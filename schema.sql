@@ -348,6 +348,7 @@ CREATE TABLE IF NOT EXISTS recruiter_attendance (
   recruiter_rid VARCHAR(20) NOT NULL,
   attendance_date DATE NOT NULL,
   status ENUM('present', 'absent', 'half_day') NOT NULL DEFAULT 'absent',
+  hours_worked DECIMAL(3,1) NULL,
   salary_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
   money_sum_id BIGINT NULL,
   marked_by VARCHAR(50) NOT NULL DEFAULT 'admin',

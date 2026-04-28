@@ -312,6 +312,7 @@ const ensureRecruiterAttendanceTable = async () => {
       recruiter_rid VARCHAR(20) NOT NULL,
       attendance_date DATE NOT NULL,
       status ENUM('present', 'absent', 'half_day') NOT NULL DEFAULT 'absent',
+      hours_worked DECIMAL(3,1) NULL,
       salary_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
       money_sum_id BIGINT NULL,
       marked_by VARCHAR(50) NOT NULL DEFAULT 'admin',
@@ -334,6 +335,12 @@ const ensureRecruiterAttendanceTable = async () => {
   if (!(await columnExists("recruiter_attendance", "salary_amount"))) {
     await pool.query(
       "ALTER TABLE recruiter_attendance ADD COLUMN salary_amount DECIMAL(12,2) NOT NULL DEFAULT 0",
+    );
+  }
+
+  if (!(await columnExists("recruiter_attendance", "hours_worked"))) {
+    await pool.query(
+      "ALTER TABLE recruiter_attendance ADD COLUMN hours_worked DECIMAL(3,1) NULL AFTER status",
     );
   }
 

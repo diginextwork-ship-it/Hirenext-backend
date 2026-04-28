@@ -20,6 +20,7 @@ const {
   getTableColumns,
   getColumnMaxLength,
   findResumeDuplicateDecision,
+  storeResumeBinary,
   fetchExtraInfoByResumeIds,
   upsertExtraInfoFields,
   upsertCandidateFields,
@@ -2287,8 +2288,12 @@ router.post("/api/applications", async (req, res) => {
         insertValues.push(safeJobId);
       }
 
-      insertColumns.push("resume", "resume_filename", "resume_type");
-      insertValues.push(resumeBuffer, normalizedFilename, extension);
+      if (await columnExists("resumes_data", "resume")) {
+        insertColumns.push("resume");
+        insertValues.push(resumeBuffer);
+      }
+      insertColumns.push("resume_filename", "resume_type");
+      insertValues.push(normalizedFilename, extension);
 
       if (hasSubmittedByRoleColumn) {
         insertColumns.push("submitted_by_role");
@@ -2325,6 +2330,7 @@ router.post("/api/applications", async (req, res) => {
         `INSERT INTO resumes_data (${insertColumns.join(", ")}) VALUES (${placeholders})`,
         insertValues,
       );
+      await storeResumeBinary(connection, resId, resumeBuffer);
 
       await upsertCandidateFields(connection, {
         cid,
