@@ -1066,6 +1066,24 @@ const getCandidateResumesHandler = async (req, res) => {
     const applicantEmailSelect = hasCandidateEmailColumn
       ? "c.email AS applicantEmail,"
       : "NULL AS applicantEmail,";
+    const latestEducationLevelSelect = await columnExists(
+      "candidate",
+      "level_of_edu",
+    )
+      ? "c.level_of_edu AS latestEducationLevel,"
+      : "NULL AS latestEducationLevel,";
+    const boardUniversitySelect = await columnExists("candidate", "board_uni")
+      ? "c.board_uni AS boardUniversity,"
+      : "NULL AS boardUniversity,";
+    const institutionNameSelect = await columnExists(
+      "candidate",
+      "institution_name",
+    )
+      ? "c.institution_name AS institutionName,"
+      : "NULL AS institutionName,";
+    const ageSelect = await columnExists("candidate", "age")
+      ? "c.age AS age,"
+      : "NULL AS age,";
     const atsScoreSelect = hasAtsScoreColumn
       ? "rd.ats_score AS atsScore,"
       : "NULL AS atsScore,";
@@ -1125,6 +1143,10 @@ const getCandidateResumesHandler = async (req, res) => {
         ${applicantNameSelect}
         ${applicantPhoneSelect}
         ${applicantEmailSelect}
+        ${latestEducationLevelSelect}
+        ${boardUniversitySelect}
+        ${institutionNameSelect}
+        ${ageSelect}
         ${priorExperienceSelect}
         ${experienceIndustrySelect}
         ${experienceIndustryOtherSelect}
@@ -1180,6 +1202,11 @@ const getCandidateResumesHandler = async (req, res) => {
           applicantName: row.applicantName || null,
           applicantPhone: row.applicantPhone || null,
           applicantEmail: row.applicantEmail || null,
+          latestEducationLevel: row.latestEducationLevel || null,
+          boardUniversity: row.boardUniversity || null,
+          institutionName: row.institutionName || null,
+          age:
+            row.age === null || row.age === undefined ? null : Number(row.age),
           hasPriorExperience:
             row.hasPriorExperience === null ||
             row.hasPriorExperience === undefined
