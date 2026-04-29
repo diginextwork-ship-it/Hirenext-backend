@@ -61,7 +61,7 @@ const ADMIN_STATUS_TRANSITIONS = {
   billed: new Set(),
   left: new Set(),
   dropout: new Set(),
-  rejected: new Set(),
+  rejected: new Set(["joined"]),
 };
 
 const RECRUITER_STATUS_TRANSITIONS = {
@@ -72,6 +72,7 @@ const RECRUITER_STATUS_TRANSITIONS = {
   shortlisted: ["selected", "dropout", "rejected"],
   selected: ["joined", "dropout", "rejected"],
   joined: ["billed", "left"],
+  rejected: ["joined"],
 };
 
 const WORKFLOW_PREVIOUS_STATUS = {
