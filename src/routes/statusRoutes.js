@@ -2,7 +2,11 @@ const express = require("express");
 const pool = require("../config/db");
 const { requireAuth, requireRoles } = require("../middleware/auth");
 const { escapeLike } = require("../utils/formatters");
-const { tableExists, buildResumeBinarySelect } = require("../utils/dbHelpers");
+const {
+  tableExists,
+  columnExists,
+  buildResumeBinarySelect,
+} = require("../utils/dbHelpers");
 const { parseInclusiveDateRange } = require("../utils/dateTime");
 
 const router = express.Router();
@@ -898,6 +902,18 @@ router.get(
     }
 
     try {
+      const [
+        hasSubmittedByRoleColumn,
+        hasJobRecruiterAccessTable,
+        hasAccessModeColumn,
+      ] = await Promise.all([
+        columnExists("resumes_data", "submitted_by_role"),
+        tableExists("job_recruiter_access"),
+        columnExists("jobs", "access_mode"),
+      ]);
+      const recruiterSubmissionFilter = hasSubmittedByRoleColumn
+        ? "WHERE LOWER(TRIM(COALESCE(rd.submitted_by_role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')"
+        : "";
       const showAllTeamLeaderJobs =
         isTeamLeaderRole(req.auth?.role) && toRid(req.auth?.rid) === rid;
       const submittedRangeCondition = hasDateRange
@@ -958,7 +974,7 @@ router.get(
           LEFT JOIN job_resume_selection jrs
             ON jrs.job_jid = rd.job_jid
            AND jrs.res_id = rd.res_id
-          WHERE LOWER(TRIM(COALESCE(rd.submitted_by_role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')
+          ${recruiterSubmissionFilter}
           GROUP BY rd.rid
         ) rs ON rs.recruiter_rid = r.rid
         WHERE r.rid = ?
@@ -980,17 +996,30 @@ router.get(
                ON teamLeader.rid = j.recruiter_rid
              WHERE ${teamLeaderCreatedJobsCondition}`,
           )
-        : await pool.query(
-            `SELECT COUNT(DISTINCT j.jid) AS total
-             FROM jobs j
-             LEFT JOIN job_recruiter_access jra
-               ON j.jid = jra.job_jid
-              AND jra.recruiter_rid = ?
-              AND jra.is_active = TRUE
-             WHERE j.access_mode = 'open'
-                OR (j.access_mode = 'restricted' AND jra.id IS NOT NULL)`,
-            [rid],
-          );
+        : hasAccessModeColumn
+          ? hasJobRecruiterAccessTable
+            ? await pool.query(
+                `SELECT COUNT(DISTINCT j.jid) AS total
+                 FROM jobs j
+                 LEFT JOIN job_recruiter_access jra
+                   ON j.jid = jra.job_jid
+                  AND jra.recruiter_rid = ?
+                  AND jra.is_active = TRUE
+                 WHERE j.access_mode = 'open'
+                    OR (j.access_mode = 'restricted' AND jra.id IS NOT NULL)`,
+                [rid],
+              )
+            : await pool.query(
+                `SELECT COUNT(DISTINCT j.jid) AS total
+                 FROM jobs j
+                 WHERE j.access_mode = 'open'`,
+              )
+          : await pool.query(
+              `SELECT COUNT(DISTINCT j.jid) AS total
+               FROM jobs j
+               WHERE j.recruiter_rid = ?`,
+              [rid],
+            );
 
       const stats = mapStats(recruiterRow);
 
