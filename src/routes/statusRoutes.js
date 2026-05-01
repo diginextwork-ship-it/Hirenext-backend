@@ -927,9 +927,38 @@ router.get(
         : "1=1";
       const statsQueryParams = [];
       if (hasDateRange) {
-        for (let idx = 0; idx < 12; idx += 1) {
-          statsQueryParams.push(startDateTime, endExclusiveDateTime);
-        }
+        statsQueryParams.push(
+          startDateTime,
+          endExclusiveDateTime,
+          startDateTime,
+          endExclusiveDateTime,
+          startDateTime,
+          endExclusiveDateTime,
+          startDateTime,
+          endExclusiveDateTime,
+          startDateTime,
+          endExclusiveDateTime,
+          startDateTime,
+          endExclusiveDateTime,
+          startDateTime,
+          endExclusiveDateTime,
+          startDateTime,
+          endExclusiveDateTime,
+          startDateTime,
+          endExclusiveDateTime,
+          startDateTime,
+          endExclusiveDateTime,
+          startDateTime,
+          endExclusiveDateTime,
+          startDateTime,
+          endExclusiveDateTime,
+          startDateTime,
+          endExclusiveDateTime,
+          startDateTime,
+          endExclusiveDateTime,
+          startDateTime,
+          endExclusiveDateTime,
+        );
       }
       statsQueryParams.push(rid);
 
