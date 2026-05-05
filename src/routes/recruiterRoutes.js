@@ -52,6 +52,7 @@ const {
   resolveStatusReasonInput,
 } = require("../utils/resumeCompatibility");
 const {
+  formatSqlDateTimeInBusinessTimeZone,
   getCurrentDateOnlyInBusinessTimeZone,
   isValidDateOnly,
 } = require("../utils/dateTime");
@@ -1179,6 +1180,9 @@ router.post(
           req.body?.notes ??
           "",
       ).trim();
+      const submittedAt = formatSqlDateTimeInBusinessTimeZone(
+        req.body?.submitted_at_client ?? req.body?.submittedAtClient,
+      );
       const storedParsedData = mergeCandidateSnapshotIntoParsedData(
         parsed.parsedData,
         candidateSnapshot,
@@ -1280,14 +1284,16 @@ router.post(
           "job_jid",
           "resume_filename",
           "resume_type",
+          "uploaded_at",
         ];
-        const resumeInsertValuesSql = ["?", "?", "?", "?", "?"];
+        const resumeInsertValuesSql = ["?", "?", "?", "?", "?", "?"];
         const resumeInsertValues = [
           resId,
           recruiterRid,
           safeJobId,
           originalName,
           validation.extension,
+          submittedAt,
         ];
 
         if (await columnExists("resumes_data", "resume")) {
@@ -1343,11 +1349,11 @@ router.post(
 
         await connection.query(
           `INSERT INTO status (recruiter_rid, submitted, last_updated)
-         VALUES (?, 1, CURRENT_TIMESTAMP)
+         VALUES (?, 1, ?)
          ON DUPLICATE KEY UPDATE
            submitted = COALESCE(submitted, 0) + 1,
-           last_updated = CURRENT_TIMESTAMP`,
-          [recruiterRid],
+           last_updated = VALUES(last_updated)`,
+          [recruiterRid, submittedAt],
         );
 
         await upsertExtraInfoFields(connection, {
@@ -1359,7 +1365,7 @@ router.post(
           phone,
           officeLocationCity,
           submittedReason: String(submittedReason || "").trim() || null,
-          submittedAt: "__CURRENT_TIMESTAMP__",
+          submittedAt,
         });
 
         const [statusRows] = await connection.query(
