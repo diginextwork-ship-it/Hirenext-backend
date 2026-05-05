@@ -3088,6 +3088,7 @@ const firstNonEmptyText = (...values) => {
   for (const value of values) {
     if (value === undefined || value === null) continue;
     const normalized = String(value).trim();
+    if (["n/a", "na", "not set"].includes(normalized.toLowerCase())) continue;
     if (normalized) return normalized;
   }
   return null;
@@ -3103,20 +3104,16 @@ const resolveLatestPerformanceNote = (row = {}) => {
 
   const byStatus = {
     submitted: firstNonEmptyText(row.submittedReason),
-    verified: firstNonEmptyText(row.verifiedReason, row.selectionNote),
-    others: firstNonEmptyText(row.othersReason, row.selectionNote),
-    walk_in: firstNonEmptyText(row.walkInReason, row.selectionNote),
-    shortlisted: firstNonEmptyText(row.shortlistedReason, row.selectionNote),
-    selected: firstNonEmptyText(row.selectReason, row.selectionNote),
-    joined: firstNonEmptyText(
-      row.joinedReason,
-      row.joiningNote,
-      row.selectionNote,
-    ),
-    billed: firstNonEmptyText(row.billedReason, row.selectionNote),
-    left: firstNonEmptyText(row.leftReason, row.selectionNote),
-    dropout: firstNonEmptyText(row.dropoutReason, row.selectionNote),
-    rejected: firstNonEmptyText(row.rejectReason, row.selectionNote),
+    verified: firstNonEmptyText(row.verifiedReason),
+    others: firstNonEmptyText(row.othersReason),
+    walk_in: firstNonEmptyText(row.walkInReason),
+    shortlisted: firstNonEmptyText(row.shortlistedReason),
+    selected: firstNonEmptyText(row.selectReason),
+    joined: firstNonEmptyText(row.joinedReason, row.joiningNote),
+    billed: firstNonEmptyText(row.billedReason),
+    left: firstNonEmptyText(row.leftReason),
+    dropout: firstNonEmptyText(row.dropoutReason),
+    rejected: firstNonEmptyText(row.rejectReason),
   };
 
   if (byStatus[workflowStatus]) {
@@ -3135,10 +3132,6 @@ const resolveLatestPerformanceNote = (row = {}) => {
     row.walkInReason,
     row.othersReason,
     row.verifiedReason,
-    row.submittedReason,
-    row.selectionNote,
-    row.note,
-    row.reason,
   );
 };
 

@@ -479,6 +479,57 @@ test("admin verify route accepts canonical verified and persists verify reason",
   }
 });
 
+test("admin advance-status with no note does not copy recruiter submitted note", async () => {
+  const resId = buildTempResumeId("nonote");
+  await createTempResume(resId);
+  await pool.query(
+    `INSERT INTO extra_info (res_id, resume_id, job_jid, recruiter_rid, submitted_reason)
+     VALUES (?, ?, 'JID-5', 'hnr-2', ?)
+     ON DUPLICATE KEY UPDATE submitted_reason = VALUES(submitted_reason)`,
+    [resId, resId, "recruiter availability note"],
+  );
+
+  try {
+    const response = await requestJson(
+      `/api/admin/resumes/${resId}/advance-status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({ status: "verified" }),
+      },
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body?.data?.status, "verified");
+    assert.equal(response.body?.data?.verifiedReason, null);
+
+    const [selectionRows] = await pool.query(
+      `SELECT selection_status AS status, selection_note AS note
+       FROM job_resume_selection
+       WHERE res_id = ?
+       LIMIT 1`,
+      [resId],
+    );
+    assert.equal(selectionRows[0]?.status, "verified");
+    assert.equal(selectionRows[0]?.note, null);
+
+    const [extraInfoRows] = await pool.query(
+      `SELECT submitted_reason AS submittedReason, verified_reason AS verifiedReason
+       FROM extra_info
+       WHERE res_id = ? OR resume_id = ?
+       LIMIT 1`,
+      [resId, resId],
+    );
+    assert.equal(extraInfoRows[0]?.submittedReason, "recruiter availability note");
+    assert.equal(extraInfoRows[0]?.verifiedReason, null);
+  } finally {
+    await cleanupTempResume(resId);
+  }
+});
+
 test("admin advance-status moves a candidate to others and persists the others metadata", async () => {
   const resId = buildTempResumeId("others");
   await createTempResume(resId);
