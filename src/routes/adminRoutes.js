@@ -3900,7 +3900,12 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
         ei.others_at AS othersAt,
         ei.walk_in_at AS walkInAt,
         ei.selected_at AS selectedAtHistory,
-        ei.shortlisted_at AS shortlistedAt
+        ei.shortlisted_at AS shortlistedAt,
+        ei.joined_at AS joinedAt,
+        ei.dropout_at AS dropoutAt,
+        ei.billed_at AS billedAt,
+        ei.left_at AS leftAt,
+        ei.rejected_at AS rejectedAt
       FROM resumes_data rd
       LEFT JOIN job_resume_selection jrs
         ON jrs.res_id = rd.res_id
@@ -4022,6 +4027,10 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
     }
 
     if (currentDerivedStatus === "joined") {
+      await upsertCandidateFields(connection, {
+        resId: normalizedResId,
+        revenue: null,
+      });
       await upsertExtraInfoFields(connection, {
         resId: normalizedResId,
         jobJid: resume.jobJid || undefined,
@@ -4052,6 +4061,10 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
     }
 
     if (currentDerivedStatus === "billed") {
+      await upsertCandidateFields(connection, {
+        resId: normalizedResId,
+        revenue: null,
+      });
       await upsertExtraInfoFields(connection, {
         resId: normalizedResId,
         jobJid: resume.jobJid || undefined,
