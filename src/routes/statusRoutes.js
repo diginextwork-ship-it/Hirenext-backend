@@ -665,7 +665,8 @@ router.get(
           c.name AS candidateName,
           c.phone AS candidatePhone,
           j.company_name AS companyName,
-          j.city AS city
+          j.city AS city,
+          ei.office_location_city AS officeLocationCity
         FROM resumes_data rd
         INNER JOIN jobs j
           ON j.jid = rd.job_jid
@@ -747,6 +748,7 @@ router.get(
                 ? null
                 : String(row.jobJid).trim(),
             companyName: row.companyName || null,
+            officeLocationCity: row.officeLocationCity || null,
             city: row.city || null,
             resumeFilename: row.resumeFilename || null,
             walkInDate: row.walkInDate || null,
