@@ -1776,6 +1776,8 @@ router.get(
         rd.uploaded_at AS uploadedAt,
         COALESCE(jrs.selection_status, 'pending') AS workflowStatus,
         jrs.selection_note AS workflowNote,
+        jrs.selected_by_admin AS workflowUpdatedBy,
+        COALESCE(statusActor.name, jrs.selected_by_admin) AS workflowUpdatedByName,
         jrs.selected_at AS workflowUpdatedAt,
         DATE_FORMAT(c.joining_date, '%Y-%m-%d') AS joiningDate,
         j.company_name AS companyName,
@@ -1787,6 +1789,7 @@ router.get(
       LEFT JOIN job_resume_selection jrs
         ON jrs.job_jid = rd.job_jid
        AND jrs.res_id = rd.res_id
+      LEFT JOIN recruiter statusActor ON statusActor.rid = jrs.selected_by_admin
       WHERE rd.rid = ?
       ORDER BY rd.uploaded_at DESC`,
         [rid],
@@ -1824,6 +1827,11 @@ router.get(
             candidatePhone: candidateSnapshot.phone || row.candidatePhone || null,
             reason: row.workflowNote || null,
             note: row.workflowNote || null,
+            workflowUpdatedBy: row.workflowUpdatedBy || null,
+            workflowUpdatedByName:
+              row.workflowUpdatedByName === "admin-panel"
+                ? "Admin"
+                : row.workflowUpdatedByName || null,
           });
           return {
             ...row,
@@ -2418,6 +2426,8 @@ router.get(
         a.created_at AS createdAt,
         COALESCE(jrs.selection_status, 'pending') AS workflowStatus,
         jrs.selection_note AS workflowNote,
+        jrs.selected_by_admin AS workflowUpdatedBy,
+        COALESCE(statusActor.name, jrs.selected_by_admin) AS workflowUpdatedByName,
         jrs.selected_at AS workflowUpdatedAt,
         j.role_name AS roleName,
         j.company_name AS companyName,
@@ -2432,6 +2442,7 @@ router.get(
       LEFT JOIN recruiter creator ON creator.rid = j.${jobsRecruiterIdColumn}
       LEFT JOIN job_resume_selection jrs
         ON jrs.job_jid = a.job_jid AND jrs.res_id = a.res_id
+      LEFT JOIN recruiter statusActor ON statusActor.rid = jrs.selected_by_admin
       LEFT JOIN extra_info ei
         ON ei.res_id = a.res_id OR ei.resume_id = a.res_id
       WHERE ${whereClause}
@@ -2445,6 +2456,11 @@ router.get(
             ...row,
             reason: row.workflowNote || null,
             note: row.workflowNote || null,
+            workflowUpdatedBy: row.workflowUpdatedBy || null,
+            workflowUpdatedByName:
+              row.workflowUpdatedByName === "admin-panel"
+                ? "Admin"
+                : row.workflowUpdatedByName || null,
           });
 
           return {
