@@ -3702,6 +3702,7 @@ router.post(
           (job_jid, res_id, selected_by_admin, selection_status, selection_note)
         VALUES (?, ?, 'admin-panel', ?, ?)
         ON DUPLICATE KEY UPDATE
+          selected_by_admin = VALUES(selected_by_admin),
           selection_status = VALUES(selection_status),
           selection_note = VALUES(selection_note),
           selected_at = CURRENT_TIMESTAMP`,

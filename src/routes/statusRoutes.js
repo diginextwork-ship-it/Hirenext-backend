@@ -648,6 +648,8 @@ router.get(
           DATE_FORMAT(c.joining_date, '%Y-%m-%d') AS joiningDate,
           COALESCE(jrs.selection_status, 'submitted') AS workflowStatus,
           jrs.selection_note AS selectionNote,
+          jrs.selected_by_admin AS selectedByAdmin,
+          statusActor.name AS statusActorName,
           ei.submitted_reason AS submittedReason,
           ei.verified_reason AS verifiedReason,
           ei.others_reason AS othersReason,
@@ -678,6 +680,7 @@ router.get(
         LEFT JOIN job_resume_selection jrs
           ON jrs.job_jid = rd.job_jid
          AND jrs.res_id = rd.res_id
+        LEFT JOIN recruiter statusActor ON statusActor.rid = jrs.selected_by_admin
         WHERE ${teamLeaderCreatedJobsCondition}
           AND LOWER(TRIM(COALESCE(rd.submitted_by_role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')
         ORDER BY rd.uploaded_at DESC, rd.res_id DESC`,
@@ -740,6 +743,8 @@ router.get(
             recruiterName: row.recruiterName || null,
             recruiterRid: row.recruiterRid || null,
             teamLeaderName: row.teamLeaderName || null,
+            selectedByAdmin: row.selectedByAdmin || null,
+            statusActorName: row.statusActorName || null,
             candidateName: row.candidateName || null,
             candidatePhone: row.candidatePhone || null,
             phone: row.candidatePhone || null,
