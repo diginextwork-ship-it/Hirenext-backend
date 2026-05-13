@@ -808,6 +808,22 @@ router.get("/api/admin/dashboard", async (_req, res) => {
         "resumes_data",
         "accepted_by_admin",
       );
+      const hasAtsScoreColumn = await columnExists("resumes_data", "ats_score");
+      const hasAtsMatchColumn = await columnExists(
+        "resumes_data",
+        "ats_match_percentage",
+      );
+      const hasCandidateEmailColumn = await columnExists("candidate", "email");
+      const hasCandidateEducationColumn = await columnExists(
+        "candidate",
+        "level_of_edu",
+      );
+      const hasCandidateBoardColumn = await columnExists("candidate", "board_uni");
+      const hasCandidateInstitutionColumn = await columnExists(
+        "candidate",
+        "institution_name",
+      );
+      const hasCandidateAgeColumn = await columnExists("candidate", "age");
       const jobJidSelect = hasJobJidColumn
         ? "rd.job_jid AS jobJid,"
         : "NULL AS jobJid,";
@@ -820,6 +836,27 @@ router.get("/api/admin/dashboard", async (_req, res) => {
       const acceptedByAdminSelect = hasAcceptedByAdminColumn
         ? "rd.accepted_by_admin AS acceptedByAdmin,"
         : "NULL AS acceptedByAdmin,";
+      const atsScoreSelect = hasAtsScoreColumn
+        ? "rd.ats_score AS atsScore,"
+        : "NULL AS atsScore,";
+      const atsMatchSelect = hasAtsMatchColumn
+        ? "rd.ats_match_percentage AS atsMatchPercentage,"
+        : "NULL AS atsMatchPercentage,";
+      const candidateEmailSelect = hasCandidateEmailColumn
+        ? "c.email AS candidateEmail,"
+        : "NULL AS candidateEmail,";
+      const candidateEducationSelect = hasCandidateEducationColumn
+        ? "c.level_of_edu AS latestEducationLevel,"
+        : "NULL AS latestEducationLevel,";
+      const candidateBoardSelect = hasCandidateBoardColumn
+        ? "c.board_uni AS boardUniversity,"
+        : "NULL AS boardUniversity,";
+      const candidateInstitutionSelect = hasCandidateInstitutionColumn
+        ? "c.institution_name AS institutionName,"
+        : "NULL AS institutionName,";
+      const candidateAgeSelect = hasCandidateAgeColumn
+        ? "c.age AS age,"
+        : "NULL AS age,";
 
       const [countRows] = await pool.query(
         "SELECT COUNT(*) AS totalResumeCount FROM resumes_data",
@@ -846,9 +883,15 @@ router.get("/api/admin/dashboard", async (_req, res) => {
           teamLeader.rid AS teamLeaderRid,
           teamLeader.name AS teamLeaderName,
           c.name AS candidateName,
+          ${candidateEmailSelect}
           c.phone AS candidatePhone,
+          ${candidateEducationSelect}
+          ${candidateBoardSelect}
+          ${candidateInstitutionSelect}
+          ${candidateAgeSelect}
           c.joining_date AS joiningDate,
           j.company_name AS companyName,
+          j.role_name AS roleName,
           j.city AS city,
           ei.office_location_city AS officeLocationCity,
           ei.submitted_reason AS submittedReason,
@@ -857,6 +900,8 @@ router.get("/api/admin/dashboard", async (_req, res) => {
           COALESCE(jrs.selection_status, 'submitted') AS workflowStatus,
           rd.resume_filename AS resumeFilename,
           rd.resume_type AS resumeType,
+          ${atsScoreSelect}
+          ${atsMatchSelect}
           ${acceptedSelect}
           ${acceptedAtSelect}
           ${acceptedByAdminSelect}
@@ -900,9 +945,16 @@ router.get("/api/admin/dashboard", async (_req, res) => {
           jobOwnerTeamLeaderName: row.teamLeaderName || null,
           name: row.candidateName || null,
           candidateName: row.candidateName || null,
+          candidateEmail: row.candidateEmail || null,
+          email: row.candidateEmail || null,
           candidatePhone: row.candidatePhone || null,
           phone: row.candidatePhone || null,
+          latestEducationLevel: row.latestEducationLevel || null,
+          boardUniversity: row.boardUniversity || null,
+          institutionName: row.institutionName || null,
+          age: row.age === null || row.age === undefined ? null : Number(row.age),
           companyName: row.companyName || null,
+          roleName: row.roleName || null,
           officeLocationCity: row.officeLocationCity || null,
           submittedReason: row.submittedReason || null,
           city: row.city || null,
@@ -917,6 +969,15 @@ router.get("/api/admin/dashboard", async (_req, res) => {
               : Number(row.revenue),
           resumeFilename: row.resumeFilename || null,
           resumeType: row.resumeType || null,
+          atsScore:
+            row.atsScore === null || row.atsScore === undefined
+              ? null
+              : Number(row.atsScore),
+          atsMatchPercentage:
+            row.atsMatchPercentage === null ||
+            row.atsMatchPercentage === undefined
+              ? null
+              : Number(row.atsMatchPercentage),
           isAccepted: Boolean(row.isAccepted),
           acceptedAt: row.acceptedAt || null,
           acceptedByAdmin: row.acceptedByAdmin || null,
