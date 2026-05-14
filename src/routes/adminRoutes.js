@@ -12,6 +12,7 @@ const {
   columnExists,
   getColumnMetadata,
   constraintExists,
+  buildExtraInfoJoin,
   buildResumeBinarySelect,
   upsertExtraInfoFields,
   upsertCandidateFields,
@@ -913,8 +914,7 @@ router.get("/api/admin/dashboard", async (_req, res) => {
           ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
         LEFT JOIN jobs j ON j.jid = rd.job_jid
         LEFT JOIN recruiter teamLeader ON teamLeader.rid = j.recruiter_rid
-        LEFT JOIN extra_info ei
-          ON ei.res_id = rd.res_id OR ei.resume_id = rd.res_id
+        ${buildExtraInfoJoin("rd.res_id")}
         ORDER BY rd.uploaded_at DESC`,
       );
 
@@ -923,12 +923,16 @@ router.get("/api/admin/dashboard", async (_req, res) => {
           includeSelection: false,
           includeStatusHistory: false,
         });
-        const effectiveTeamLeaderRid = isTeamLeaderLikeRole(row.recruiterRole)
+        const submitterTeamLeaderRid = isTeamLeaderLikeRole(row.recruiterRole)
           ? row.rid || null
           : null;
-        const effectiveTeamLeaderName = isTeamLeaderLikeRole(row.recruiterRole)
+        const submitterTeamLeaderName = isTeamLeaderLikeRole(row.recruiterRole)
           ? row.recruiterName || null
           : null;
+        const effectiveTeamLeaderRid =
+          row.teamLeaderRid || submitterTeamLeaderRid || null;
+        const effectiveTeamLeaderName =
+          row.teamLeaderName || submitterTeamLeaderName || null;
 
         return {
           resId: row.resId || null,
@@ -941,6 +945,8 @@ router.get("/api/admin/dashboard", async (_req, res) => {
               : String(row.jobJid).trim(),
           teamLeaderRid: effectiveTeamLeaderRid,
           teamLeaderName: effectiveTeamLeaderName,
+          submitterTeamLeaderRid,
+          submitterTeamLeaderName,
           jobOwnerTeamLeaderRid: row.teamLeaderRid || null,
           jobOwnerTeamLeaderName: row.teamLeaderName || null,
           name: row.candidateName || null,
@@ -1192,9 +1198,7 @@ const getCandidateResumesHandler = async (req, res) => {
       ? "ei.others_reason AS othersReason,"
       : "NULL AS othersReason,";
     const extraInfoJoin = hasExtraInfoTable
-      ? `LEFT JOIN extra_info ei
-        ON ei.res_id = rd.res_id
-       OR (ei.resume_id = rd.res_id AND ei.res_id IS NULL)`
+      ? buildExtraInfoJoin("rd.res_id")
       : "";
 
     const [rows] = await pool.query(
@@ -1544,9 +1548,7 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
       ? "ei.others_reason AS othersReason,"
       : "NULL AS othersReason,";
     const extraInfoJoin = hasExtraInfoTable
-      ? `LEFT JOIN extra_info ei
-        ON ei.res_id = rd.res_id
-       OR (ei.resume_id = rd.res_id AND ei.res_id IS NULL)`
+      ? buildExtraInfoJoin("rd.res_id")
       : "";
 
     const [rows] = await pool.query(
@@ -3496,8 +3498,7 @@ const fetchAdminResumeWorkflowPayload = async (connection, resId) => {
     LEFT JOIN candidate c ON c.res_id = rd.res_id
     LEFT JOIN job_resume_selection jrs
       ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
-    LEFT JOIN extra_info ei
-      ON ei.res_id = rd.res_id OR (ei.resume_id = rd.res_id AND ei.res_id IS NULL)
+    ${buildExtraInfoJoin("rd.res_id")}
     WHERE rd.res_id = ?
     LIMIT 1`,
     [resId],
@@ -3973,8 +3974,7 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
         ON jrs.res_id = rd.res_id
         AND jrs.job_jid = COALESCE(rd.job_jid, jrs.job_jid)
       LEFT JOIN candidate c ON c.res_id = rd.res_id
-      LEFT JOIN extra_info ei
-        ON ei.res_id = rd.res_id OR (ei.resume_id = rd.res_id AND ei.res_id IS NULL)
+      ${buildExtraInfoJoin("rd.res_id")}
       WHERE rd.res_id = ?
       LIMIT 1
       FOR UPDATE`,
@@ -4432,8 +4432,7 @@ router.get("/api/admin/performance", async (req, res) => {
       LEFT JOIN jobs j ON j.jid = rd.job_jid
       LEFT JOIN recruiter teamLeader ON teamLeader.rid = j.recruiter_rid
       LEFT JOIN recruiter statusActor ON statusActor.rid = jrs.selected_by_admin
-      LEFT JOIN extra_info ei
-        ON ei.res_id = rd.res_id OR ei.resume_id = rd.res_id
+      ${buildExtraInfoJoin("rd.res_id")}
       WHERE COALESCE(LOWER(TRIM(rd.submitted_by_role)), 'recruiter') <> 'candidate'
         AND LOWER(TRIM(COALESCE(recruiter.role, 'recruiter'))) IN (
           'recruiter',
@@ -4578,12 +4577,16 @@ router.get("/api/admin/performance", async (req, res) => {
           normalizePerformanceDrilldownItem({
             ...row,
             eventAt: row.submittedAt,
-            teamLeaderRid: isTeamLeaderLikeRole(row.recruiterRole)
-              ? row.recruiterRid || null
-              : null,
-            teamLeaderName: isTeamLeaderLikeRole(row.recruiterRole)
-              ? row.recruiterName || null
-              : null,
+            teamLeaderRid:
+              row.teamLeaderRid ||
+              (isTeamLeaderLikeRole(row.recruiterRole)
+                ? row.recruiterRid || null
+                : null),
+            teamLeaderName:
+              row.teamLeaderName ||
+              (isTeamLeaderLikeRole(row.recruiterRole)
+                ? row.recruiterName || null
+                : null),
           }),
         );
         if (recruiterStats) {

@@ -97,6 +97,90 @@ const getColumnMaxLength = async (tableName, columnName) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const buildExtraInfoJoin = (resumeIdReference, alias = "ei") => `
+  LEFT JOIN (
+    SELECT
+      TRIM(res_id) AS res_id,
+      resume_id,
+      job_jid,
+      recruiter_rid,
+      rid,
+      office_location_city,
+      submitted_reason,
+      verified_reason,
+      others_reason,
+      shortlisted_reason,
+      walk_in_reason,
+      left_reason,
+      billed_reason,
+      further_reason,
+      select_reason,
+      joined_reason,
+      dropout_reason,
+      reject_reason,
+      submitted_at,
+      verified_at,
+      others_at,
+      walk_in_at,
+      further_at,
+      selected_at,
+      shortlisted_at,
+      joined_at,
+      dropout_at,
+      rejected_at,
+      billed_at,
+      left_at,
+      updated_at
+    FROM extra_info
+    WHERE NULLIF(TRIM(res_id), '') IS NOT NULL
+
+    UNION ALL
+
+    SELECT
+      TRIM(fallback_ei.resume_id) AS res_id,
+      fallback_ei.resume_id,
+      fallback_ei.job_jid,
+      fallback_ei.recruiter_rid,
+      fallback_ei.rid,
+      fallback_ei.office_location_city,
+      fallback_ei.submitted_reason,
+      fallback_ei.verified_reason,
+      fallback_ei.others_reason,
+      fallback_ei.shortlisted_reason,
+      fallback_ei.walk_in_reason,
+      fallback_ei.left_reason,
+      fallback_ei.billed_reason,
+      fallback_ei.further_reason,
+      fallback_ei.select_reason,
+      fallback_ei.joined_reason,
+      fallback_ei.dropout_reason,
+      fallback_ei.reject_reason,
+      fallback_ei.submitted_at,
+      fallback_ei.verified_at,
+      fallback_ei.others_at,
+      fallback_ei.walk_in_at,
+      fallback_ei.further_at,
+      fallback_ei.selected_at,
+      fallback_ei.shortlisted_at,
+      fallback_ei.joined_at,
+      fallback_ei.dropout_at,
+      fallback_ei.rejected_at,
+      fallback_ei.billed_at,
+      fallback_ei.left_at,
+      fallback_ei.updated_at
+    FROM extra_info fallback_ei
+    WHERE NULLIF(TRIM(fallback_ei.res_id), '') IS NULL
+      AND NULLIF(TRIM(fallback_ei.resume_id), '') IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM extra_info primary_ei
+        WHERE NULLIF(TRIM(primary_ei.res_id), '') =
+          NULLIF(TRIM(fallback_ei.resume_id), '')
+      )
+  ) ${alias}
+    ON ${alias}.res_id = ${resumeIdReference}
+`;
+
 const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
   const normalizedResumeIds = Array.from(
     new Set(
@@ -842,6 +926,7 @@ module.exports = {
   getColumnMetadata,
   constraintExists,
   getColumnMaxLength,
+  buildExtraInfoJoin,
   findResumeDuplicateDecision,
   resolveResumeBinaryStorage,
   buildResumeBinarySelect,

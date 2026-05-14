@@ -19,6 +19,7 @@ const {
   tableExists,
   columnExists,
   findResumeDuplicateDecision,
+  buildExtraInfoJoin,
   buildResumeBinarySelect,
   fetchExtraInfoByResumeIds,
   storeResumeBinary,
@@ -2443,8 +2444,7 @@ router.get(
       LEFT JOIN job_resume_selection jrs
         ON jrs.job_jid = a.job_jid AND jrs.res_id = a.res_id
       LEFT JOIN recruiter statusActor ON statusActor.rid = jrs.selected_by_admin
-      LEFT JOIN extra_info ei
-        ON ei.res_id = a.res_id OR ei.resume_id = a.res_id
+      ${buildExtraInfoJoin("a.res_id")}
       WHERE ${whereClause}
       ORDER BY a.created_at DESC`,
         queryParams,
@@ -2879,8 +2879,7 @@ router.post(
         LEFT JOIN job_resume_selection jrs
           ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
         LEFT JOIN candidate c ON c.res_id = rd.res_id
-        LEFT JOIN extra_info ei
-          ON ei.res_id = rd.res_id OR (ei.resume_id = rd.res_id AND ei.res_id IS NULL)
+        ${buildExtraInfoJoin("rd.res_id")}
         WHERE rd.res_id = ? AND rd.rid = ?
         LIMIT 1
         FOR UPDATE`,

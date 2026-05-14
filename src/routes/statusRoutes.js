@@ -5,6 +5,7 @@ const { escapeLike } = require("../utils/formatters");
 const {
   tableExists,
   columnExists,
+  buildExtraInfoJoin,
   buildResumeBinarySelect,
 } = require("../utils/dbHelpers");
 const { parseInclusiveDateRange } = require("../utils/dateTime");
@@ -673,8 +674,7 @@ router.get(
         INNER JOIN jobs j
           ON j.jid = rd.job_jid
         LEFT JOIN candidate c ON c.res_id = rd.res_id
-        LEFT JOIN extra_info ei
-          ON ei.res_id = rd.res_id OR (ei.resume_id = rd.res_id AND ei.res_id IS NULL)
+        ${buildExtraInfoJoin("rd.res_id")}
         INNER JOIN recruiter recruiter ON recruiter.rid = rd.rid
         LEFT JOIN recruiter teamLeader ON teamLeader.rid = j.recruiter_rid
         LEFT JOIN job_resume_selection jrs

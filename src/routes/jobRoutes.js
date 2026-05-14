@@ -1597,8 +1597,7 @@ router.post(
             ON jrs.res_id = rd.res_id
             AND jrs.job_jid = COALESCE(rd.job_jid, jrs.job_jid)
           LEFT JOIN candidate c ON c.res_id = rd.res_id
-          LEFT JOIN extra_info ei
-            ON ei.res_id = rd.res_id OR (ei.resume_id = rd.res_id AND ei.res_id IS NULL)
+          ${buildExtraInfoJoin("rd.res_id")}
           WHERE rd.res_id = ?
           LIMIT 1
           FOR UPDATE`,
