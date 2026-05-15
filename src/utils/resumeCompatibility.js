@@ -81,9 +81,11 @@ const resolveResumeWorkflowStatus = (record = {}) => {
         record.status,
     ) || "pending";
 
-  return workflowStatus === "shortlisted" && joiningDate
-    ? "selected"
-    : workflowStatus;
+  if ((workflowStatus === "selected" || workflowStatus === "shortlisted") && joiningDate) {
+    return "pending_joining";
+  }
+
+  return workflowStatus;
 };
 
 const resolveStatusReasonInput = (payload = {}, status) => {
@@ -185,6 +187,7 @@ const buildResumeCompatibilityFields = (record = {}) => {
     record.shortlisted_reason,
     record.pendingJoiningReason,
     record.pending_joining_reason,
+    workflowStatus === "pending_joining" ? selectReason : null,
     workflowStatus === "shortlisted" ? genericReason : null,
   );
   const joinedReason = firstPresent(
