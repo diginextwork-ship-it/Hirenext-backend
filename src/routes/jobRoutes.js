@@ -15,6 +15,7 @@ const {
 } = require("../middleware/auth");
 const { validateResumeFile } = require("../middleware/uploadValidation");
 const {
+  buildExtraInfoJoin,
   tableExists,
   columnExists,
   getTableColumns,
