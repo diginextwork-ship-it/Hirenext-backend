@@ -312,15 +312,12 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
 
 const findExistingResumeMatches = async (
   connection,
-  { candidateName, phone, email } = {},
+  { candidateName, phone } = {},
 ) => {
   const normalizedName = String(candidateName || "").trim().toLowerCase();
   const normalizedPhone = String(phone || "").trim();
-  const normalizedEmail = String(email || "")
-    .trim()
-    .toLowerCase();
 
-  if (!normalizedName || !normalizedPhone || !normalizedEmail) {
+  if (!normalizedName || !normalizedPhone) {
     return [];
   }
   if (!(await tableExists("candidate"))) {
@@ -331,8 +328,11 @@ const findExistingResumeMatches = async (
     `SELECT
       rd.res_id AS resId,
       rd.job_jid AS jobJid,
+      rd.rid AS recruiterRid,
       rd.uploaded_at AS uploadedAt,
-      COALESCE(jrs.selection_status, 'submitted') AS workflowStatus
+      COALESCE(jrs.selection_status, 'submitted') AS workflowStatus,
+      c.name AS candidateName,
+      c.phone AS candidatePhone
     FROM candidate c
     INNER JOIN resumes_data rd
       ON rd.res_id = c.res_id
@@ -341,9 +341,8 @@ const findExistingResumeMatches = async (
      AND (jrs.job_jid = rd.job_jid OR (jrs.job_jid IS NULL AND rd.job_jid IS NULL))
     WHERE LOWER(TRIM(COALESCE(c.name, ''))) = ?
       AND TRIM(COALESCE(c.phone, '')) = ?
-      AND LOWER(TRIM(COALESCE(c.email, ''))) = ?
     ORDER BY rd.uploaded_at DESC, rd.res_id DESC`,
-    [normalizedName, normalizedPhone, normalizedEmail],
+    [normalizedName, normalizedPhone],
   );
 
   return rows.map((row) => ({
@@ -352,6 +351,15 @@ const findExistingResumeMatches = async (
       row.jobJid === null || row.jobJid === undefined
         ? null
         : String(row.jobJid).trim(),
+    recruiterRid:
+      row.recruiterRid === null || row.recruiterRid === undefined
+        ? null
+        : String(row.recruiterRid).trim(),
+    candidateName: row.candidateName ? String(row.candidateName).trim() : null,
+    candidatePhone:
+      row.candidatePhone === null || row.candidatePhone === undefined
+        ? null
+        : String(row.candidatePhone).trim(),
     uploadedAt: row.uploadedAt || null,
     workflowStatus: normalizeWorkflowStatus(row.workflowStatus),
   }));
@@ -361,12 +369,12 @@ const evaluateResumeDuplicateDecision = (matches = []) => {
   const normalizedMatches = Array.isArray(matches) ? matches : [];
   const latestMatch = normalizedMatches[0] || null;
   const blockingMatch =
-    latestMatch &&
-    !DUPLICATE_RESUME_ALLOWED_STATUSES.has(
-      normalizeWorkflowStatus(latestMatch.workflowStatus),
-    )
-      ? latestMatch
-      : null;
+    normalizedMatches.find(
+      (match) =>
+        !DUPLICATE_RESUME_ALLOWED_STATUSES.has(
+          normalizeWorkflowStatus(match.workflowStatus),
+        ),
+    ) || null;
 
   return {
     hasMatch: normalizedMatches.length > 0,
