@@ -2617,6 +2617,7 @@ router.get("/api/admin/recruiters/list", async (req, res) => {
   try {
     await ensureRecruiterSalaryHistoryTable();
     await ensureRecruiterSalaryCreditTargetColumn();
+    await ensureRecruiterAccountStatusColumn();
     const currentDate = getCurrentDateOnlyInBusinessTimeZone();
     const hasRoleColumn = await columnExists("recruiter", "role");
     const salaryMeta = await getRecruiterSalaryColumnMeta();
@@ -2629,6 +2630,7 @@ router.get("/api/admin/recruiters/list", async (req, res) => {
          r.name,
          r.email,
          r.phone,
+         COALESCE(NULLIF(TRIM(r.account_status), ''), 'active') AS accountStatus,
          COALESCE(r.role, 'recruiter') AS role,
          r.salary_credit_target_rid AS salaryCreditTargetRid,
          ${salaryMeta.salarySelect}
@@ -2669,6 +2671,11 @@ router.get("/api/admin/recruiters/list", async (req, res) => {
           name: row.name,
           email: row.email || null,
           phone: row.phone || null,
+          accountStatus:
+            String(row.accountStatus || "active").trim().toLowerCase() ===
+            "inactive"
+              ? "inactive"
+              : "active",
           role: normalizeStaffRole(row.role),
           currentSalary:
             toMoneyOrNull(effectiveSalaryRow.historyMonthlySalary) ??
