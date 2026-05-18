@@ -520,15 +520,16 @@ router.post(
   requireAuth,
   requireRoles("admin"),
   async (req, res) => {
-    const { name, email, password, role, monthlySalary } = req.body || {};
+    const { name, email, phone, password, role, monthlySalary } = req.body || {};
 
-    if (!name || !email || !password || !String(role || "").trim()) {
+    if (!name || !email || !phone || !password || !String(role || "").trim()) {
       return res.status(400).json({
-        message: "name, email, password, and role are required.",
+        message: "name, email, phone, password, and role are required.",
       });
     }
 
     const normalizedEmail = email.trim().toLowerCase();
+    const normalizedPhone = normalizePhoneForStorage(phone);
     const normalizedMonthlySalary = String(monthlySalary ?? "").trim();
     const monthlySalaryAmount = toMoneyOrNull(normalizedMonthlySalary);
     const dailySalaryAmount =
@@ -539,6 +540,11 @@ router.post(
     if (!emailPattern.test(normalizedEmail)) {
       return res.status(400).json({
         message: "Email must be a valid email address.",
+      });
+    }
+    if (!/^\d{10}$/.test(normalizedPhone)) {
+      return res.status(400).json({
+        message: "Phone must be exactly 10 digits.",
       });
     }
     if (normalizedMonthlySalary.length > 120) {
@@ -596,6 +602,7 @@ router.post(
       const hasRoleColumn = await columnExists("recruiter", "role");
       const hasAddJobColumn = await columnExists("recruiter", "addjob");
       const hasPointsColumn = await columnExists("recruiter", "points");
+      const hasPhoneColumn = await columnExists("recruiter", "phone");
       const hasSalaryColumn = await columnExists("recruiter", "salary");
       const hasMonthlySalaryColumn = await columnExists(
         "recruiter",
@@ -623,6 +630,10 @@ router.post(
       if (hasPointsColumn) {
         insertColumns.push("points");
         insertValues.push(0);
+      }
+      if (hasPhoneColumn) {
+        insertColumns.push("phone");
+        insertValues.push(normalizedPhone);
       }
       if (hasSalaryColumn) {
         insertColumns.push("salary");
@@ -665,6 +676,7 @@ router.post(
           rid,
           name: name.trim(),
           email: normalizedEmail,
+          phone: normalizedPhone,
           role: normalizedRole,
           addjob: canAddJob,
           salary: normalizedMonthlySalary || null,
