@@ -22,6 +22,7 @@ const {
   toMoneyNumber,
   toMoneyOrNull,
   normalizeJobJid,
+  normalizePhoneForStorage,
   parseJsonField,
   extractCandidateSnapshot,
 } = require("../utils/formatters");
@@ -438,6 +439,14 @@ const ensureRecruiterSalaryHistoryTable = async () => {
   );
 };
 
+const ensureRecruiterSalaryCreditTargetColumn = async () => {
+  if (!(await columnExists("recruiter", "salary_credit_target_rid"))) {
+    await pool.query(
+      "ALTER TABLE recruiter ADD COLUMN salary_credit_target_rid VARCHAR(20) NULL AFTER phone",
+    );
+  }
+};
+
 const getRecruiterSalaryColumnMeta = async () => {
   const hasSalaryColumn = await columnExists("recruiter", "salary");
   const hasMonthlySalaryColumn = await columnExists(
@@ -459,6 +468,168 @@ const getRecruiterSalaryColumnMeta = async () => {
     dailySalarySelect: hasDailySalaryColumn
       ? "r.daily_salary AS dailySalary,"
       : "NULL AS dailySalary,",
+  };
+};
+
+const normalizeStoredStaffPhone = (value) => {
+  const normalized = normalizePhoneForStorage(value);
+  return /^\d{10}$/.test(normalized) ? normalized : "";
+};
+
+const getRecruiterRidSortValue = (value) => {
+  const match = String(value || "").match(/(\d+)$/);
+  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
+};
+
+const compareSalaryOwnerPriority = (left, right) => {
+  const leftWeight = normalizeStaffRole(left?.role) === "team leader" ? 0 : 1;
+  const rightWeight = normalizeStaffRole(right?.role) === "team leader" ? 0 : 1;
+  if (leftWeight !== rightWeight) {
+    return leftWeight - rightWeight;
+  }
+
+  const leftRidValue = getRecruiterRidSortValue(left?.rid);
+  const rightRidValue = getRecruiterRidSortValue(right?.rid);
+  if (leftRidValue !== rightRidValue) {
+    return leftRidValue - rightRidValue;
+  }
+
+  return String(left?.rid || "").localeCompare(String(right?.rid || ""));
+};
+
+const attachSalaryCreditMetadata = (rows) => {
+  const normalizedRows = Array.isArray(rows)
+    ? rows.map((row) => ({
+        ...row,
+        phone: normalizeStoredStaffPhone(row?.phone),
+        salaryCreditTargetRid: String(
+          row?.salaryCreditTargetRid || row?.salary_credit_target_rid || "",
+        ).trim(),
+      }))
+    : [];
+
+  const grouped = new Map();
+  normalizedRows.forEach((row) => {
+    const key = row.phone ? `phone:${row.phone}` : `rid:${row.rid}`;
+    if (!grouped.has(key)) {
+      grouped.set(key, []);
+    }
+    grouped.get(key).push(row);
+  });
+
+  const withMetadata = [];
+  grouped.forEach((groupRows) => {
+    const rowIds = new Set(groupRows.map((row) => row.rid));
+    const targetCounts = new Map();
+    groupRows.forEach((row) => {
+      if (row.salaryCreditTargetRid && rowIds.has(row.salaryCreditTargetRid)) {
+        targetCounts.set(
+          row.salaryCreditTargetRid,
+          (targetCounts.get(row.salaryCreditTargetRid) || 0) + 1,
+        );
+      }
+    });
+
+    let ownerRow = null;
+    if (targetCounts.size > 0) {
+      const preferredTargetRids = [...targetCounts.entries()]
+        .sort((left, right) => {
+          if (right[1] !== left[1]) {
+            return right[1] - left[1];
+          }
+          const leftRow =
+            groupRows.find((row) => row.rid === left[0]) || groupRows[0];
+          const rightRow =
+            groupRows.find((row) => row.rid === right[0]) || groupRows[0];
+          return compareSalaryOwnerPriority(leftRow, rightRow);
+        })
+        .map(([rid]) => rid);
+      ownerRow =
+        groupRows.find((row) => row.rid === preferredTargetRids[0]) || null;
+    }
+
+    if (!ownerRow) {
+      ownerRow = [...groupRows].sort(compareSalaryOwnerPriority)[0] || null;
+    }
+
+    groupRows.forEach((row) => {
+      withMetadata.push({
+        ...row,
+        salaryCreditTargetRid: ownerRow?.rid || row.rid,
+        salaryCreditTargetName: ownerRow?.name || row.name || "",
+        salaryCreditOwner: (ownerRow?.rid || row.rid) === row.rid,
+        linkedAccountCount: groupRows.length,
+      });
+    });
+  });
+
+  return withMetadata;
+};
+
+const fetchSalaryCreditContext = async (
+  connection,
+  recruiterRid,
+  options = {},
+) => {
+  const { forUpdate = false } = options;
+  await ensureRecruiterSalaryCreditTargetColumn();
+  const lockClause = forUpdate ? " FOR UPDATE" : "";
+  const [subjectRows] = await connection.query(
+    `SELECT
+       rid,
+       name,
+       email,
+       phone,
+       COALESCE(role, 'recruiter') AS role,
+       salary_credit_target_rid AS salaryCreditTargetRid
+     FROM recruiter
+     WHERE rid = ?
+     LIMIT 1${lockClause}`,
+    [recruiterRid],
+  );
+
+  if (subjectRows.length === 0) return null;
+
+  const subjectRow = {
+    ...subjectRows[0],
+    phone: normalizeStoredStaffPhone(subjectRows[0]?.phone),
+  };
+
+  let groupRows = [subjectRow];
+  if (subjectRow.phone) {
+    const [linkedRows] = await connection.query(
+      `SELECT
+         rid,
+         name,
+         email,
+         phone,
+         COALESCE(role, 'recruiter') AS role,
+         salary_credit_target_rid AS salaryCreditTargetRid
+       FROM recruiter
+       WHERE phone = ?${lockClause}`,
+      [subjectRow.phone],
+    );
+    groupRows =
+      linkedRows.length > 0
+        ? linkedRows.map((row) => ({
+            ...row,
+            phone: normalizeStoredStaffPhone(row?.phone),
+          }))
+        : [subjectRow];
+  }
+
+  const linkedAccounts = attachSalaryCreditMetadata(groupRows);
+  const subject =
+    linkedAccounts.find((row) => row.rid === recruiterRid) || linkedAccounts[0];
+  const owner =
+    linkedAccounts.find((row) => row.rid === subject?.salaryCreditTargetRid) ||
+    subject;
+
+  return {
+    subject,
+    owner,
+    linkedAccounts,
+    phone: subject?.phone || "",
   };
 };
 
@@ -493,11 +664,13 @@ const getRecruiterSalarySnapshot = async (
   await ensureRecruiterSalaryHistoryTable();
   const salaryMeta = await getRecruiterSalaryColumnMeta();
   const [rows] = await connection.query(
-    `SELECT
+     `SELECT
        r.rid,
        r.name,
        r.email,
+       r.phone,
        COALESCE(r.role, 'recruiter') AS role,
+       r.salary_credit_target_rid AS salaryCreditTargetRid,
        ${salaryMeta.salarySelect}
        ${salaryMeta.monthlySalarySelect}
        ${salaryMeta.dailySalarySelect}
@@ -546,7 +719,9 @@ const getRecruiterSalarySnapshot = async (
     rid: row.rid,
     name: row.name,
     email: row.email || null,
+    phone: normalizeStoredStaffPhone(row.phone) || null,
     role: normalizeStaffRole(row.role),
+    salaryCreditTargetRid: String(row.salaryCreditTargetRid || "").trim() || null,
     rawSalary: legacySalary.rawSalary,
     legacyMonthlySalary: legacySalary.monthlySalary,
     legacyDailySalary: legacySalary.dailySalary,
@@ -614,18 +789,20 @@ const calculateAttendanceExpense = (status, dailySalary, hoursWorked = null) => 
 const buildAttendanceReason = ({
   recruiterRid,
   recruiterName,
+  recruiterPhone,
   attendanceDate,
   status,
   hoursWorked,
 }) => {
   const label = String(recruiterName || "").trim();
+  const phone = normalizeStoredStaffPhone(recruiterPhone);
   const suffix =
     status === "half_day"
       ? `half day${hoursWorked ? ` (${hoursWorked}h)` : ""}`
       : status;
   return label
-    ? `attendance salary - ${attendanceDate} - ${recruiterRid} (${label}) - ${suffix}`
-    : `attendance salary - ${attendanceDate} - ${recruiterRid} - ${suffix}`;
+    ? `attendance salary - ${attendanceDate} - ${recruiterRid}${phone ? ` - ${phone}` : ""} (${label}) - ${suffix}`
+    : `attendance salary - ${attendanceDate} - ${recruiterRid}${phone ? ` - ${phone}` : ""} - ${suffix}`;
 };
 
 const normalizeRevenueEntryType = (value) => {
@@ -666,6 +843,7 @@ const revenueReasonFromPayload = ({
   otherReason,
   recruiterRid,
   recruiterName,
+  recruiterPhone,
 }) => {
   const safeCategory = normalizeRevenueReasonCategory(reasonCategory);
   if (!safeCategory) {
@@ -686,8 +864,11 @@ const revenueReasonFromPayload = ({
       return { error: "Recruiter RID is required for salary entries." };
     }
     const label = String(recruiterName || "").trim();
+    const phone = normalizeStoredStaffPhone(recruiterPhone);
     return {
-      reason: label ? `salary - ${rid} (${label})` : `salary - ${rid}`,
+      reason: label
+        ? `salary - ${rid}${phone ? ` - ${phone}` : ""} (${label})`
+        : `salary - ${rid}${phone ? ` - ${phone}` : ""}`,
     };
   }
 
@@ -1844,16 +2025,19 @@ router.get("/api/admin/attendance", async (req, res) => {
   try {
     await ensureRecruiterAttendanceTable();
     await ensureRecruiterSalaryHistoryTable();
+    await ensureRecruiterSalaryCreditTargetColumn();
     const salaryMeta = await getRecruiterSalaryColumnMeta();
 
     const [rows] = await pool.query(
       `SELECT
         r.rid,
         r.name,
+        r.phone,
         CASE
           WHEN LOWER(TRIM(COALESCE(r.role, 'recruiter'))) IN ('team leader', 'team_leader', 'job creator') THEN 'team leader'
           ELSE 'recruiter'
         END AS role,
+        r.salary_credit_target_rid AS salaryCreditTargetRid,
         COALESCE(
           (
             SELECT rsh.daily_salary
@@ -1898,14 +2082,22 @@ router.get("/api/admin/attendance", async (req, res) => {
       [attendanceDate, attendanceDate],
     );
 
-    const staff = rows.map((row) => {
+    const rowsWithSalaryCredit = attachSalaryCreditMetadata(rows);
+    const rowsByRid = new Map(rowsWithSalaryCredit.map((row) => [row.rid, row]));
+
+    const staff = rowsWithSalaryCredit.map((row) => {
       const status = normalizeAttendanceStatus(row.status) || "absent";
-      const dailySalary = toMoneyNumber(row.dailySalary);
+      const effectiveSalaryRow =
+        rowsByRid.get(row.salaryCreditTargetRid) || row;
+      const dailySalary = row.salaryCreditOwner
+        ? toMoneyNumber(effectiveSalaryRow.dailySalary)
+        : 0;
       const salaryAmount = toMoneyNumber(row.salaryAmount);
       return {
         attendanceId: row.attendanceId ? Number(row.attendanceId) : null,
         rid: row.rid,
         name: row.name,
+        phone: row.phone || null,
         role: normalizeStaffRole(row.role),
         dailySalary,
         status,
@@ -1915,6 +2107,10 @@ router.get("/api/admin/attendance", async (req, res) => {
         markedBy: row.markedBy || null,
         markedAt: row.markedAt || null,
         updatedAt: row.updatedAt || null,
+        salaryCreditTargetRid: row.salaryCreditTargetRid,
+        salaryCreditTargetName: row.salaryCreditTargetName || null,
+        salaryCreditOwner: Boolean(row.salaryCreditOwner),
+        linkedAccountCount: Number(row.linkedAccountCount) || 1,
       };
     });
 
@@ -1977,12 +2173,34 @@ router.put("/api/admin/attendance", async (req, res) => {
   try {
     await ensureRecruiterAttendanceTable();
     await ensureRecruiterSalaryHistoryTable();
+    await ensureRecruiterSalaryCreditTargetColumn();
     await connection.beginTransaction();
 
+    const salaryContext = await fetchSalaryCreditContext(connection, recruiterRid, {
+      forUpdate: true,
+    });
+    if (!salaryContext?.subject) {
+      await connection.rollback();
+      return res
+        .status(404)
+        .json({ message: "Recruiter or team leader not found." });
+    }
+    if (
+      salaryContext.subject.linkedAccountCount > 1 &&
+      !salaryContext.subject.salaryCreditOwner
+    ) {
+      await connection.rollback();
+      return res.status(400).json({
+        message: `This phone-linked staff member receives salary on ${salaryContext.owner.rid} (${salaryContext.owner.name || "salary account"}). Mark attendance on that receiving account only.`,
+      });
+    }
+
+    const effectiveRecruiterRid = salaryContext.owner.rid;
     const [recruiterRows] = await connection.query(
       `SELECT
         rid,
         name,
+        phone,
         CASE
           WHEN LOWER(TRIM(COALESCE(role, 'recruiter'))) IN ('team leader', 'team_leader', 'job creator') THEN 'team leader'
           ELSE 'recruiter'
@@ -2009,7 +2227,7 @@ router.put("/api/admin/attendance", async (req, res) => {
         AND LOWER(TRIM(COALESCE(role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')
       LIMIT 1
       FOR UPDATE`,
-      [attendanceDate, recruiterRid],
+      [attendanceDate, effectiveRecruiterRid],
     );
 
     if (recruiterRows.length === 0) {
@@ -2032,7 +2250,7 @@ router.put("/api/admin/attendance", async (req, res) => {
        WHERE recruiter_rid = ? AND attendance_date = ?
        LIMIT 1
        FOR UPDATE`,
-      [recruiterRid, attendanceDate],
+      [effectiveRecruiterRid, attendanceDate],
     );
 
     const existingAttendance = attendanceRows[0] || null;
@@ -2049,8 +2267,9 @@ router.put("/api/admin/attendance", async (req, res) => {
       }
     } else {
       const reason = buildAttendanceReason({
-        recruiterRid,
+        recruiterRid: effectiveRecruiterRid,
         recruiterName: recruiter.name,
+        recruiterPhone: recruiter.phone,
         attendanceDate,
         status,
         hoursWorked,
@@ -2111,7 +2330,7 @@ router.put("/api/admin/attendance", async (req, res) => {
           (recruiter_rid, attendance_date, status, hours_worked, salary_amount, money_sum_id, marked_by)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
-          recruiterRid,
+          effectiveRecruiterRid,
           attendanceDate,
           status,
           status === "half_day" ? hoursWorked : null,
@@ -2128,7 +2347,7 @@ router.put("/api/admin/attendance", async (req, res) => {
     return res.status(200).json({
       message: "Attendance updated successfully.",
       attendance: {
-        recruiterRid,
+        recruiterRid: effectiveRecruiterRid,
         attendanceDate,
         status,
         hoursWorked: status === "half_day" ? hoursWorked : null,
@@ -2136,6 +2355,8 @@ router.put("/api/admin/attendance", async (req, res) => {
         moneySumId,
         role: normalizeStaffRole(recruiter.role),
         dailySalary: toMoneyNumber(recruiter.dailySalary),
+        phone: normalizeStoredStaffPhone(recruiter.phone) || null,
+        salaryCreditOwner: true,
       },
     });
   } catch (error) {
@@ -2392,6 +2613,7 @@ router.get("/api/admin/recruiters/list", async (req, res) => {
 
   try {
     await ensureRecruiterSalaryHistoryTable();
+    await ensureRecruiterSalaryCreditTargetColumn();
     const currentDate = getCurrentDateOnlyInBusinessTimeZone();
     const hasRoleColumn = await columnExists("recruiter", "role");
     const salaryMeta = await getRecruiterSalaryColumnMeta();
@@ -2403,7 +2625,9 @@ router.get("/api/admin/recruiters/list", async (req, res) => {
          r.rid,
          r.name,
          r.email,
+         r.phone,
          COALESCE(r.role, 'recruiter') AS role,
+         r.salary_credit_target_rid AS salaryCreditTargetRid,
          ${salaryMeta.salarySelect}
          ${salaryMeta.monthlySalarySelect}
          ${salaryMeta.dailySalarySelect}
@@ -2429,18 +2653,29 @@ router.get("/api/admin/recruiters/list", async (req, res) => {
       [currentDate, currentDate],
     );
 
+    const rowsWithSalaryCredit = attachSalaryCreditMetadata(rows);
+    const rowsByRid = new Map(rowsWithSalaryCredit.map((row) => [row.rid, row]));
+
     return res.status(200).json({
-      recruiters: rows.map((row) => {
-        const legacySalary = resolveLegacySalarySnapshot(row);
+      recruiters: rowsWithSalaryCredit.map((row) => {
+        const effectiveSalaryRow =
+          rowsByRid.get(row.salaryCreditTargetRid) || row;
+        const legacySalary = resolveLegacySalarySnapshot(effectiveSalaryRow);
         return {
           rid: row.rid,
           name: row.name,
           email: row.email || null,
+          phone: row.phone || null,
           role: normalizeStaffRole(row.role),
           currentSalary:
-            toMoneyOrNull(row.historyMonthlySalary) ??
+            toMoneyOrNull(effectiveSalaryRow.historyMonthlySalary) ??
             legacySalary.monthlySalary,
-          currentSalaryEffectiveFrom: row.currentSalaryEffectiveFrom || null,
+          currentSalaryEffectiveFrom:
+            effectiveSalaryRow.currentSalaryEffectiveFrom || null,
+          salaryCreditTargetRid: row.salaryCreditTargetRid,
+          salaryCreditTargetName: row.salaryCreditTargetName || null,
+          salaryCreditOwner: Boolean(row.salaryCreditOwner),
+          linkedAccountCount: Number(row.linkedAccountCount) || 1,
         };
       }),
     });
@@ -2462,16 +2697,17 @@ router.get("/api/admin/recruiters/:rid/salary-history", async (req, res) => {
 
   try {
     await ensureRecruiterSalaryHistoryTable();
+    await ensureRecruiterSalaryCreditTargetColumn();
     const currentDate = getCurrentDateOnlyInBusinessTimeZone();
-    const salarySnapshot = await getRecruiterSalarySnapshot(
-      pool,
-      recruiterRid,
-      currentDate,
-    );
-
-    if (!salarySnapshot) {
+    const salaryContext = await fetchSalaryCreditContext(pool, recruiterRid);
+    if (!salaryContext?.subject || !salaryContext?.owner) {
       return res.status(404).json({ message: "Recruiter not found." });
     }
+    const salarySnapshot = await getRecruiterSalarySnapshot(
+      pool,
+      salaryContext.owner.rid,
+      currentDate,
+    );
 
     const [historyRows] = await pool.query(
       `SELECT
@@ -2485,11 +2721,40 @@ router.get("/api/admin/recruiters/:rid/salary-history", async (req, res) => {
        FROM recruiter_salary_history
        WHERE recruiter_rid = ?
        ORDER BY effective_from DESC, id DESC`,
-      [recruiterRid],
+      [salaryContext.owner.rid],
     );
 
     return res.status(200).json({
-      recruiter: salarySnapshot,
+      recruiter: {
+        rid: salaryContext.subject.rid,
+        name: salaryContext.subject.name,
+        email: salaryContext.subject.email || null,
+        phone: salaryContext.subject.phone || null,
+        role: normalizeStaffRole(salaryContext.subject.role),
+        currentSalary: salarySnapshot?.currentSalary ?? null,
+        currentDailySalary: salarySnapshot?.currentDailySalary ?? null,
+        currentSalaryEffectiveFrom:
+          salarySnapshot?.currentSalaryEffectiveFrom || null,
+        salaryCreditTargetRid: salaryContext.owner.rid,
+        salaryCreditTargetName: salaryContext.owner.name || null,
+        salaryCreditOwner: Boolean(salaryContext.subject.salaryCreditOwner),
+        linkedAccountCount: Number(salaryContext.subject.linkedAccountCount) || 1,
+      },
+      salaryReceiver: {
+        rid: salaryContext.owner.rid,
+        name: salaryContext.owner.name,
+        email: salaryContext.owner.email || null,
+        phone: salaryContext.owner.phone || null,
+        role: normalizeStaffRole(salaryContext.owner.role),
+      },
+      linkedAccounts: salaryContext.linkedAccounts.map((row) => ({
+        rid: row.rid,
+        name: row.name,
+        email: row.email || null,
+        phone: row.phone || null,
+        role: normalizeStaffRole(row.role),
+        salaryCreditOwner: Boolean(row.salaryCreditOwner),
+      })),
       modifications: historyRows.map((row) => ({
         id: Number(row.id) || null,
         recruiterRid: row.recruiterRid,
@@ -2514,6 +2779,9 @@ router.put("/api/admin/recruiters/:rid/salary-history", async (req, res) => {
   const recruiterRid = String(req.params?.rid || "").trim();
   const monthlySalary = toMoneyOrNull(req.body?.monthlySalary);
   const effectiveFrom = normalizeSalaryEffectiveDate(req.body?.effectiveFrom);
+  const requestedSalaryCreditTargetRid = String(
+    req.body?.salaryCreditTargetRid || "",
+  ).trim();
   const createdBy =
     String(req.body?.createdBy || "admin-panel").trim() || "admin-panel";
 
@@ -2534,20 +2802,40 @@ router.put("/api/admin/recruiters/:rid/salary-history", async (req, res) => {
   const connection = await pool.getConnection();
   try {
     await ensureRecruiterSalaryHistoryTable();
+    await ensureRecruiterSalaryCreditTargetColumn();
     await connection.beginTransaction();
 
-    const [recruiterRows] = await connection.query(
-      `SELECT rid
-       FROM recruiter
-       WHERE rid = ?
-       LIMIT 1
-       FOR UPDATE`,
-      [recruiterRid],
-    );
-
-    if (recruiterRows.length === 0) {
+    const salaryContext = await fetchSalaryCreditContext(connection, recruiterRid, {
+      forUpdate: true,
+    });
+    if (!salaryContext?.subject) {
       await connection.rollback();
       return res.status(404).json({ message: "Recruiter not found." });
+    }
+
+    const linkedAccounts = salaryContext.linkedAccounts;
+    const linkedAccountIds = new Set(linkedAccounts.map((row) => row.rid));
+    const effectiveSalaryTargetRid =
+      requestedSalaryCreditTargetRid || salaryContext.owner.rid;
+
+    if (!linkedAccountIds.has(effectiveSalaryTargetRid)) {
+      await connection.rollback();
+      return res.status(400).json({
+        message:
+          "salaryCreditTargetRid must belong to the same phone-linked account group.",
+      });
+    }
+
+    if (salaryContext.phone) {
+      await connection.query(
+        "UPDATE recruiter SET salary_credit_target_rid = ? WHERE phone = ?",
+        [effectiveSalaryTargetRid, salaryContext.phone],
+      );
+    } else {
+      await connection.query(
+        "UPDATE recruiter SET salary_credit_target_rid = ? WHERE rid = ?",
+        [effectiveSalaryTargetRid, recruiterRid],
+      );
     }
 
     const dailySalary = roundMoneyOrNull(monthlySalary / 30) || 0;
@@ -2555,13 +2843,19 @@ router.put("/api/admin/recruiters/:rid/salary-history", async (req, res) => {
       `INSERT INTO recruiter_salary_history
         (recruiter_rid, monthly_salary, daily_salary, effective_from, created_by)
        VALUES (?, ?, ?, ?, ?)`,
-      [recruiterRid, monthlySalary, dailySalary, effectiveFrom, createdBy],
+      [
+        effectiveSalaryTargetRid,
+        monthlySalary,
+        dailySalary,
+        effectiveFrom,
+        createdBy,
+      ],
     );
 
     const currentDate = getCurrentDateOnlyInBusinessTimeZone();
     const recruiter = await syncRecruiterCurrentSalaryColumns(
       connection,
-      recruiterRid,
+      effectiveSalaryTargetRid,
       currentDate,
     );
 
@@ -2571,11 +2865,12 @@ router.put("/api/admin/recruiters/:rid/salary-history", async (req, res) => {
       message: "Salary updated successfully.",
       recruiter,
       modification: {
-        recruiterRid,
+        recruiterRid: effectiveSalaryTargetRid,
         monthlySalary,
         dailySalary,
         effectiveFrom,
         createdBy,
+        salaryCreditTargetRid: effectiveSalaryTargetRid,
       },
     });
   } catch (error) {
@@ -2870,6 +3165,7 @@ router.post(
     if (!ensureAdminAuthorized(req, res)) return;
 
     await ensureMoneySumTable();
+    await ensureRecruiterSalaryCreditTargetColumn();
 
     const entryType = normalizeRevenueEntryType(req.body?.entryType);
     const amount = toPositiveMoney(req.body?.amount);
@@ -2885,24 +3181,29 @@ router.post(
     }
 
     let recruiterName = "";
+    let effectiveRecruiterRid = String(recruiterRid || "").trim();
+    let recruiterPhone = "";
     if (
       normalizeRevenueReasonCategory(reasonCategory) === "salary" &&
-      String(recruiterRid || "").trim()
+      effectiveRecruiterRid
     ) {
       try {
-        const [recruiterRows] = await pool.query(
-          "SELECT name FROM recruiter WHERE rid = ? LIMIT 1",
-          [String(recruiterRid).trim()],
+        const salaryContext = await fetchSalaryCreditContext(
+          pool,
+          effectiveRecruiterRid,
         );
-        recruiterName = recruiterRows?.[0]?.name || "";
+        effectiveRecruiterRid = salaryContext?.owner?.rid || effectiveRecruiterRid;
+        recruiterName = salaryContext?.owner?.name || "";
+        recruiterPhone = salaryContext?.owner?.phone || "";
       } catch {}
     }
 
     const reasonResult = revenueReasonFromPayload({
       reasonCategory,
       otherReason,
-      recruiterRid,
+      recruiterRid: effectiveRecruiterRid,
       recruiterName,
+      recruiterPhone,
     });
     if (reasonResult.error) {
       return res.status(400).json({
@@ -4869,7 +5170,7 @@ router.delete(
 
       // Verify recruiter exists
       const [[recruiter]] = await conn.query(
-        "SELECT rid, role FROM recruiter WHERE rid = ?",
+        "SELECT rid, role, phone FROM recruiter WHERE rid = ?",
         [rid],
       );
       if (!recruiter) {
@@ -4983,6 +5284,11 @@ router.delete(
         // Delete all jobs created by this team leader (CASCADE handles applications)
         await conn.query("DELETE FROM jobs WHERE recruiter_rid = ?", [rid]);
       }
+
+      await conn.query(
+        "UPDATE recruiter SET salary_credit_target_rid = NULL WHERE salary_credit_target_rid = ?",
+        [rid],
+      );
 
       // 14. Delete the recruiter row itself
       await conn.query("DELETE FROM recruiter WHERE rid = ?", [rid]);

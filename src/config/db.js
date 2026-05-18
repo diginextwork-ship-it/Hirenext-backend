@@ -299,6 +299,16 @@ const ensureRecruiterTableColumns = async () => {
     );
   }
 
+  if (!(await columnExists("recruiter", "phone"))) {
+    await pool.query("ALTER TABLE recruiter ADD COLUMN phone VARCHAR(20) NULL");
+  }
+
+  if (!(await columnExists("recruiter", "salary_credit_target_rid"))) {
+    await pool.query(
+      "ALTER TABLE recruiter ADD COLUMN salary_credit_target_rid VARCHAR(20) NULL AFTER phone",
+    );
+  }
+
   await pool.query("UPDATE recruiter SET points = 0 WHERE points IS NULL");
   await pool.query(
     "ALTER TABLE recruiter MODIFY COLUMN points INT NOT NULL DEFAULT 0",

@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS recruiter (
   name VARCHAR(120) NOT NULL,
   email VARCHAR(190) NOT NULL UNIQUE,
   phone VARCHAR(20) NULL,
+  salary_credit_target_rid VARCHAR(20) NULL,
   password VARCHAR(255) NOT NULL,
   role VARCHAR(30) NOT NULL DEFAULT 'recruiter',
   salary VARCHAR(120) NULL,
@@ -59,6 +60,8 @@ ALTER TABLE recruiter
   ADD COLUMN IF NOT EXISTS points INT NOT NULL DEFAULT 0;
 ALTER TABLE recruiter
   ADD COLUMN IF NOT EXISTS phone VARCHAR(20) NULL;
+ALTER TABLE recruiter
+  ADD COLUMN IF NOT EXISTS salary_credit_target_rid VARCHAR(20) NULL;
 ALTER TABLE recruiter
   ADD COLUMN IF NOT EXISTS salary VARCHAR(120) NULL;
 ALTER TABLE recruiter
