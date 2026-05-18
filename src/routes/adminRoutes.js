@@ -440,9 +440,12 @@ const ensureRecruiterSalaryHistoryTable = async () => {
 };
 
 const ensureRecruiterSalaryCreditTargetColumn = async () => {
+  if (!(await columnExists("recruiter", "phone"))) {
+    await pool.query("ALTER TABLE recruiter ADD COLUMN phone VARCHAR(20) NULL");
+  }
   if (!(await columnExists("recruiter", "salary_credit_target_rid"))) {
     await pool.query(
-      "ALTER TABLE recruiter ADD COLUMN salary_credit_target_rid VARCHAR(20) NULL AFTER phone",
+      "ALTER TABLE recruiter ADD COLUMN salary_credit_target_rid VARCHAR(20) NULL",
     );
   }
 };
