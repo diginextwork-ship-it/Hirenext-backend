@@ -2422,9 +2422,11 @@ router.get("/api/admin/revenue", async (req, res) => {
           rd.res_id AS resId,
           rd.job_jid AS jobJid,
           j.company_name AS companyName,
-          j.city AS city
+          j.city AS city,
+          c.name AS candidateName
         FROM resumes_data rd
         LEFT JOIN jobs j ON j.jid = rd.job_jid
+        LEFT JOIN candidate c ON c.res_id = rd.res_id
         WHERE rd.res_id IN (${placeholders})`,
         revenueResIds,
       );
@@ -2436,6 +2438,7 @@ router.get("/api/admin/revenue", async (req, res) => {
             jobJid: row.jobJid ?? null,
             companyName: row.companyName || null,
             city: row.city || null,
+            candidateName: row.candidateName || null,
           },
         ]),
       );
@@ -2468,6 +2471,7 @@ router.get("/api/admin/revenue", async (req, res) => {
           resId: normalizedResId || null,
           jobJid: revenueMeta?.jobJid ?? null,
           companyName: revenueMeta?.companyName ?? null,
+          candidateName: revenueMeta?.candidateName ?? null,
           city: revenueMeta?.city ?? null,
           entryType:
             normalizeRevenueEntryType(row.entryType) ||
