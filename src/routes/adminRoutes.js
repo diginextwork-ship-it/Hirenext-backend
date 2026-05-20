@@ -841,6 +841,8 @@ const normalizeRevenueReasonCategory = (value) => {
   return "";
 };
 
+const SELECT_ALL_RECRUITERS_VALUE = "__all_recruiters__";
+
 const revenueReasonFromPayload = ({
   reasonCategory,
   otherReason,
@@ -865,6 +867,9 @@ const revenueReasonFromPayload = ({
     const rid = String(recruiterRid || "").trim();
     if (!rid) {
       return { error: "Recruiter RID is required for salary entries." };
+    }
+    if (rid === SELECT_ALL_RECRUITERS_VALUE) {
+      return { reason: "salary - all recruiters" };
     }
     const label = String(recruiterName || "").trim();
     const phone = normalizeStoredStaffPhone(recruiterPhone);
@@ -3199,7 +3204,8 @@ router.post(
     let recruiterPhone = "";
     if (
       normalizeRevenueReasonCategory(reasonCategory) === "salary" &&
-      effectiveRecruiterRid
+      effectiveRecruiterRid &&
+      effectiveRecruiterRid !== SELECT_ALL_RECRUITERS_VALUE
     ) {
       try {
         const salaryContext = await fetchSalaryCreditContext(
