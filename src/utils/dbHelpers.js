@@ -312,12 +312,13 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
 
 const findExistingResumeMatches = async (
   connection,
-  { candidateName, phone } = {},
+  { candidateName, phone, email } = {},
 ) => {
   const normalizedName = String(candidateName || "").trim().toLowerCase();
   const normalizedPhone = String(phone || "").trim();
+  const normalizedEmail = String(email || "").trim().toLowerCase();
 
-  if (!normalizedName || !normalizedPhone) {
+  if (!normalizedName || (!normalizedPhone && !normalizedEmail)) {
     return [];
   }
   if (!(await tableExists("candidate"))) {
@@ -329,10 +330,12 @@ const findExistingResumeMatches = async (
       rd.res_id AS resId,
       rd.job_jid AS jobJid,
       rd.rid AS recruiterRid,
+      rd.duplicate_group_id AS duplicateGroupId,
       rd.uploaded_at AS uploadedAt,
       COALESCE(jrs.selection_status, 'submitted') AS workflowStatus,
       c.name AS candidateName,
-      c.phone AS candidatePhone
+      c.phone AS candidatePhone,
+      c.email AS candidateEmail
     FROM candidate c
     INNER JOIN resumes_data rd
       ON rd.res_id = c.res_id
@@ -340,9 +343,18 @@ const findExistingResumeMatches = async (
       ON jrs.res_id = rd.res_id
      AND (jrs.job_jid = rd.job_jid OR (jrs.job_jid IS NULL AND rd.job_jid IS NULL))
     WHERE LOWER(TRIM(COALESCE(c.name, ''))) = ?
-      AND TRIM(COALESCE(c.phone, '')) = ?
+      AND (
+        (? <> '' AND TRIM(COALESCE(c.phone, '')) = ?)
+        OR (? <> '' AND LOWER(TRIM(COALESCE(c.email, ''))) = ?)
+      )
     ORDER BY rd.uploaded_at DESC, rd.res_id DESC`,
-    [normalizedName, normalizedPhone],
+    [
+      normalizedName,
+      normalizedPhone,
+      normalizedPhone,
+      normalizedEmail,
+      normalizedEmail,
+    ],
   );
 
   return rows.map((row) => ({
@@ -355,11 +367,15 @@ const findExistingResumeMatches = async (
       row.recruiterRid === null || row.recruiterRid === undefined
         ? null
         : String(row.recruiterRid).trim(),
+    duplicateGroupId: row.duplicateGroupId
+      ? String(row.duplicateGroupId).trim()
+      : null,
     candidateName: row.candidateName ? String(row.candidateName).trim() : null,
     candidatePhone:
       row.candidatePhone === null || row.candidatePhone === undefined
         ? null
         : String(row.candidatePhone).trim(),
+    candidateEmail: row.candidateEmail ? String(row.candidateEmail).trim() : null,
     uploadedAt: row.uploadedAt || null,
     workflowStatus: normalizeWorkflowStatus(row.workflowStatus),
   }));
@@ -375,9 +391,9 @@ const evaluateResumeDuplicateDecision = (matches = []) => {
           normalizeWorkflowStatus(match.workflowStatus),
         ),
     ) || null;
-
   return {
     hasMatch: normalizedMatches.length > 0,
+    isDuplicate: normalizedMatches.length > 0,
     latestMatch,
     allowSubmission: !blockingMatch,
     blockingMatch,

@@ -436,6 +436,9 @@ const ensureResumesDataTable = async () => {
       ats_score DECIMAL(5,2) NULL,
       ats_match_percentage DECIMAL(5,2) NULL,
       ats_raw_json JSON NULL,
+      duplicate_conflict BOOLEAN NOT NULL DEFAULT FALSE,
+      duplicate_group_id VARCHAR(30) NULL,
+      duplicate_hidden BOOLEAN NOT NULL DEFAULT FALSE,
       uploaded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_resumes_data_rid (rid),
       INDEX idx_resumes_data_job_jid (job_jid),
@@ -515,6 +518,24 @@ const ensureResumesDataTable = async () => {
   if (!(await columnExists("resumes_data", "file_hash"))) {
     await pool.query(
       "ALTER TABLE resumes_data ADD COLUMN file_hash CHAR(64) NULL",
+    );
+  }
+
+  if (!(await columnExists("resumes_data", "duplicate_conflict"))) {
+    await pool.query(
+      "ALTER TABLE resumes_data ADD COLUMN duplicate_conflict BOOLEAN NOT NULL DEFAULT FALSE",
+    );
+  }
+
+  if (!(await columnExists("resumes_data", "duplicate_group_id"))) {
+    await pool.query(
+      "ALTER TABLE resumes_data ADD COLUMN duplicate_group_id VARCHAR(30) NULL",
+    );
+  }
+
+  if (!(await columnExists("resumes_data", "duplicate_hidden"))) {
+    await pool.query(
+      "ALTER TABLE resumes_data ADD COLUMN duplicate_hidden BOOLEAN NOT NULL DEFAULT FALSE",
     );
   }
   if (!(await indexExists("resumes_data", "idx_resumes_data_file_hash"))) {

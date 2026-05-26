@@ -146,6 +146,9 @@ CREATE TABLE IF NOT EXISTS resumes_data (
   ats_score DECIMAL(5,2) NULL,
   ats_match_percentage DECIMAL(5,2) NULL,
   ats_raw_json JSON NULL,
+  duplicate_conflict BOOLEAN NOT NULL DEFAULT FALSE,
+  duplicate_group_id VARCHAR(30) NULL,
+  duplicate_hidden BOOLEAN NOT NULL DEFAULT FALSE,
   file_hash VARCHAR(64) NULL,
   uploaded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE INDEX idx_resumes_data_file_hash (file_hash),
@@ -241,6 +244,12 @@ ALTER TABLE resumes_data
   ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMP NULL DEFAULT NULL;
 ALTER TABLE resumes_data
   ADD COLUMN IF NOT EXISTS accepted_by_admin VARCHAR(50) NULL;
+ALTER TABLE resumes_data
+  ADD COLUMN IF NOT EXISTS duplicate_conflict BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE resumes_data
+  ADD COLUMN IF NOT EXISTS duplicate_group_id VARCHAR(30) NULL;
+ALTER TABLE resumes_data
+  ADD COLUMN IF NOT EXISTS duplicate_hidden BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE resumes_data
   ADD COLUMN IF NOT EXISTS file_hash VARCHAR(64) NULL;
 DROP INDEX IF EXISTS idx_resumes_data_file_hash ON resumes_data;

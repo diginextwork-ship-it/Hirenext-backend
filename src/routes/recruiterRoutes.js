@@ -1247,14 +1247,6 @@ router.post(
           phone,
           email,
         });
-        if (!duplicateCheck.allowSubmission) {
-          await connection.rollback();
-          return res.status(409).json({
-            success: false,
-            error: "Duplicate entry of resume already exists.",
-            existingResume: duplicateCheck.blockingMatch,
-          });
-        }
 
         const [sequenceResult] = await connection.query(
           "INSERT INTO resume_id_sequence VALUES ()",
@@ -1262,6 +1254,22 @@ router.post(
         const sequenceValue = Number(sequenceResult.insertId);
         const resId = `res_${sequenceValue}`;
         const cid = buildCandidateId(sequenceValue);
+        const duplicateGroupId = duplicateCheck.hasMatch
+          ? duplicateCheck.matches.find((match) => match.duplicateGroupId)
+              ?.duplicateGroupId || duplicateCheck.matches[0].resId
+          : null;
+
+        if (duplicateCheck.hasMatch) {
+          const matchedResumeIds = duplicateCheck.matches
+            .map((match) => match.resId)
+            .filter(Boolean);
+          await connection.query(
+            `UPDATE resumes_data
+             SET duplicate_conflict = TRUE, duplicate_group_id = ?
+             WHERE res_id IN (${matchedResumeIds.map(() => "?").join(", ")})`,
+            [duplicateGroupId, ...matchedResumeIds],
+          );
+        }
 
         await connection.query(
           `INSERT INTO applications
@@ -1298,8 +1306,10 @@ router.post(
           "resume_filename",
           "resume_type",
           "uploaded_at",
+          "duplicate_conflict",
+          "duplicate_group_id",
         ];
-        const resumeInsertValuesSql = ["?", "?", "?", "?", "?", "?"];
+        const resumeInsertValuesSql = ["?", "?", "?", "?", "?", "?", "?", "?"];
         const resumeInsertValues = [
           resId,
           recruiterRid,
@@ -1307,6 +1317,8 @@ router.post(
           originalName,
           validation.extension,
           submittedAt,
+          duplicateCheck.hasMatch,
+          duplicateGroupId,
         ];
 
         if (await columnExists("resumes_data", "resume")) {
@@ -1399,6 +1411,7 @@ router.post(
           submittedCount: Number(statusRows?.[0]?.submittedCount) || 0,
           companyName: jobRows[0]?.company_name || null,
           officeLocationCity,
+          duplicateConflict: duplicateCheck.hasMatch,
         });
       } catch (error) {
         await connection.rollback();
@@ -1604,13 +1617,6 @@ router.post(
           phone: candidateSnapshot.phone || null,
           email: candidateSnapshot.email || null,
         });
-        if (!duplicateCheck.allowSubmission) {
-          await connection.rollback();
-          return res.status(409).json({
-            message: "Duplicate entry of resume already exists.",
-            existingResume: duplicateCheck.blockingMatch,
-          });
-        }
 
         const [sequenceResult] = await connection.query(
           "INSERT INTO resume_id_sequence VALUES ()",
@@ -1618,9 +1624,35 @@ router.post(
         const sequenceValue = Number(sequenceResult.insertId);
         const resId = `res_${sequenceValue}`;
         const cid = buildCandidateId(sequenceValue);
+        const duplicateGroupId = duplicateCheck.hasMatch
+          ? duplicateCheck.matches.find((match) => match.duplicateGroupId)
+              ?.duplicateGroupId || duplicateCheck.matches[0].resId
+          : null;
 
-        const insertColumns = ["res_id", "rid"];
-        const insertValues = [resId, rid];
+        if (duplicateCheck.hasMatch) {
+          const matchedResumeIds = duplicateCheck.matches
+            .map((match) => match.resId)
+            .filter(Boolean);
+          await connection.query(
+            `UPDATE resumes_data
+             SET duplicate_conflict = TRUE, duplicate_group_id = ?
+             WHERE res_id IN (${matchedResumeIds.map(() => "?").join(", ")})`,
+            [duplicateGroupId, ...matchedResumeIds],
+          );
+        }
+
+        const insertColumns = [
+          "res_id",
+          "rid",
+          "duplicate_conflict",
+          "duplicate_group_id",
+        ];
+        const insertValues = [
+          resId,
+          rid,
+          duplicateCheck.hasMatch,
+          duplicateGroupId,
+        ];
 
         if (hasJobJidColumn) {
           insertColumns.push("job_jid");
@@ -1720,6 +1752,7 @@ router.post(
           parserStatus: manualEntryRequired
             ? "manual_entry_required"
             : resumeAts.atsStatus,
+          duplicateConflict: duplicateCheck.hasMatch,
           resume: {
             resId,
             rid,
@@ -1784,6 +1817,7 @@ router.get(
         DATE_FORMAT(c.walk_in, '%Y-%m-%d') AS walkInDate,
         rd.resume_filename AS resumeFilename,
         rd.resume_type AS resumeType,
+        rd.duplicate_conflict AS duplicateConflict,
         ${atsScoreSelection}
         ${atsMatchSelection}
         rd.uploaded_at AS uploadedAt,
@@ -1804,6 +1838,7 @@ router.get(
        AND jrs.res_id = rd.res_id
       LEFT JOIN recruiter statusActor ON statusActor.rid = jrs.selected_by_admin
       WHERE rd.rid = ?
+        AND COALESCE(rd.duplicate_hidden, FALSE) = FALSE
       ORDER BY rd.uploaded_at DESC`,
         [rid],
       );

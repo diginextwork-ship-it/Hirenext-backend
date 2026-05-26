@@ -1107,6 +1107,7 @@ router.get(
           r.email AS recruiterEmail,
           rd.resume_filename AS resumeFilename,
           rd.resume_type AS resumeType,
+          rd.duplicate_conflict AS duplicateConflict,
           ${atsScoreSelection}
           ${atsMatchSelection}
           c.walk_in AS walkInDate,
@@ -1123,6 +1124,7 @@ router.get(
          AND jrs.res_id = rd.res_id
         WHERE rd.job_jid = ?
           AND LOWER(TRIM(COALESCE(rd.submitted_by_role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')
+          AND COALESCE(rd.duplicate_hidden, FALSE) = FALSE
         ORDER BY rd.uploaded_at DESC, rd.res_id ASC`,
         [req.ownedJob.jid],
       );

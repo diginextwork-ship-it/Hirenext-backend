@@ -764,9 +764,10 @@ test("admin dashboard recruiter uploads include recruiter submitted notes", asyn
   }
 });
 
-test("resume submission blocks duplicate candidate identities when an active status already exists", async () => {
+test("resume submission flags duplicate candidate identities when an active status already exists", async () => {
   const existingResId = buildTempResumeId("dupact");
   const recruiterStatusSnapshot = await snapshotStatusRow("hnr-2");
+  let newResId = null;
 
   await createDuplicateResumeFixture({
     resId: existingResId,
@@ -802,14 +803,22 @@ test("resume submission blocks duplicate candidate identities when an active sta
       },
     });
 
-    assert.equal(response.status, 409);
-    assert.equal(
-      response.body?.error,
-      "Duplicate entry of resume already exists.",
+    assert.equal(response.status, 201);
+    assert.equal(response.body?.success, true);
+    assert.equal(response.body?.duplicateConflict, true);
+    newResId = response.body?.resumeId || null;
+    assert.ok(newResId);
+
+    const [conflictRows] = await pool.query(
+      "SELECT duplicate_conflict AS duplicateConflict FROM resumes_data WHERE res_id IN (?, ?)",
+      [existingResId, newResId],
     );
-    assert.equal(response.body?.existingResume?.resId, existingResId);
-    assert.equal(response.body?.existingResume?.workflowStatus, "verified");
+    assert.equal(conflictRows.length, 2);
+    assert.equal(conflictRows.every((row) => Boolean(row.duplicateConflict)), true);
   } finally {
+    if (newResId) {
+      await cleanupTempResume(newResId);
+    }
     await cleanupTempResume(existingResId);
     await restoreStatusRow("hnr-2", recruiterStatusSnapshot);
   }

@@ -113,6 +113,7 @@ const recruiterStatsSubquery = `
     ON jrs.job_jid = rd.job_jid
    AND jrs.res_id = rd.res_id
   WHERE LOWER(TRIM(COALESCE(rd.submitted_by_role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')
+    AND COALESCE(rd.duplicate_hidden, FALSE) = FALSE
   GROUP BY rd.rid
 `;
 
@@ -919,8 +920,8 @@ router.get(
         columnExists("jobs", "access_mode"),
       ]);
       const recruiterSubmissionFilter = hasSubmittedByRoleColumn
-        ? "WHERE LOWER(TRIM(COALESCE(rd.submitted_by_role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')"
-        : "";
+        ? "WHERE LOWER(TRIM(COALESCE(rd.submitted_by_role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator') AND COALESCE(rd.duplicate_hidden, FALSE) = FALSE"
+        : "WHERE COALESCE(rd.duplicate_hidden, FALSE) = FALSE";
       const showAllTeamLeaderJobs =
         isTeamLeaderRole(req.auth?.role) && toRid(req.auth?.rid) === rid;
       const submittedRangeCondition = hasDateRange
