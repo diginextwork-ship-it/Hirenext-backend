@@ -989,6 +989,282 @@ router.post("/api/applications/parse-resume", async (req, res) => {
   }
 });
 
+router.put(
+  "/api/jobs/:jid",
+  requireAuth,
+  requireRoles("job creator", "team leader", "team_leader"),
+  requireOwnedJob,
+  async (req, res) => {
+    const authRid = toTrimmedString(req.auth?.rid);
+    if (!authRid || authRid !== req.ownedJob.recruiterRid) {
+      return res.status(403).json({
+        message: "You can only edit jobs created by your own account.",
+      });
+    }
+
+    const {
+      city,
+      state,
+      pincode,
+      company_name,
+      role_name,
+      positions_open,
+      revenue,
+      points_per_joining,
+      skills,
+      job_description,
+      experience,
+      salary,
+      qualification,
+      benefits,
+      access_mode,
+      recruiterIds,
+      accessNotes,
+    } = req.body || {};
+
+    const normalizedCompanyName = toTrimmedString(
+      company_name ?? req.body?.companyName,
+    );
+    const normalizedRoleName = toTrimmedString(role_name ?? req.body?.roleName);
+    const normalizedCity = toTrimmedString(city ?? req.body?.city);
+    const normalizedState = toTrimmedString(state ?? req.body?.state);
+    const normalizedPincode = toTrimmedString(pincode ?? req.body?.pincode);
+    const normalizedJobDescription = toTrimmedString(
+      job_description ?? req.body?.jobDescription,
+    );
+    const safePositionsOpen = toPositiveIntOrNull(positions_open);
+    const safeRevenue = toNonNegativeNumberOrNull(revenue);
+    const safePointsPerJoining = toNonNegativeIntOrNull(points_per_joining);
+    const normalizedAccessMode =
+      normalizeAccessMode(access_mode || "open") || "open";
+    const requestedRecruiterIds = dedupeStringList(recruiterIds);
+    const normalizedAccessNotes = toTrimmedString(accessNotes) || null;
+
+    const [
+      hasCityColumn,
+      hasStateColumn,
+      hasPincodeColumn,
+      hasJobDescriptionColumn,
+      hasSkillsColumn,
+      hasExperienceColumn,
+      hasSalaryColumn,
+      hasQualificationColumn,
+      hasBenefitsColumn,
+      hasPositionsOpenColumn,
+      hasRevenueColumn,
+      hasPointsPerJoiningColumn,
+      hasAccessModeColumn,
+    ] = await Promise.all([
+      columnExists("jobs", "city"),
+      columnExists("jobs", "state"),
+      columnExists("jobs", "pincode"),
+      columnExists("jobs", "job_description"),
+      columnExists("jobs", "skills"),
+      columnExists("jobs", "experience"),
+      columnExists("jobs", "salary"),
+      columnExists("jobs", "qualification"),
+      columnExists("jobs", "benefits"),
+      columnExists("jobs", "positions_open"),
+      columnExists("jobs", "revenue"),
+      columnExists("jobs", "points_per_joining"),
+      columnExists("jobs", "access_mode"),
+    ]);
+
+    if (!normalizedCompanyName || !normalizedRoleName) {
+      return res.status(400).json({
+        message: "company_name and role_name are required.",
+      });
+    }
+    if (access_mode !== undefined && !normalizeAccessMode(access_mode)) {
+      return res.status(400).json({
+        message: "access_mode must be either 'open' or 'restricted'.",
+      });
+    }
+    if (hasJobDescriptionColumn && !normalizedJobDescription) {
+      return res.status(400).json({
+        message: "job_description is required.",
+      });
+    }
+    if (hasPositionsOpenColumn && safePositionsOpen === null) {
+      return res.status(400).json({
+        message: "positions_open must be a positive integer.",
+      });
+    }
+    if (
+      hasRevenueColumn &&
+      revenue !== undefined &&
+      revenue !== null &&
+      revenue !== "" &&
+      safeRevenue === null
+    ) {
+      return res.status(400).json({
+        message: "revenue must be a non-negative number.",
+      });
+    }
+    if (
+      hasPointsPerJoiningColumn &&
+      points_per_joining !== undefined &&
+      points_per_joining !== null &&
+      points_per_joining !== "" &&
+      safePointsPerJoining === null
+    ) {
+      return res.status(400).json({
+        message: "points_per_joining must be a non-negative integer.",
+      });
+    }
+    if (
+      hasQualificationColumn &&
+      qualification !== undefined &&
+      qualification !== null
+    ) {
+      const maxLength = await getColumnMaxLength("jobs", "qualification");
+      const qualificationText = String(qualification).trim();
+      if (maxLength && qualificationText.length > maxLength) {
+        return res.status(400).json({
+          message: `qualification is too long (max ${maxLength} characters).`,
+        });
+      }
+    }
+
+    try {
+      const { validRecruiterIds, invalidRecruiterIds } =
+        await validateRecruiterIds(requestedRecruiterIds);
+      if (invalidRecruiterIds.length > 0) {
+        return res.status(400).json({
+          message: "Some recruiterIds are invalid or not recruiter role users.",
+          invalidRecruiterIds,
+        });
+      }
+
+      const connection = await pool.getConnection();
+      try {
+        await connection.beginTransaction();
+
+        const updateAssignments = ["company_name = ?", "role_name = ?"];
+        const updateValues = [normalizedCompanyName, normalizedRoleName];
+
+        if (hasCityColumn) {
+          updateAssignments.push("city = ?");
+          updateValues.push(normalizedCity || "N/A");
+        }
+        if (hasStateColumn) {
+          updateAssignments.push("state = ?");
+          updateValues.push(normalizedState || "N/A");
+        }
+        if (hasPincodeColumn) {
+          updateAssignments.push("pincode = ?");
+          updateValues.push(normalizedPincode || "N/A");
+        }
+        if (hasPositionsOpenColumn) {
+          updateAssignments.push("positions_open = ?");
+          updateValues.push(safePositionsOpen === null ? 1 : safePositionsOpen);
+        }
+        if (hasRevenueColumn) {
+          updateAssignments.push("revenue = ?");
+          updateValues.push(safeRevenue);
+        }
+        if (hasPointsPerJoiningColumn) {
+          updateAssignments.push("points_per_joining = ?");
+          updateValues.push(
+            safePointsPerJoining === null ? 0 : safePointsPerJoining,
+          );
+        }
+        if (hasSkillsColumn) {
+          updateAssignments.push("skills = ?");
+          updateValues.push(toTrimmedString(skills) || null);
+        }
+        if (hasJobDescriptionColumn) {
+          updateAssignments.push("job_description = ?");
+          updateValues.push(normalizedJobDescription || null);
+        }
+        if (hasExperienceColumn) {
+          updateAssignments.push("experience = ?");
+          updateValues.push(toTrimmedString(experience) || null);
+        }
+        if (hasSalaryColumn) {
+          updateAssignments.push("salary = ?");
+          updateValues.push(toTrimmedString(salary) || null);
+        }
+        if (hasQualificationColumn) {
+          updateAssignments.push("qualification = ?");
+          updateValues.push(toTrimmedString(qualification) || null);
+        }
+        if (hasBenefitsColumn) {
+          updateAssignments.push("benefits = ?");
+          updateValues.push(toTrimmedString(benefits) || null);
+        }
+        if (hasAccessModeColumn) {
+          updateAssignments.push("access_mode = ?");
+          updateValues.push(normalizedAccessMode);
+        }
+
+        updateValues.push(req.ownedJob.jid, req.ownedJob.recruiterRid);
+        await connection.query(
+          `UPDATE jobs
+           SET ${updateAssignments.join(", ")}
+           WHERE jid = ? AND recruiter_rid = ?`,
+          updateValues,
+        );
+
+        await connection.query(
+          `UPDATE job_recruiter_access
+           SET is_active = FALSE
+           WHERE job_jid = ?`,
+          [req.ownedJob.jid],
+        );
+
+        if (
+          normalizedAccessMode === "restricted" &&
+          validRecruiterIds.length > 0
+        ) {
+          const authRid = toTrimmedString(req.auth?.rid);
+          for (const recruiterId of validRecruiterIds) {
+            await connection.query(
+              `INSERT INTO job_recruiter_access
+                (job_jid, recruiter_rid, granted_by, notes, is_active)
+               VALUES (?, ?, ?, ?, TRUE)
+               ON DUPLICATE KEY UPDATE
+                is_active = TRUE,
+                granted_by = VALUES(granted_by),
+                granted_at = CURRENT_TIMESTAMP,
+                notes = VALUES(notes)`,
+              [req.ownedJob.jid, recruiterId, authRid, normalizedAccessNotes],
+            );
+          }
+        }
+
+        await connection.commit();
+        return res.status(200).json({
+          message: "Job updated successfully.",
+          warning:
+            normalizedAccessMode === "restricted" &&
+            validRecruiterIds.length === 0
+              ? "Job is restricted but no recruiters are assigned yet."
+              : null,
+        });
+      } catch (error) {
+        await connection.rollback();
+        throw error;
+      } finally {
+        connection.release();
+      }
+    } catch (error) {
+      console.error("[jobRoutes] Failed to update job:", error.message);
+      if (error && error.code === "ER_DATA_TOO_LONG") {
+        return res.status(400).json({
+          message:
+            "One of the text fields is too long for the database column.",
+          error: error.message,
+        });
+      }
+      return res.status(500).json({
+        message: "Failed to update job.",
+        error: error.message,
+      });
+    }
+  },
+);
+
 /**
  * GET /api/jobs/my
  * Fetch jobs owned by authenticated user (or all jobs if team leader)
@@ -1005,9 +1281,30 @@ router.get(
         return res.status(401).json({ message: "Authentication required." });
       }
 
-      const [hasAccessModeColumn, hasRecruiterRoleColumn] = await Promise.all([
+      const [
+        hasAccessModeColumn,
+        hasRecruiterRoleColumn,
+        hasPositionsOpenColumn,
+        hasRevenueColumn,
+        hasPointsPerJoiningColumn,
+        hasSkillsColumn,
+        hasExperienceColumn,
+        hasSalaryColumn,
+        hasQualificationColumn,
+        hasBenefitsColumn,
+        hasJobDescriptionColumn,
+      ] = await Promise.all([
         columnExists("jobs", "access_mode"),
         columnExists("recruiter", "role"),
+        columnExists("jobs", "positions_open"),
+        columnExists("jobs", "revenue"),
+        columnExists("jobs", "points_per_joining"),
+        columnExists("jobs", "skills"),
+        columnExists("jobs", "experience"),
+        columnExists("jobs", "salary"),
+        columnExists("jobs", "qualification"),
+        columnExists("jobs", "benefits"),
+        columnExists("jobs", "job_description"),
       ]);
 
       const isTeamLeader = isTeamLeaderLikeRole(authRole);
@@ -1026,6 +1323,15 @@ router.get(
           j.city,
           j.state,
           j.pincode,
+          ${hasPositionsOpenColumn ? "j.positions_open," : "1 AS positions_open,"}
+          ${hasRevenueColumn ? "j.revenue," : "NULL AS revenue,"}
+          ${hasPointsPerJoiningColumn ? "j.points_per_joining," : "0 AS points_per_joining,"}
+          ${hasSkillsColumn ? "j.skills," : "NULL AS skills,"}
+          ${hasJobDescriptionColumn ? "j.job_description," : "NULL AS job_description,"}
+          ${hasExperienceColumn ? "j.experience," : "NULL AS experience,"}
+          ${hasSalaryColumn ? "j.salary," : "NULL AS salary,"}
+          ${hasQualificationColumn ? "j.qualification," : "NULL AS qualification,"}
+          ${hasBenefitsColumn ? "j.benefits," : "NULL AS benefits,"}
           j.created_at,
           ${hasAccessModeColumn ? "j.access_mode" : "'open' AS access_mode"},
           COUNT(jra.id) AS recruiterCount
@@ -1037,7 +1343,17 @@ router.get(
          AND jra.is_active = TRUE
         WHERE ${whereClause}
         GROUP BY
-          j.jid, j.recruiter_rid, j.company_name, j.role_name, j.city, j.state, j.pincode, j.created_at
+          j.jid, j.recruiter_rid, j.company_name, j.role_name, j.city, j.state, j.pincode,
+          ${hasPositionsOpenColumn ? "j.positions_open," : ""}
+          ${hasRevenueColumn ? "j.revenue," : ""}
+          ${hasPointsPerJoiningColumn ? "j.points_per_joining," : ""}
+          ${hasSkillsColumn ? "j.skills," : ""}
+          ${hasJobDescriptionColumn ? "j.job_description," : ""}
+          ${hasExperienceColumn ? "j.experience," : ""}
+          ${hasSalaryColumn ? "j.salary," : ""}
+          ${hasQualificationColumn ? "j.qualification," : ""}
+          ${hasBenefitsColumn ? "j.benefits," : ""}
+          j.created_at
           ${hasAccessModeColumn ? ", j.access_mode" : ""}
         ORDER BY j.created_at DESC, j.jid DESC`,
         queryParams,

@@ -764,10 +764,9 @@ test("admin dashboard recruiter uploads include recruiter submitted notes", asyn
   }
 });
 
-test("resume submission flags duplicate candidate identities when an active status already exists", async () => {
+test("resume submission rejects duplicate candidate identities when one already exists", async () => {
   const existingResId = buildTempResumeId("dupact");
   const recruiterStatusSnapshot = await snapshotStatusRow("hnr-2");
-  let newResId = null;
 
   await createDuplicateResumeFixture({
     resId: existingResId,
@@ -803,31 +802,25 @@ test("resume submission flags duplicate candidate identities when an active stat
       },
     });
 
-    assert.equal(response.status, 201);
-    assert.equal(response.body?.success, true);
-    assert.equal(response.body?.duplicateConflict, true);
-    newResId = response.body?.resumeId || null;
-    assert.ok(newResId);
+    assert.equal(response.status, 409);
+    assert.equal(response.body?.success, false);
+    assert.equal(response.body?.error, "This candidate already exists.");
+    assert.equal(response.body?.resumeId, undefined);
 
     const [conflictRows] = await pool.query(
-      "SELECT duplicate_conflict AS duplicateConflict FROM resumes_data WHERE res_id IN (?, ?)",
-      [existingResId, newResId],
+      "SELECT res_id FROM resumes_data WHERE res_id = ?",
+      [existingResId],
     );
-    assert.equal(conflictRows.length, 2);
-    assert.equal(conflictRows.every((row) => Boolean(row.duplicateConflict)), true);
+    assert.equal(conflictRows.length, 1);
   } finally {
-    if (newResId) {
-      await cleanupTempResume(newResId);
-    }
     await cleanupTempResume(existingResId);
     await restoreStatusRow("hnr-2", recruiterStatusSnapshot);
   }
 });
 
-test("resume submission allows duplicate candidate identities when the latest status is rejected and stores submission time", async () => {
+test("resume submission rejects duplicate candidate identities even when the existing one is rejected", async () => {
   const existingResId = buildTempResumeId("duprej");
   const recruiterStatusSnapshot = await snapshotStatusRow("hnr-2");
-  let newResId = null;
 
   await createDuplicateResumeFixture({
     resId: existingResId,
@@ -863,40 +856,25 @@ test("resume submission allows duplicate candidate identities when the latest st
       },
     });
 
-    assert.equal(response.status, 201);
-    assert.equal(response.body?.success, true);
-    newResId = response.body?.resumeId || null;
-    assert.ok(newResId);
-    assert.notEqual(newResId, existingResId);
+    assert.equal(response.status, 409);
+    assert.equal(response.body?.success, false);
+    assert.equal(response.body?.error, "This candidate already exists.");
 
-    const [timestampRows] = await pool.query(
-      `SELECT
-         rd.uploaded_at AS uploadedAt,
-         ei.submitted_at AS submittedAt
-       FROM resumes_data rd
-       LEFT JOIN extra_info ei
-         ON ei.res_id = rd.res_id OR ei.resume_id = rd.res_id
-       WHERE rd.res_id = ?
-       LIMIT 1`,
-      [newResId],
+    const [resumeRows] = await pool.query(
+      "SELECT res_id FROM resumes_data WHERE res_id = ?",
+      [existingResId],
     );
-
-    assert.ok(timestampRows[0]?.uploadedAt);
-    assert.ok(timestampRows[0]?.submittedAt);
+    assert.equal(resumeRows.length, 1);
   } finally {
-    if (newResId) {
-      await cleanupTempResume(newResId);
-    }
     await cleanupTempResume(existingResId);
     await restoreStatusRow("hnr-2", recruiterStatusSnapshot);
   }
 });
 
-test("resume submission uses the latest duplicate candidate status when deciding resubmission", async () => {
+test("resume submission rejects duplicate candidate identities when any older match exists", async () => {
   const olderResId = buildTempResumeId("dupold");
   const latestResId = buildTempResumeId("duplatest");
   const recruiterStatusSnapshot = await snapshotStatusRow("hnr-2");
-  let newResId = null;
 
   await createDuplicateResumeFixture({
     resId: olderResId,
@@ -941,15 +919,9 @@ test("resume submission uses the latest duplicate candidate status when deciding
       },
     });
 
-    assert.equal(response.status, 201);
-    newResId = response.body?.resumeId || null;
-    assert.ok(newResId);
-    assert.notEqual(newResId, olderResId);
-    assert.notEqual(newResId, latestResId);
+    assert.equal(response.status, 409);
+    assert.equal(response.body?.message || response.body?.error, "This candidate already exists.");
   } finally {
-    if (newResId) {
-      await cleanupTempResume(newResId);
-    }
     await cleanupTempResume(latestResId);
     await cleanupTempResume(olderResId);
     await restoreStatusRow("hnr-2", recruiterStatusSnapshot);

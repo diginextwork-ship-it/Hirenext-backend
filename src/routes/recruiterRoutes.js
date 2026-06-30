@@ -1248,28 +1248,21 @@ router.post(
           email,
         });
 
+        if (duplicateCheck.hasMatch) {
+          await connection.rollback();
+          return res.status(409).json({
+            success: false,
+            error: "This candidate already exists.",
+            existingResume: duplicateCheck.latestMatch,
+          });
+        }
+
         const [sequenceResult] = await connection.query(
           "INSERT INTO resume_id_sequence VALUES ()",
         );
         const sequenceValue = Number(sequenceResult.insertId);
         const resId = `res_${sequenceValue}`;
         const cid = buildCandidateId(sequenceValue);
-        const duplicateGroupId = duplicateCheck.hasMatch
-          ? duplicateCheck.matches.find((match) => match.duplicateGroupId)
-              ?.duplicateGroupId || duplicateCheck.matches[0].resId
-          : null;
-
-        if (duplicateCheck.hasMatch) {
-          const matchedResumeIds = duplicateCheck.matches
-            .map((match) => match.resId)
-            .filter(Boolean);
-          await connection.query(
-            `UPDATE resumes_data
-             SET duplicate_conflict = TRUE, duplicate_group_id = ?
-             WHERE res_id IN (${matchedResumeIds.map(() => "?").join(", ")})`,
-            [duplicateGroupId, ...matchedResumeIds],
-          );
-        }
 
         await connection.query(
           `INSERT INTO applications
@@ -1306,10 +1299,8 @@ router.post(
           "resume_filename",
           "resume_type",
           "uploaded_at",
-          "duplicate_conflict",
-          "duplicate_group_id",
         ];
-        const resumeInsertValuesSql = ["?", "?", "?", "?", "?", "?", "?", "?"];
+        const resumeInsertValuesSql = ["?", "?", "?", "?", "?", "?"];
         const resumeInsertValues = [
           resId,
           recruiterRid,
@@ -1317,8 +1308,6 @@ router.post(
           originalName,
           validation.extension,
           submittedAt,
-          duplicateCheck.hasMatch,
-          duplicateGroupId,
         ];
 
         if (await columnExists("resumes_data", "resume")) {
@@ -1411,7 +1400,6 @@ router.post(
           submittedCount: Number(statusRows?.[0]?.submittedCount) || 0,
           companyName: jobRows[0]?.company_name || null,
           officeLocationCity,
-          duplicateConflict: duplicateCheck.hasMatch,
         });
       } catch (error) {
         await connection.rollback();
@@ -1618,40 +1606,28 @@ router.post(
           email: candidateSnapshot.email || null,
         });
 
+        if (duplicateCheck.hasMatch) {
+          await connection.rollback();
+          return res.status(409).json({
+            message: "This candidate already exists.",
+            existingResume: duplicateCheck.latestMatch,
+          });
+        }
+
         const [sequenceResult] = await connection.query(
           "INSERT INTO resume_id_sequence VALUES ()",
         );
         const sequenceValue = Number(sequenceResult.insertId);
         const resId = `res_${sequenceValue}`;
         const cid = buildCandidateId(sequenceValue);
-        const duplicateGroupId = duplicateCheck.hasMatch
-          ? duplicateCheck.matches.find((match) => match.duplicateGroupId)
-              ?.duplicateGroupId || duplicateCheck.matches[0].resId
-          : null;
-
-        if (duplicateCheck.hasMatch) {
-          const matchedResumeIds = duplicateCheck.matches
-            .map((match) => match.resId)
-            .filter(Boolean);
-          await connection.query(
-            `UPDATE resumes_data
-             SET duplicate_conflict = TRUE, duplicate_group_id = ?
-             WHERE res_id IN (${matchedResumeIds.map(() => "?").join(", ")})`,
-            [duplicateGroupId, ...matchedResumeIds],
-          );
-        }
 
         const insertColumns = [
           "res_id",
           "rid",
-          "duplicate_conflict",
-          "duplicate_group_id",
         ];
         const insertValues = [
           resId,
           rid,
-          duplicateCheck.hasMatch,
-          duplicateGroupId,
         ];
 
         if (hasJobJidColumn) {
@@ -1752,7 +1728,6 @@ router.post(
           parserStatus: manualEntryRequired
             ? "manual_entry_required"
             : resumeAts.atsStatus,
-          duplicateConflict: duplicateCheck.hasMatch,
           resume: {
             resId,
             rid,
@@ -1814,6 +1789,7 @@ router.get(
         rd.ats_raw_json AS atsRawJson,
         c.name AS candidateName,
         c.phone AS candidatePhone,
+        c.email AS candidateEmail,
         DATE_FORMAT(c.walk_in, '%Y-%m-%d') AS walkInDate,
         rd.resume_filename AS resumeFilename,
         rd.resume_type AS resumeType,
@@ -1856,6 +1832,7 @@ router.get(
             source: {
               candidate_name: row.candidateName,
               candidate_phone: row.candidatePhone,
+              candidate_email: row.candidateEmail,
               job_jid: row.jobJid,
             },
             parsedData:
@@ -1873,6 +1850,7 @@ router.get(
               extraInfo?.othersReason || row.workflowNote || null,
             candidateName: candidateSnapshot.name || row.candidateName || null,
             candidatePhone: candidateSnapshot.phone || row.candidatePhone || null,
+            email: candidateSnapshot.email || row.candidateEmail || null,
             reason: row.workflowNote || null,
             note: row.workflowNote || null,
             workflowUpdatedBy: row.workflowUpdatedBy || null,
@@ -1887,6 +1865,7 @@ router.get(
             ...compatibilityFields,
             name: compatibilityFields.candidateName,
             phone: compatibilityFields.candidatePhone,
+            email: compatibilityFields.email,
             atsScore: row.atsScore === null ? null : Number(row.atsScore),
             atsMatchPercentage:
               row.atsMatchPercentage === null
@@ -1965,6 +1944,193 @@ router.get(
         message: "Failed to fetch resume file.",
         error: error.message,
       });
+    }
+  },
+);
+
+router.put(
+  "/api/recruiters/:rid/resumes/:resId/candidate",
+  requireAuth,
+  requireRoles("recruiter", "team leader", "team_leader"),
+  async (req, res) => {
+    const { rid, resId } = req.params;
+    if (!authorizeRecruiterResourceView(req, res, rid)) return;
+
+    const normalizedResId = String(resId || "").trim();
+    const candidateName = String(
+      req.body?.candidateName ?? req.body?.candidate_name ?? "",
+    ).trim();
+    const candidateEmail = String(
+      req.body?.candidateEmail ?? req.body?.candidate_email ?? req.body?.email ?? "",
+    )
+      .trim()
+      .toLowerCase();
+    const candidatePhone = normalizePhoneForStorage(
+      req.body?.candidatePhone ?? req.body?.candidate_phone ?? req.body?.phone ?? "",
+    );
+
+    if (!normalizedResId) {
+      return res.status(400).json({ message: "resId is required." });
+    }
+    if (!candidateName || !candidateEmail || !candidatePhone) {
+      return res.status(400).json({
+        message: "candidateName, candidateEmail, and candidatePhone are required.",
+      });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidateEmail)) {
+      return res.status(400).json({ message: "candidateEmail must be valid." });
+    }
+    if (!/^\d{10}$/.test(candidatePhone)) {
+      return res.status(400).json({
+        message: "candidatePhone must be exactly 10 digits.",
+      });
+    }
+
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const [
+        hasApplicantNameColumn,
+        hasApplicantEmailColumn,
+        hasAtsRawColumn,
+        hasApplicationsTable,
+        hasApplicationParsedDataColumn,
+        hasApplicationAtsRawColumn,
+      ] = await Promise.all([
+        columnExists("resumes_data", "applicant_name"),
+        columnExists("resumes_data", "applicant_email"),
+        columnExists("resumes_data", "ats_raw_json"),
+        tableExists("applications"),
+        columnExists("applications", "resume_parsed_data"),
+        columnExists("applications", "ats_raw_json"),
+      ]);
+
+      const [resumeRows] = await connection.query(
+        `SELECT
+          rd.res_id AS resId,
+          rd.rid AS recruiterRid,
+          rd.job_jid AS jobJid,
+          rd.ats_raw_json AS atsRawJson
+        FROM resumes_data rd
+        WHERE rd.res_id = ? AND rd.rid = ?
+        LIMIT 1
+        FOR UPDATE`,
+        [normalizedResId, rid],
+      );
+
+      if (resumeRows.length === 0) {
+        await connection.rollback();
+        return res.status(404).json({ message: "Resume not found." });
+      }
+
+      const resume = resumeRows[0];
+      const parsedAtsRawJson = parseJsonField(resume.atsRawJson);
+      const existingParsedData =
+        parsedAtsRawJson?.parsed_data ||
+        parsedAtsRawJson?.parsedData ||
+        parsedAtsRawJson ||
+        null;
+      const updatedParsedData = mergeCandidateSnapshotIntoParsedData(
+        existingParsedData,
+        {
+          name: candidateName,
+          email: candidateEmail,
+          phone: candidatePhone,
+        },
+      );
+      const updatedAtsRawJson =
+        parsedAtsRawJson && typeof parsedAtsRawJson === "object"
+          ? {
+              ...parsedAtsRawJson,
+              parsed_data: updatedParsedData,
+            }
+          : updatedParsedData
+            ? { parsed_data: updatedParsedData }
+            : null;
+
+      await upsertCandidateFields(connection, {
+        resId: normalizedResId,
+        jobJid: resume.jobJid || undefined,
+        recruiterRid: resume.recruiterRid || undefined,
+        name: candidateName,
+        phone: candidatePhone,
+        email: candidateEmail,
+      });
+
+      await upsertExtraInfoFields(connection, {
+        resId: normalizedResId,
+        jobJid: resume.jobJid || undefined,
+        recruiterRid: resume.recruiterRid || undefined,
+        candidateName,
+        phone: candidatePhone,
+        email: candidateEmail,
+      });
+
+      const resumeAssignments = [];
+      const resumeValues = [];
+      if (hasApplicantNameColumn) {
+        resumeAssignments.push("applicant_name = ?");
+        resumeValues.push(candidateName);
+      }
+      if (hasApplicantEmailColumn) {
+        resumeAssignments.push("applicant_email = ?");
+        resumeValues.push(candidateEmail);
+      }
+      if (hasAtsRawColumn) {
+        resumeAssignments.push("ats_raw_json = ?");
+        resumeValues.push(safeJsonOrNull(updatedAtsRawJson));
+      }
+      if (resumeAssignments.length > 0) {
+        resumeValues.push(normalizedResId, rid);
+        await connection.query(
+          `UPDATE resumes_data
+           SET ${resumeAssignments.join(", ")}
+           WHERE res_id = ? AND rid = ?`,
+          resumeValues,
+        );
+      }
+
+      if (hasApplicationsTable) {
+        const applicationAssignments = [];
+        const applicationValues = [];
+        if (hasApplicationParsedDataColumn) {
+          applicationAssignments.push("resume_parsed_data = ?");
+          applicationValues.push(safeJsonOrNull(updatedParsedData));
+        }
+        if (hasApplicationAtsRawColumn) {
+          applicationAssignments.push("ats_raw_json = ?");
+          applicationValues.push(safeJsonOrNull(updatedAtsRawJson));
+        }
+        if (applicationAssignments.length > 0) {
+          applicationValues.push(normalizedResId);
+          await connection.query(
+            `UPDATE applications
+             SET ${applicationAssignments.join(", ")}
+             WHERE res_id = ?`,
+            applicationValues,
+          );
+        }
+      }
+
+      await connection.commit();
+      return res.status(200).json({
+        message: "Candidate details updated successfully.",
+        candidate: {
+          resId: normalizedResId,
+          candidateName,
+          candidateEmail,
+          candidatePhone,
+        },
+      });
+    } catch (error) {
+      await connection.rollback();
+      return res.status(500).json({
+        message: "Failed to update candidate details.",
+        error: error.message,
+      });
+    } finally {
+      connection.release();
     }
   },
 );
