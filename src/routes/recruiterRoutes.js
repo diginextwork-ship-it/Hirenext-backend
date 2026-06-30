@@ -275,15 +275,6 @@ const isTeamLeaderRole = (role) => {
   return normalized === "team leader" || normalized === "team_leader";
 };
 
-const isTeamLeaderCreatedRole = (role) => {
-  const normalized = normalizeRoleAlias(role);
-  return (
-    normalized === "team leader" ||
-    normalized === "team_leader" ||
-    normalized === "job creator"
-  );
-};
-
 const checkJobAccess = async (recruiterId, jobId, role = "recruiter") => {
   const safeJobId = normalizeJobJid(jobId);
   if (!safeJobId) {
@@ -291,20 +282,12 @@ const checkJobAccess = async (recruiterId, jobId, role = "recruiter") => {
   }
 
   const hasAccessModeColumn = await columnExists("jobs", "access_mode");
-  const hasRecruiterRoleColumn = await columnExists("recruiter", "role");
   const [jobRows] = await pool.query(
     `SELECT
       j.jid,
       j.company_name,
-      ${hasAccessModeColumn ? "j.access_mode" : "'open'"} AS access_mode,
-      ${
-        hasRecruiterRoleColumn
-          ? "creator.role AS creatorRole"
-          : "NULL AS creatorRole"
-      }
+      ${hasAccessModeColumn ? "j.access_mode" : "'open'"} AS access_mode
     FROM jobs j
-    LEFT JOIN recruiter creator
-      ON creator.rid = j.recruiter_rid
     WHERE jid = ?
     LIMIT 1`,
     [safeJobId],
@@ -317,20 +300,16 @@ const checkJobAccess = async (recruiterId, jobId, role = "recruiter") => {
   const job = jobRows[0];
   const accessMode = normalizeAccessMode(job.access_mode);
   const normalizedRole = normalizeRoleAlias(role);
-  const creatorRole = normalizeRoleAlias(job.creatorRole);
   const jobDetails = {
     jid: String(job.jid || "").trim(),
     company_name: job.company_name || "",
     access_mode: accessMode,
   };
 
-  if (
-    isTeamLeaderRole(normalizedRole) &&
-    (!hasRecruiterRoleColumn || isTeamLeaderCreatedRole(creatorRole))
-  ) {
+  if (isTeamLeaderRole(normalizedRole)) {
     return {
       canAccess: true,
-      reason: "Team leaders can access all jobs created by team leaders",
+      reason: "Team leaders can access all jobs",
       jobDetails,
     };
   }
@@ -848,17 +827,12 @@ router.get(
 
     try {
       const hasAccessModeColumn = await columnExists("jobs", "access_mode");
-      const hasRecruiterRoleColumn = await columnExists("recruiter", "role");
       const authRole = normalizeRoleAlias(req.auth?.role);
       const teamLeaderScope = isTeamLeaderRole(authRole);
 
       const whereClauses = [];
       if (teamLeaderScope) {
-        whereClauses.push(
-          hasRecruiterRoleColumn
-            ? "LOWER(TRIM(COALESCE(creator.role, ''))) IN ('team leader', 'team_leader', 'job creator')"
-            : "1 = 1",
-        );
+        whereClauses.push("1 = 1");
       } else {
         whereClauses.push(
           hasAccessModeColumn

@@ -644,6 +644,17 @@ test("legacy verify aliases are normalized to canonical verified on admin and te
   }
 });
 
+test("team leader can access a job card for resume submission", async () => {
+  const response = await requestJson("/api/recruiters/hnr-1/can-access/JID-5", {
+    headers: {
+      Authorization: `Bearer ${teamLeaderToken}`,
+    },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body?.canAccess, true);
+});
+
 test("recruiter resumes endpoint returns recruiter frontend compatibility fields with legacy fallbacks", async () => {
   const resId = buildTempResumeId("compat");
   await createTempResume(resId);
