@@ -2,12 +2,6 @@ const pool = require("../config/db");
 const { normalizeWorkflowStatus } = require("./resumeStatusFlow");
 const { buildResumeCompatibilityFields } = require("./resumeCompatibility");
 
-const DUPLICATE_RESUME_ALLOWED_STATUSES = new Set([
-  "rejected",
-  "dropout",
-  "left",
-]);
-
 const tableExists = async (tableName) => {
   try {
     const [rows] = await pool.query(
@@ -384,19 +378,12 @@ const findExistingResumeMatches = async (
 const evaluateResumeDuplicateDecision = (matches = []) => {
   const normalizedMatches = Array.isArray(matches) ? matches : [];
   const latestMatch = normalizedMatches[0] || null;
-  const blockingMatch =
-    normalizedMatches.find(
-      (match) =>
-        !DUPLICATE_RESUME_ALLOWED_STATUSES.has(
-          normalizeWorkflowStatus(match.workflowStatus),
-        ),
-    ) || null;
   return {
     hasMatch: normalizedMatches.length > 0,
     isDuplicate: normalizedMatches.length > 0,
     latestMatch,
-    allowSubmission: !blockingMatch,
-    blockingMatch,
+    allowSubmission: normalizedMatches.length === 0,
+    blockingMatch: latestMatch,
     matches: normalizedMatches,
   };
 };

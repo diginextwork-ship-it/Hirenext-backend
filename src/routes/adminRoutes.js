@@ -1090,8 +1090,6 @@ router.get("/api/admin/dashboard", async (_req, res) => {
           COALESCE(jrs.selection_status, 'submitted') AS workflowStatus,
           rd.resume_filename AS resumeFilename,
           rd.resume_type AS resumeType,
-          rd.duplicate_conflict AS duplicateConflict,
-          rd.duplicate_group_id AS duplicateGroupId,
           ${atsScoreSelect}
           ${atsMatchSelect}
           ${acceptedSelect}
@@ -1178,8 +1176,6 @@ router.get("/api/admin/dashboard", async (_req, res) => {
           isAccepted: Boolean(row.isAccepted),
           acceptedAt: row.acceptedAt || null,
           acceptedByAdmin: row.acceptedByAdmin || null,
-          duplicateConflict: Boolean(row.duplicateConflict),
-          duplicateGroupId: row.duplicateGroupId || null,
           uploadedAt: row.uploadedAt || null,
           ...workflowFields,
         };
