@@ -1770,6 +1770,10 @@ router.get(
         rd.duplicate_conflict AS duplicateConflict,
         ${atsScoreSelection}
         ${atsMatchSelection}
+        DATE_FORMAT(
+          COALESCE(rd.uploaded_at, ei.submitted_at),
+          '%Y-%m-%d %H:%i:%s.%f'
+        ) AS submittedAt,
         rd.uploaded_at AS uploadedAt,
         COALESCE(jrs.selection_status, 'pending') AS workflowStatus,
         jrs.selection_note AS workflowNote,
@@ -1783,6 +1787,7 @@ router.get(
       FROM resumes_data rd
       LEFT JOIN candidate c ON c.res_id = rd.res_id
       LEFT JOIN jobs j ON j.jid = rd.job_jid
+      ${buildExtraInfoJoin("rd.res_id")}
       LEFT JOIN job_resume_selection jrs
         ON jrs.job_jid = rd.job_jid
        AND jrs.res_id = rd.res_id

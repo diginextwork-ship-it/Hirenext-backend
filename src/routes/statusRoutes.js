@@ -590,7 +590,10 @@ router.get(
           rd.res_id AS resId,
           rd.job_jid AS jobJid,
           rd.resume_filename AS resumeFilename,
-          DATE_FORMAT(rd.uploaded_at, '%Y-%m-%d %H:%i:%s.%f') AS submittedAt,
+          DATE_FORMAT(
+            COALESCE(rd.uploaded_at, ei.submitted_at),
+            '%Y-%m-%d %H:%i:%s.%f'
+          ) AS submittedAt,
           DATE_FORMAT(
             CASE WHEN jrs.selection_status = 'verified' THEN jrs.selected_at ELSE NULL END,
             '%Y-%m-%d %H:%i:%s.%f'
