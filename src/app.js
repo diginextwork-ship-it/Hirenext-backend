@@ -54,21 +54,18 @@ const isProduction = String(process.env.NODE_ENV || "").trim() === "production";
 // In local development, only allow localhost frontends so local work cannot
 // accidentally modify production through a server URL configured in env files.
 const allowedOrigins = new Set(
-  (
-    isProduction
-      ? [
-          process.env.FRONTEND_URL,
-          ...String(process.env.FRONTEND_URLS || "")
-            .split(",")
-            .map((origin) => origin.trim())
-            .filter(Boolean),
-        ]
-      : [
-          "http://localhost:3000",
-          "http://localhost:5173",
-          "http://localhost:5174",
-        ]
-  )
+  [
+    process.env.FRONTEND_URL,
+    ...String(process.env.FRONTEND_URLS || "")
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean),
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:3000",
+  ]
     .map(normalizeOrigin)
     .filter(Boolean),
 );

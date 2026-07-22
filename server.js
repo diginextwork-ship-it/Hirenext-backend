@@ -5,7 +5,7 @@ const app = require("./src/app");
 const pool = require("./src/config/db");
 const { processBillingTransitions } = require("./src/routes/jobRoutes");
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001;
 const BILLING_CHECK_INTERVAL_MS =
   Number(process.env.BILLING_CHECK_INTERVAL_MS) || 3600000; // default 1 hour
 
