@@ -23,8 +23,14 @@ const normalizeOrigin = (value) => {
 };
 
 const startServer = async () => {
+  // Start server IMMEDIATELY so Hostinger/Passenger health checks pass
+  const server = app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
+  });
+  server.requestTimeout = 0;
+
   console.log("Initializing database connection...");
-  // Initialize database first to make sure it doesn't crash silently
   try {
     await pool.initDatabase();
     console.log("Database initialized successfully");
@@ -37,15 +43,8 @@ const startServer = async () => {
     );
   } catch (error) {
     console.error("Database initialization failed:", error.message);
-    // Don't exit - let server continue running to serve error responses or other routes
+    // Don't exit - let server continue running to serve error responses
   }
-
-  // Start server
-  const server = app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-    console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
-  });
-  server.requestTimeout = 0;
 
   process.on("SIGTERM", () => {
     console.log("SIGTERM received, closing server...");
