@@ -49,7 +49,7 @@ const getDbConfig = () => {
         String(parsedUrl.pathname || "").replace(/^\//, ""),
       ),
       ssl: resolveSslConfig(host),
-      connectTimeout: 60000, // 60 seconds for initial connection
+      connectTimeout: 10000, // 10 seconds for initial connection
     };
   }
 
@@ -71,7 +71,7 @@ const getDbConfig = () => {
     password: process.env.DB_PASSWORD || "",
     database: process.env.DB_NAME,
     ssl: resolveSslConfig(host),
-    connectTimeout: 60000, // 60 seconds for initial connection
+    connectTimeout: 10000, // 10 seconds for initial connection
   };
 };
 
