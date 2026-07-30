@@ -1,33 +1,13 @@
 const dotenv = require("dotenv");
 dotenv.config();
 
-let app, pool, processBillingTransitions;
-try {
-  app = require("./src/app");
-  pool = require("./src/config/db");
-  ({ processBillingTransitions } = require("./src/routes/jobRoutes"));
-} catch (err) {
-  console.error("FATAL: Failed to load modules:", err.message);
-  console.error(err.stack);
-  try {
-    require("fs").writeFileSync(
-      require("path").join(__dirname, "startup-error.log"),
-      `${new Date().toISOString()}\n${err.stack}\n`
-    );
-  } catch (_) { /* ignore */ }
-  // Start a minimal server so Hostinger doesn't show 503
-  const express = require("express");
-  const fallback = express();
-  fallback.use((_req, res) =>
-    res.status(500).json({ ok: false, error: err.message })
-  );
-  fallback.listen(process.env.PORT || 5001, "0.0.0.0", () =>
-    console.log("Fallback server running — app failed to load")
-  );
-  return;
-}
+console.log("Starting server.js...");
 
-const PORT = process.env.PORT || 5001;
+const app = require("./src/app");
+const pool = require("./src/config/db");
+const { processBillingTransitions } = require("./src/routes/jobRoutes");
+
+const PORT = process.env.PORT || 5000;
 const BILLING_CHECK_INTERVAL_MS =
   Number(process.env.BILLING_CHECK_INTERVAL_MS) || 3600000; // default 1 hour
 
@@ -43,26 +23,8 @@ const normalizeOrigin = (value) => {
 };
 
 const startServer = async () => {
-  // Start server IMMEDIATELY - don't wait for database
-  const server = app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on port ${PORT}`);
-    console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
-    const configuredOrigins = [
-      process.env.FRONTEND_URL,
-      ...String(process.env.FRONTEND_URLS || "")
-        .split(",")
-        .map((origin) => origin.trim())
-        .filter(Boolean),
-    ]
-      .map(normalizeOrigin)
-      .filter(Boolean);
-    console.log(
-      `Allowed origins: ${configuredOrigins.join(", ") || "localhost only"}`,
-    );
-  });
-  server.requestTimeout = 0;
-
-  // Initialize database in background (non-blocking)
+  console.log("Initializing database connection...");
+  // Initialize database first to make sure it doesn't crash silently
   try {
     await pool.initDatabase();
     console.log("Database initialized successfully");
@@ -75,20 +37,16 @@ const startServer = async () => {
     );
   } catch (error) {
     console.error("Database initialization failed:", error.message);
-    if (error?.code) {
-      console.error("Database initialization error code:", error.code);
-    }
-    if (error?.sqlMessage) {
-      console.error("Database initialization SQL message:", error.sqlMessage);
-    }
-    if (error?.sql) {
-      console.error("Database initialization SQL:", error.sql);
-    }
-    console.error("Server is running but database may not be ready");
-    // Don't exit - let server continue running
+    // Don't exit - let server continue running to serve error responses or other routes
   }
 
-  // Graceful shutdown (important for Railway restarts)
+  // Start server
+  const server = app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
+  });
+  server.requestTimeout = 0;
+
   process.on("SIGTERM", () => {
     console.log("SIGTERM received, closing server...");
     server.close(() => {
@@ -98,5 +56,5 @@ const startServer = async () => {
   });
 };
 
-startServer();
+startServer().catch(err => console.error("Fatal startup error:", err));
 
