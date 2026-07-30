@@ -1,9 +1,31 @@
 const dotenv = require("dotenv");
 dotenv.config();
 
-const app = require("./src/app");
-const pool = require("./src/config/db");
-const { processBillingTransitions } = require("./src/routes/jobRoutes");
+let app, pool, processBillingTransitions;
+try {
+  app = require("./src/app");
+  pool = require("./src/config/db");
+  ({ processBillingTransitions } = require("./src/routes/jobRoutes"));
+} catch (err) {
+  console.error("FATAL: Failed to load modules:", err.message);
+  console.error(err.stack);
+  try {
+    require("fs").writeFileSync(
+      require("path").join(__dirname, "startup-error.log"),
+      `${new Date().toISOString()}\n${err.stack}\n`
+    );
+  } catch (_) { /* ignore */ }
+  // Start a minimal server so Hostinger doesn't show 503
+  const express = require("express");
+  const fallback = express();
+  fallback.use((_req, res) =>
+    res.status(500).json({ ok: false, error: err.message })
+  );
+  fallback.listen(process.env.PORT || 5001, "0.0.0.0", () =>
+    console.log("Fallback server running — app failed to load")
+  );
+  return;
+}
 
 const PORT = process.env.PORT || 5001;
 const BILLING_CHECK_INTERVAL_MS =
@@ -77,3 +99,4 @@ const startServer = async () => {
 };
 
 startServer();
+
