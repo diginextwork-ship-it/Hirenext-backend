@@ -1,3 +1,10 @@
+process.on("uncaughtException", (err) => {
+  console.error("FATAL UNCAUGHT EXCEPTION:", err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("FATAL UNHANDLED REJECTION:", reason);
+});
+
 const systemPort = process.env.PORT;
 const dotenv = require("dotenv");
 dotenv.config();
@@ -8,7 +15,7 @@ const app = require("./src/app");
 const pool = require("./src/config/db");
 const { processBillingTransitions } = require("./src/routes/jobRoutes");
 
-const PORT = systemPort || process.env.PORT || 5001;
+const PORT = systemPort || (process.env.NODE_ENV === "production" ? (process.env.PORT || 3000) : (process.env.PORT || 5001));
 const BILLING_CHECK_INTERVAL_MS =
   Number(process.env.BILLING_CHECK_INTERVAL_MS) || 3600000; // default 1 hour
 
