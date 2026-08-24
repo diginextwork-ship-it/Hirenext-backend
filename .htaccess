@@ -1,0 +1,15 @@
+# Hostinger Node.js / Passenger configuration
+DirectoryIndex server.js
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Handle CORS OPTIONS preflight requests directly without redirects
+    RewriteCond %{REQUEST_METHOD} OPTIONS
+    RewriteRule ^ - [L]
+
+    # Pass all incoming requests to server.js
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^(.*)$ server.js/$1 [QSA,L]
+</IfModule>
