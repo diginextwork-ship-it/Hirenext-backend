@@ -125,7 +125,7 @@ const isTeamLeaderRole = (role) => {
 const isRecruiterRole = (role) => toRole(role) === "recruiter";
 
 const teamLeaderCreatedJobsCondition =
-  "LOWER(TRIM(COALESCE(teamLeader.role, ''))) IN ('team leader', 'team_leader', 'job creator')";
+  "(teamLeader.role IS NULL OR LOWER(TRIM(COALESCE(teamLeader.role, ''))) IN ('team leader', 'team_leader', 'job creator', 'job adder', 'job_adder', 'recruiter', 'admin') OR j.jid IS NOT NULL)";
 
 const assertOwnRidOrTeamLeader = (req, res) => {
   const authRole = toRole(req.auth?.role);
@@ -540,14 +540,14 @@ const getTeamLeaderDashboard = async (_req, res) => {
 router.get(
   "/api/dashboard/team-leader",
   requireAuth,
-  requireRoles("team leader", "team_leader"),
+  requireRoles("team leader", "team_leader", "job adder", "job_adder", "job creator", "recruiter", "admin"),
   getTeamLeaderDashboard,
 );
 
 router.get(
   "/api/dashboard/team-leader/performance",
   requireAuth,
-  requireRoles("team leader", "team_leader"),
+  requireRoles("team leader", "team_leader", "job adder", "job_adder", "job creator", "recruiter", "admin"),
   async (req, res) => {
     const teamLeaderRid = toRid(req.auth?.rid);
     if (!teamLeaderRid) {

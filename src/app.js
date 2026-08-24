@@ -79,38 +79,41 @@ const allowPrivateNetworkOrigins =
       "false",
   ).toLowerCase() === "true";
 
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      // Allow requests with no origin (mobile apps, curl, Postman)
-      if (!origin) return callback(null, true);
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests with no origin (mobile apps, curl, Postman)
+    if (!origin) return callback(null, true);
 
-      const normalizedOrigin = normalizeOrigin(origin);
-      let isAllowed = allowedOrigins.has(normalizedOrigin);
-      if (!isAllowed && allowVercelPreviews) {
-        try {
-          const hostname = new URL(normalizedOrigin).hostname.toLowerCase();
-          isAllowed = hostname.endsWith(".vercel.app");
-        } catch (_error) {
-          isAllowed = false;
-        }
+    const normalizedOrigin = normalizeOrigin(origin);
+    let isAllowed = allowedOrigins.has(normalizedOrigin);
+    if (!isAllowed && allowVercelPreviews) {
+      try {
+        const hostname = new URL(normalizedOrigin).hostname.toLowerCase();
+        isAllowed = hostname.endsWith(".vercel.app");
+      } catch (_error) {
+        isAllowed = false;
       }
-      if (!isAllowed && allowPrivateNetworkOrigins) {
-        isAllowed = isPrivateNetworkOrigin(normalizedOrigin);
-      }
+    }
+    if (!isAllowed && allowPrivateNetworkOrigins) {
+      isAllowed = isPrivateNetworkOrigin(normalizedOrigin);
+    }
 
-      if (isAllowed) {
-        callback(null, true);
-      } else {
-        console.warn(`⚠ Blocked CORS request from: ${origin}`);
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
-    credentials: true, // Allow cookies/auth headers
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  }),
-);
+    if (isAllowed) {
+      callback(null, true);
+    } else {
+      console.warn(`⚠ Blocked CORS request from: ${origin}`);
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  credentials: true, // Allow cookies/auth headers
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
+  optionsSuccessStatus: 204,
+};
+
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
+
 
 app.use(express.json({ limit: "25mb" }));
 
