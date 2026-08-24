@@ -1,4 +1,14 @@
-# Hostinger Node.js / Passenger configuration
+# Hostinger Node.js / Passenger process limits (prevents hitting Hostinger max process NPROC limit)
+<IfModule lsapi_module>
+    PassengerMinInstances 1
+    PassengerMaxInstances 1
+</IfModule>
+<IfModule mod_passenger.c>
+    PassengerMinInstances 1
+    PassengerMaxInstances 1
+    PassengerPoolIdleTime 0
+</IfModule>
+
 DirectoryIndex server.js app.js index.js
 
 <IfModule mod_rewrite.c>

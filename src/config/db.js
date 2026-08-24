@@ -74,7 +74,7 @@ const dbConfig = getDbConfig();
 const pool = mysql.createPool({
   ...dbConfig,
   waitForConnections: true,
-  connectionLimit: 10,
+  connectionLimit: 3,
   queueLimit: 0,
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,

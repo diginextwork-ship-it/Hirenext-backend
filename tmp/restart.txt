@@ -1,1 +1,1 @@
-Passenger auto-reload trigger with app.js and index.js bridges
+Passenger auto-reload trigger - Process limits configured (PassengerMaxInstances 1)
