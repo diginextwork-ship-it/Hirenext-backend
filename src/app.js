@@ -10,6 +10,14 @@ const { createRateLimiter } = require("./middleware/rateLimiter");
 
 const app = express();
 
+// Normalize URL if Apache/Passenger rewrite prepended /server.js to req.url
+app.use((req, _res, next) => {
+  if (req.url && req.url.startsWith("/server.js")) {
+    req.url = req.url.replace(/^\/server\.js/, "") || "/";
+  }
+  next();
+});
+
 const normalizeOrigin = (value) => {
   const origin = String(value || "").trim();
   if (!origin) return "";
