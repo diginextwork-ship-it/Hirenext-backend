@@ -22,6 +22,10 @@ const createRateLimiter = ({
   const requestsByKey = new Map();
 
   return (req, res, next) => {
+    if (req.method === "OPTIONS") {
+      return next();
+    }
+
     const now = Date.now();
     const key = `${keyPrefix}:${resolveClientIp(req)}`;
     const bucket = requestsByKey.get(key);

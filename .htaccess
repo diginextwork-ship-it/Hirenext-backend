@@ -4,9 +4,10 @@ DirectoryIndex server.js
 <IfModule mod_rewrite.c>
     RewriteEngine On
 
-    # Handle CORS OPTIONS preflight requests directly without redirects
-    RewriteCond %{REQUEST_METHOD} OPTIONS
-    RewriteRule ^ - [L]
+    # Do not redirect CORS OPTIONS preflight requests to avoid browser CORS preflight redirect errors
+    RewriteCond %{HTTPS} off
+    RewriteCond %{REQUEST_METHOD} !OPTIONS
+    RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 
     # Pass all incoming requests to server.js
     RewriteCond %{REQUEST_FILENAME} !-f

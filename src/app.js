@@ -65,6 +65,11 @@ const allowedOrigins = new Set(
     "http://localhost:5174",
     "http://127.0.0.1:5173",
     "http://127.0.0.1:3000",
+    "https://hirenextindia.com",
+    "https://www.hirenextindia.com",
+    "https://app.hirenextindia.com",
+    "https://hotpink-starling-791289.hostingersite.com",
+    "https://mediumvioletred-rhinoceros-257319.hostingersite.com",
   ]
     .map(normalizeOrigin)
     .filter(Boolean),
@@ -102,7 +107,7 @@ const corsOptions = {
       callback(null, true);
     } else {
       console.warn(`⚠ Blocked CORS request from: ${origin}`);
-      callback(new Error("Not allowed by CORS"));
+      callback(null, false);
     }
   },
   credentials: true, // Allow cookies/auth headers
@@ -112,8 +117,6 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.options("*", cors(corsOptions));
-
 
 app.use(express.json({ limit: "25mb" }));
 
