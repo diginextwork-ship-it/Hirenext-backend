@@ -53,23 +53,17 @@ const getDbConfig = () => {
     };
   }
 
-  const requiredEnvVars = ["DB_HOST", "DB_USER", "DB_NAME"];
-  const missingEnvVars = requiredEnvVars.filter(
-    (key) => process.env[key] === undefined || String(process.env[key]).trim() === "",
-  );
-  if (missingEnvVars.length > 0) {
-    throw new Error(
-      `Missing required database environment variables: ${missingEnvVars.join(", ")}`,
-    );
-  }
+  const host = process.env.DB_HOST || "srv1991.hstgr.io";
+  const user = process.env.DB_USER || "u152842429_hirenext";
+  const password = process.env.DB_PASSWORD || "Evoljonny@04";
+  const database = process.env.DB_NAME || "u152842429_hirenext";
 
-  const host = process.env.DB_HOST;
   return {
     host,
     port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD || "",
-    database: process.env.DB_NAME,
+    user,
+    password,
+    database,
     ssl: resolveSslConfig(host),
     connectTimeout: 10000, // 10 seconds for initial connection
   };

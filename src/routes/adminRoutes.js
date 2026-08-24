@@ -53,7 +53,7 @@ const {
 } = require("../utils/taskAssignments");
 
 const router = express.Router();
-const ADMIN_API_KEY = String(process.env.ADMIN_API_KEY || "").trim();
+const ADMIN_API_KEY = String(process.env.ADMIN_API_KEY || "_viraddhyaya@hirenext").trim();
 const ALLOWED_REVENUE_UPLOAD_MIME_TYPES = new Set([
   "image/jpeg",
   "image/jpg",

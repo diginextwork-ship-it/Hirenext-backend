@@ -1,1 +1,1 @@
-Restart Node.js server on Hostinger
+Restart Node.js server on Hostinger - DB fallback added
