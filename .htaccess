@@ -1,5 +1,5 @@
 # Hostinger Node.js / Passenger configuration
-DirectoryIndex server.js
+DirectoryIndex server.js app.js index.js
 
 <IfModule mod_rewrite.c>
     RewriteEngine On

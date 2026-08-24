@@ -1,1 +1,1 @@
-Restart Node.js server on Hostinger - DB fallback added
+Passenger auto-reload trigger with app.js and index.js bridges
