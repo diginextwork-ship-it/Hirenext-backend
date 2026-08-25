@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js",
+    "dev": "nodemon server.js",
     "check": "node --check server.js",
     "test": "node --test",
     "backup": "node scripts/backup.js"

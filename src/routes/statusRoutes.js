@@ -545,6 +545,51 @@ router.get(
 );
 
 router.get(
+  "/api/dashboard/leaderboard",
+  requireAuth,
+  requireRoles("team leader", "team_leader", "job adder", "job_adder", "job creator", "recruiter", "admin"),
+  async (_req, res) => {
+    try {
+      const [rows] = await pool.query(
+        `SELECT
+          r.rid,
+          r.name,
+          r.email,
+          COALESCE(stats.submitted, 0) AS submitted,
+          COALESCE(r.points, 0) AS points
+        FROM recruiter r
+        LEFT JOIN (
+          SELECT rd.rid, COUNT(*) AS submitted
+          FROM resumes_data rd
+          WHERE LOWER(TRIM(COALESCE(rd.submitted_by_role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')
+            AND COALESCE(rd.duplicate_hidden, FALSE) = FALSE
+          GROUP BY rd.rid
+        ) stats ON stats.rid = r.rid
+        WHERE LOWER(TRIM(COALESCE(r.role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')
+        ORDER BY COALESCE(stats.submitted, 0) DESC, COALESCE(r.points, 0) DESC, r.name ASC`,
+      );
+
+      return res.status(200).json({
+        rankings: rows.map((row, index) => ({
+          rank: index + 1,
+          rid: row.rid,
+          name: row.name,
+          email: row.email,
+          submitted: Number(row.submitted) || 0,
+          points: Number(row.points) || 0,
+        })),
+      });
+    } catch (error) {
+      return res.status(500).json({
+        error: "Failed to fetch leaderboard rankings.",
+        details: error.message,
+      });
+    }
+  },
+);
+
+
+router.get(
   "/api/dashboard/team-leader/performance",
   requireAuth,
   requireRoles("team leader", "team_leader", "job adder", "job_adder", "job creator", "recruiter", "admin"),
