@@ -555,18 +555,22 @@ router.get(
           r.rid,
           r.name,
           r.email,
-          COALESCE(stats.submitted, 0) AS submitted,
+          COALESCE(stats.joined_count, 0) AS joined_count,
           COALESCE(r.points, 0) AS points
         FROM recruiter r
         LEFT JOIN (
-          SELECT rd.rid, COUNT(*) AS submitted
+          SELECT rd.rid, COUNT(*) AS joined_count
           FROM resumes_data rd
-          WHERE LOWER(TRIM(COALESCE(rd.submitted_by_role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')
+          INNER JOIN job_resume_selection jrs
+            ON jrs.job_jid = rd.job_jid
+           AND jrs.res_id = rd.res_id
+          WHERE jrs.selection_status = 'joined'
+            AND LOWER(TRIM(COALESCE(rd.submitted_by_role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')
             AND COALESCE(rd.duplicate_hidden, FALSE) = FALSE
           GROUP BY rd.rid
         ) stats ON stats.rid = r.rid
         WHERE LOWER(TRIM(COALESCE(r.role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')
-        ORDER BY COALESCE(stats.submitted, 0) DESC, COALESCE(r.points, 0) DESC, r.name ASC`,
+        ORDER BY COALESCE(stats.joined_count, 0) DESC, COALESCE(r.points, 0) DESC, r.name ASC`,
       );
 
       return res.status(200).json({
@@ -575,7 +579,7 @@ router.get(
           rid: row.rid,
           name: row.name,
           email: row.email,
-          submitted: Number(row.submitted) || 0,
+          joined: Number(row.joined_count) || 0,
           points: Number(row.points) || 0,
         })),
       });
