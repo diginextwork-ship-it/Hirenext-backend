@@ -548,8 +548,25 @@ router.get(
   "/api/dashboard/leaderboard",
   requireAuth,
   requireRoles("team leader", "team_leader", "job adder", "job_adder", "job creator", "recruiter", "admin"),
-  async (_req, res) => {
+  async (req, res) => {
     try {
+      const {
+        startDate,
+        endDate,
+        startDateTime,
+        endExclusiveDateTime,
+        hasDateRange,
+        error: dateError,
+      } = parseDateRange(req.query?.startDate, req.query?.endDate);
+      if (dateError) {
+        return res.status(400).json({ error: dateError });
+      }
+
+      const dateCondition = hasDateRange
+        ? "AND COALESCE(jrs.selected_at, rd.uploaded_at) >= ? AND COALESCE(jrs.selected_at, rd.uploaded_at) < ?"
+        : "";
+      const queryParams = hasDateRange ? [startDateTime, endExclusiveDateTime] : [];
+
       const [rows] = await pool.query(
         `SELECT
           r.rid,
@@ -567,10 +584,12 @@ router.get(
           WHERE jrs.selection_status = 'joined'
             AND LOWER(TRIM(COALESCE(rd.submitted_by_role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')
             AND COALESCE(rd.duplicate_hidden, FALSE) = FALSE
+            ${dateCondition}
           GROUP BY rd.rid
         ) stats ON stats.rid = r.rid
         WHERE LOWER(TRIM(COALESCE(r.role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')
         ORDER BY COALESCE(stats.joined_count, 0) DESC, COALESCE(r.points, 0) DESC, r.name ASC`,
+        queryParams,
       );
 
       return res.status(200).json({
@@ -582,6 +601,7 @@ router.get(
           joined: Number(row.joined_count) || 0,
           points: Number(row.points) || 0,
         })),
+        dateRange: hasDateRange ? { startDate, endDate } : null,
       });
     } catch (error) {
       return res.status(500).json({
