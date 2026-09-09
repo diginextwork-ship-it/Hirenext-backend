@@ -26,6 +26,7 @@ const {
   upsertExtraInfoFields,
   upsertCandidateFields,
   addCandidateBillIntakeEntry,
+  removeCandidateBillIntakeEntry,
 } = require("../utils/dbHelpers");
 const {
   toNumberOrNull,
@@ -1807,6 +1808,10 @@ router.post(
               "Failed to create billed intake entry in money_sum for this candidate.",
             );
           }
+        }
+
+        if (persistedStatus !== "joined" && persistedStatus !== "billed") {
+          await removeCandidateBillIntakeEntry(connection, normalizedResId);
         }
 
         const updatedResumePayload = await fetchJobResumeWorkflowPayload(

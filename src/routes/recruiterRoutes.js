@@ -26,6 +26,7 @@ const {
   upsertExtraInfoFields,
   upsertCandidateFields,
   addCandidateBillIntakeEntry,
+  removeCandidateBillIntakeEntry,
 } = require("../utils/dbHelpers");
 const {
   toNumberOrNull,
@@ -2987,6 +2988,10 @@ router.post(
           });
         }
 
+        if (targetStatus !== "joined" && targetStatus !== "billed") {
+          await removeCandidateBillIntakeEntry(connection, resId);
+        }
+
         await connection.commit();
         const responseFields = buildResumeCompatibilityFields({
           resId,
@@ -3204,6 +3209,14 @@ router.post(
           dropoutReason: null,
           dropoutAt: null,
         });
+      }
+
+      if (
+        currentStatus === "joined" ||
+        currentStatus === "billed" ||
+        (rollbackTarget !== "joined" && rollbackTarget !== "billed")
+      ) {
+        await removeCandidateBillIntakeEntry(connection, normalizedResId);
       }
 
       await connection.commit();

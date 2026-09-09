@@ -930,6 +930,110 @@ const addCandidateBillIntakeEntry = async (
   };
 };
 
+const recomputeMoneyProfit = async (connection = pool) => {
+  if (!(await tableExists("money_sum", connection))) return;
+  const moneySumColumns = await getTableColumns("money_sum", connection);
+  if (!moneySumColumns.has("profit")) return;
+
+  const [rows] = await connection.query(
+    `SELECT id, COALESCE(company_rev, 0) AS companyRev, COALESCE(expense, 0) AS expense
+     FROM money_sum
+     ORDER BY created_at ASC, id ASC`,
+  );
+
+  let runningProfit = 0;
+  for (const row of rows || []) {
+    const rev = Number(row.companyRev) || 0;
+    const exp = Number(row.expense) || 0;
+    runningProfit = Math.round((runningProfit + rev - exp) * 100) / 100;
+    await connection.query("UPDATE money_sum SET profit = ? WHERE id = ?", [
+      runningProfit,
+      row.id,
+    ]);
+  }
+};
+
+const removeCandidateBillIntakeEntry = async (connection = pool, resId) => {
+  const normalizedResId = String(resId || "").trim();
+  if (!normalizedResId) return { removedCount: 0 };
+  if (!(await tableExists("money_sum", connection))) {
+    return { removedCount: 0 };
+  }
+
+  const moneySumColumns = await getTableColumns("money_sum", connection);
+  const hasMoneySumResId = moneySumColumns.has("res_id");
+
+  const deleteConditions = [];
+  const deleteParams = [];
+
+  if (hasMoneySumResId) {
+    deleteConditions.push("res_id = ?");
+    deleteParams.push(normalizedResId);
+  }
+  deleteConditions.push("reason LIKE ?");
+  deleteParams.push(`%[BILLED:${normalizedResId}%`);
+  deleteConditions.push("reason LIKE ?");
+  deleteParams.push(`%[BILLED: ${normalizedResId}%`);
+
+  const [matchingRows] = await connection.query(
+    `SELECT id, company_rev AS companyRev, res_id AS resId
+     FROM money_sum
+     WHERE ${deleteConditions.join(" OR ")}`,
+    deleteParams,
+  );
+
+  let removedCount = 0;
+  if (Array.isArray(matchingRows) && matchingRows.length > 0) {
+    const idsToDelete = matchingRows.map((r) => r.id);
+    await connection.query(
+      `DELETE FROM money_sum WHERE id IN (?)`,
+      [idsToDelete],
+    );
+    removedCount = idsToDelete.length;
+
+    // Recalculate running profit
+    await recomputeMoneyProfit(connection);
+  }
+
+  // Revert any recruiter points awarded on billing
+  if (await tableExists("recruiter_points_log", connection)) {
+    const [pointRows] = await connection.query(
+      `SELECT recruiter_rid, SUM(points) AS totalPoints
+       FROM recruiter_points_log
+       WHERE res_id = ?
+       GROUP BY recruiter_rid`,
+      [normalizedResId],
+    );
+
+    if (Array.isArray(pointRows) && pointRows.length > 0) {
+      for (const pRow of pointRows) {
+        if (pRow.recruiter_rid && Number(pRow.totalPoints) > 0) {
+          await connection.query(
+            `UPDATE recruiter
+             SET points = GREATEST(0, COALESCE(points, 0) - ?)
+             WHERE rid = ?`,
+            [Number(pRow.totalPoints), pRow.recruiter_rid],
+          );
+        }
+      }
+      await connection.query(
+        `DELETE FROM recruiter_points_log WHERE res_id = ?`,
+        [normalizedResId],
+      );
+    }
+  }
+
+  // Clear revenue in candidate table if candidate record exists
+  if (await tableExists("candidate", connection)) {
+    await connection.query(
+      `UPDATE candidate SET revenue = NULL WHERE res_id = ?`,
+      [normalizedResId],
+    );
+  }
+
+  return { removedCount };
+};
+
 module.exports = {
   tableExists,
   columnExists,
@@ -946,5 +1050,7 @@ module.exports = {
   upsertExtraInfoFields,
   upsertCandidateFields,
   addCandidateBillIntakeEntry,
+  recomputeMoneyProfit,
+  removeCandidateBillIntakeEntry,
   buildResumeCompatibilityFields,
 };

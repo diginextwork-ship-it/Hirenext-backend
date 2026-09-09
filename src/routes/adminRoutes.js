@@ -17,6 +17,7 @@ const {
   upsertExtraInfoFields,
   upsertCandidateFields,
   addCandidateBillIntakeEntry,
+  removeCandidateBillIntakeEntry,
 } = require("../utils/dbHelpers");
 const {
   toMoneyNumber,
@@ -900,11 +901,11 @@ const normalizePhotoValue = (value) => {
 };
 
 const extractRevenueResumeId = (entry = {}) => {
-  const directResId = String(entry?.resId || "").trim();
+  const directResId = String(entry?.resId || entry?.res_id || "").trim();
   if (directResId) return directResId;
 
   const reason = String(entry?.reason || "");
-  const billedMatch = reason.match(/\[BILLED:([^\]]+)\]/i);
+  const billedMatch = reason.match(/\[BILLED:\s*([^\]\s]+)[^\]]*\]/i);
   if (billedMatch?.[1]) {
     return String(billedMatch[1]).trim();
   }
@@ -2396,7 +2397,7 @@ router.get("/api/admin/revenue", async (req, res) => {
       });
     }
 
-    const [rows] = await pool.query(
+    let [rows] = await pool.query(
       `SELECT
         id,
         company_rev AS companyRev,
@@ -2410,6 +2411,62 @@ router.get("/api/admin/revenue", async (req, res) => {
       FROM money_sum
       ORDER BY created_at DESC, id DESC`,
     );
+
+    // Synchronize and auto-clean orphaned/stale candidate intake entries
+    const candidateEntries = rows.filter((row) => Boolean(extractRevenueResumeId(row)));
+    if (candidateEntries.length > 0) {
+      const candidateResIds = Array.from(
+        new Set(candidateEntries.map((row) => extractRevenueResumeId(row))),
+      );
+      const placeholders = candidateResIds.map(() => "?").join(", ");
+      const [linkedRows] = await pool.query(
+        `SELECT rd.res_id AS resId, COALESCE(jrs.selection_status, '') AS selectionStatus
+         FROM resumes_data rd
+         LEFT JOIN job_resume_selection jrs
+           ON jrs.res_id = rd.res_id AND jrs.job_jid = rd.job_jid
+         WHERE rd.res_id IN (${placeholders})`,
+        candidateResIds,
+      );
+
+      const statusByResId = new Map(
+        (Array.isArray(linkedRows) ? linkedRows : []).map((r) => [
+          String(r.resId),
+          String(r.selectionStatus || "").toLowerCase(),
+        ]),
+      );
+
+      const staleEntryIds = [];
+      for (const entry of candidateEntries) {
+        const cResId = extractRevenueResumeId(entry);
+        if (!statusByResId.has(cResId)) {
+          staleEntryIds.push(entry.id);
+        } else {
+          const status = statusByResId.get(cResId);
+          if (status !== "joined" && status !== "billed") {
+            staleEntryIds.push(entry.id);
+          }
+        }
+      }
+
+      if (staleEntryIds.length > 0) {
+        await pool.query(`DELETE FROM money_sum WHERE id IN (?)`, [staleEntryIds]);
+        await recomputeMoneyProfit(pool);
+        [rows] = await pool.query(
+          `SELECT
+            id,
+            company_rev AS companyRev,
+            expense,
+            profit,
+            reason,
+            photo,
+            res_id AS resId,
+            entry_type AS entryType,
+            created_at AS createdAt
+          FROM money_sum
+          ORDER BY created_at DESC, id DESC`,
+        );
+      }
+    }
 
     const revenueResIds = Array.from(
       new Set(
@@ -3247,11 +3304,19 @@ router.post(
       const nextProfit =
         Math.round((lastProfit + companyRev - expense) * 100) / 100;
 
+      const hasResIdCol = await columnExists("money_sum", "res_id");
+      const normalizedResId =
+        String(req.body?.resId || req.body?.res_id || "").trim() ||
+        extractRevenueResumeId({ reason: safeReason }) ||
+        null;
+
       const [insertResult] = await connection.query(
         `INSERT INTO money_sum
-        (company_rev, expense, profit, reason, photo, entry_type)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-        [companyRev, expense, nextProfit, safeReason, safePhoto, entryType],
+        (company_rev, expense, profit, reason, photo, entry_type${hasResIdCol && normalizedResId ? ", res_id" : ""})
+       VALUES (?, ?, ?, ?, ?, ?${hasResIdCol && normalizedResId ? ", ?" : ""})`,
+        hasResIdCol && normalizedResId
+          ? [companyRev, expense, nextProfit, safeReason, safePhoto, entryType, normalizedResId]
+          : [companyRev, expense, nextProfit, safeReason, safePhoto, entryType],
       );
 
       const [entryRows] = await connection.query(
@@ -3262,6 +3327,7 @@ router.post(
         profit,
         reason,
         photo,
+        res_id AS resId,
         entry_type AS entryType,
         created_at AS createdAt
       FROM money_sum
@@ -3282,6 +3348,7 @@ router.post(
                 profit: toMoneyNumber(entryRows[0].profit),
                 reason: entryRows[0].reason || "",
                 photo: normalizePhotoValue(entryRows[0].photo),
+                resId: entryRows[0].resId || normalizedResId || null,
                 entryType: normalizeRevenueEntryType(entryRows[0].entryType),
                 createdAt: entryRows[0].createdAt,
               }
@@ -4213,6 +4280,10 @@ router.post(
         }
       }
 
+      if (newStatus !== "joined" && newStatus !== "billed") {
+        await removeCandidateBillIntakeEntry(connection, normalizedResId);
+      }
+
       const updatedResumePayload = await fetchAdminResumeWorkflowPayload(
         connection,
         normalizedResId,
@@ -4455,6 +4526,16 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
         billedReason: null,
         billedAt: null,
       });
+    }
+
+    if (
+      currentDerivedStatus === "joined" ||
+      currentDerivedStatus === "billed" ||
+      currentStatus === "joined" ||
+      currentStatus === "billed" ||
+      (rollbackTarget !== "joined" && rollbackTarget !== "billed")
+    ) {
+      await removeCandidateBillIntakeEntry(connection, normalizedResId);
     }
 
     const updatedResumePayload = await fetchAdminResumeWorkflowPayload(
@@ -5385,10 +5466,7 @@ const deleteAdminResumeHandler = async (req, res) => {
     }
 
     await conn.query("DELETE FROM applications WHERE res_id = ?", [resId]);
-    await conn.query("DELETE FROM recruiter_points_log WHERE res_id = ?", [
-      resId,
-    ]);
-    await conn.query("DELETE FROM money_sum WHERE res_id = ?", [resId]);
+    await removeCandidateBillIntakeEntry(conn, resId);
     await conn.query(
       "DELETE FROM extra_info WHERE res_id = ? OR resume_id = ?",
       [resId, resId],
