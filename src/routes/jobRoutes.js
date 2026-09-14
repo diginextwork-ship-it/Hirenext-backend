@@ -1716,7 +1716,13 @@ router.post(
         }
 
         // Update job_resume_selection
-        if (persistedStatus === DEFAULT_WORKFLOW_STATUS) {
+        const historicalSelectedAt =
+          (persistedStatus === "joined" || persistedStatus === "selected") &&
+          effectiveJoiningDate
+            ? `${effectiveJoiningDate} 00:00:00`
+            : null;
+
+        if (persistedStatus === "removed") {
           await connection.query(
             `DELETE FROM job_resume_selection
              WHERE job_jid = ? AND res_id = ?`,
@@ -1725,19 +1731,21 @@ router.post(
         } else {
           await connection.query(
             `INSERT INTO job_resume_selection
-              (job_jid, res_id, selected_by_admin, selection_status, selection_note)
-             VALUES (?, ?, ?, ?, ?)
+              (job_jid, res_id, selected_by_admin, selection_status, selection_note, selected_at)
+             VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
              ON DUPLICATE KEY UPDATE
                selected_by_admin = VALUES(selected_by_admin),
                selection_status = VALUES(selection_status),
                selection_note = VALUES(selection_note),
-               selected_at = CURRENT_TIMESTAMP`,
+               selected_at = COALESCE(?, CURRENT_TIMESTAMP)`,
             [
               req.ownedJob.jid,
               normalizedResId,
               actorRid || "team-leader",
               persistedStatus,
               normalizedNote || null,
+              historicalSelectedAt,
+              historicalSelectedAt,
             ],
           );
         }
@@ -1772,6 +1780,11 @@ router.post(
           left: "leftAt",
         };
 
+        const eventTimestampValue =
+          persistedStatus === "joined" && effectiveJoiningDate
+            ? `${effectiveJoiningDate} 00:00:00`
+            : "__CURRENT_TIMESTAMP__";
+
         if (reasonField && statusReasonValue !== undefined) {
           await upsertExtraInfoFields(connection, {
             resId: normalizedResId,
@@ -1781,16 +1794,22 @@ router.post(
               toTrimmedString(resumeRows[0].candidateName) || undefined,
             email: toTrimmedString(resumeRows[0].email) || undefined,
             [reasonField]: statusReasonValue,
-            [statusTimestampFieldMap[persistedStatus]]:
-              "__CURRENT_TIMESTAMP__",
+            [statusTimestampFieldMap[persistedStatus]]: eventTimestampValue,
           });
         } else if (statusTimestampFieldMap[persistedStatus]) {
           await upsertExtraInfoFields(connection, {
             resId: normalizedResId,
             jobJid: req.ownedJob.jid,
             recruiterRid,
-            [statusTimestampFieldMap[persistedStatus]]:
-              "__CURRENT_TIMESTAMP__",
+            [statusTimestampFieldMap[persistedStatus]]: eventTimestampValue,
+          });
+        }
+
+        if (persistedStatus === "joined") {
+          await addCandidateBillIntakeEntry(connection, normalizedResId, {
+            createdAt: effectiveJoiningDate
+              ? `${effectiveJoiningDate} 00:00:00`
+              : null,
           });
         }
 
@@ -1801,6 +1820,9 @@ router.post(
             {
               amount: resolvedRevenueAmount,
               reason: "candidate's bill",
+              createdAt: effectiveJoiningDate
+                ? `${effectiveJoiningDate} 00:00:00`
+                : null,
             },
           );
           if (!intakeEntry) {

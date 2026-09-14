@@ -2857,25 +2857,35 @@ router.post(
         });
       }
 
+      const effectiveJoiningDate =
+        joiningDate || resume.currentJoiningDate || null;
+      const historicalSelectedAt =
+        (targetStatus === "joined" || targetStatus === "selected") &&
+        effectiveJoiningDate
+          ? `${effectiveJoiningDate} 00:00:00`
+          : null;
+
       const connection = await pool.getConnection();
       try {
         await connection.beginTransaction();
 
         await connection.query(
           `INSERT INTO job_resume_selection
-            (job_jid, res_id, selected_by_admin, selection_status, selection_note)
-           VALUES (?, ?, ?, ?, ?)
+            (job_jid, res_id, selected_by_admin, selection_status, selection_note, selected_at)
+           VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
            ON DUPLICATE KEY UPDATE
              selected_by_admin = VALUES(selected_by_admin),
              selection_status = VALUES(selection_status),
              selection_note = VALUES(selection_note),
-             selected_at = CURRENT_TIMESTAMP`,
+             selected_at = COALESCE(?, CURRENT_TIMESTAMP)`,
           [
             resume.jobJid,
             resId,
             rid,
             targetStatus,
             selectionNoteValue,
+            historicalSelectedAt,
+            historicalSelectedAt,
           ],
         );
 
@@ -2906,17 +2916,22 @@ router.post(
           });
         }
 
-        if (targetStatus === "joined" && joiningDate) {
+        if (targetStatus === "joined" && effectiveJoiningDate) {
           await upsertCandidateFields(connection, {
             resId,
             cid: undefined,
-            joiningDate,
+            joiningDate: effectiveJoiningDate,
           });
         }
 
         const reasonField = STATUS_REASON_FIELD_MAP[targetStatus];
         const statusReasonValue =
           targetStatus === "joined" ? joinedReason : reason;
+        const eventTimestampValue =
+          targetStatus === "joined" && effectiveJoiningDate
+            ? `${effectiveJoiningDate} 00:00:00`
+            : "__CURRENT_TIMESTAMP__";
+
         if (reasonField) {
           const statusTimestampFieldMap = {
             verified: "verifiedAt",
@@ -2936,7 +2951,14 @@ router.post(
             jobJid: resume.jobJid || undefined,
             recruiterRid: rid || undefined,
             [reasonField]: statusReasonValue,
-            [statusTimestampFieldMap[targetStatus]]: "__CURRENT_TIMESTAMP__",
+            [statusTimestampFieldMap[targetStatus]]: eventTimestampValue,
+          });
+        } else if (targetStatus === "joined" && effectiveJoiningDate) {
+          await upsertExtraInfoFields(connection, {
+            resId,
+            jobJid: resume.jobJid || undefined,
+            recruiterRid: rid || undefined,
+            joinedAt: `${effectiveJoiningDate} 00:00:00`,
           });
         }
 
@@ -2972,6 +2994,14 @@ router.post(
           );
         }
 
+        if (targetStatus === "joined") {
+          await addCandidateBillIntakeEntry(connection, resId, {
+            createdAt: effectiveJoiningDate
+              ? `${effectiveJoiningDate} 00:00:00`
+              : null,
+          });
+        }
+
         if (targetStatus === "billed" && currentStatus !== "billed") {
           if (
             !Number.isFinite(billedRevenueAmount) ||
@@ -2985,6 +3015,9 @@ router.post(
 
           await addCandidateBillIntakeEntry(connection, resId, {
             amount: billedRevenueAmount,
+            createdAt: effectiveJoiningDate
+              ? `${effectiveJoiningDate} 00:00:00`
+              : null,
           });
         }
 

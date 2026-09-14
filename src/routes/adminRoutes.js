@@ -3305,19 +3305,62 @@ router.post(
         Math.round((lastProfit + companyRev - expense) * 100) / 100;
 
       const hasResIdCol = await columnExists("money_sum", "res_id");
+      const hasCreatedAtCol = await columnExists("money_sum", "created_at");
       const normalizedResId =
         String(req.body?.resId || req.body?.res_id || "").trim() ||
         extractRevenueResumeId({ reason: safeReason }) ||
         null;
 
+      let customCreatedAt =
+        req.body?.createdAt ||
+        req.body?.created_at ||
+        req.body?.date ||
+        req.body?.joiningDate ||
+        req.body?.joining_date ||
+        null;
+      if (customCreatedAt && /^\d{4}-\d{2}-\d{2}$/.test(String(customCreatedAt).trim())) {
+        customCreatedAt = `${String(customCreatedAt).trim()} 00:00:00`;
+      }
+      if (!customCreatedAt && normalizedResId && (await tableExists("candidate", connection))) {
+        const [candRows] = await connection.query(
+          `SELECT DATE_FORMAT(joining_date, '%Y-%m-%d') AS joiningDate FROM candidate WHERE res_id = ? LIMIT 1`,
+          [normalizedResId],
+        );
+        if (candRows?.[0]?.joiningDate) {
+          customCreatedAt = `${candRows[0].joiningDate} 00:00:00`;
+        }
+      }
+
+      const insertCols = [
+        "company_rev",
+        "expense",
+        "profit",
+        "reason",
+        "photo",
+        "entry_type",
+        ...(hasResIdCol && normalizedResId ? ["res_id"] : []),
+        ...(hasCreatedAtCol && customCreatedAt ? ["created_at"] : []),
+      ];
+      const insertVals = [
+        companyRev,
+        expense,
+        nextProfit,
+        safeReason,
+        safePhoto,
+        entryType,
+        ...(hasResIdCol && normalizedResId ? [normalizedResId] : []),
+        ...(hasCreatedAtCol && customCreatedAt ? [customCreatedAt] : []),
+      ];
+
       const [insertResult] = await connection.query(
-        `INSERT INTO money_sum
-        (company_rev, expense, profit, reason, photo, entry_type${hasResIdCol && normalizedResId ? ", res_id" : ""})
-       VALUES (?, ?, ?, ?, ?, ?${hasResIdCol && normalizedResId ? ", ?" : ""})`,
-        hasResIdCol && normalizedResId
-          ? [companyRev, expense, nextProfit, safeReason, safePhoto, entryType, normalizedResId]
-          : [companyRev, expense, nextProfit, safeReason, safePhoto, entryType],
+        `INSERT INTO money_sum (${insertCols.join(", ")})
+         VALUES (${insertCols.map(() => "?").join(", ")})`,
+        insertVals,
       );
+
+      if (hasCreatedAtCol && customCreatedAt) {
+        await recomputeMoneyProfit(connection);
+      }
 
       const [entryRows] = await connection.query(
         `SELECT
@@ -4146,17 +4189,29 @@ router.post(
           ? joinedReason || effectiveReason || null
           : effectiveReason || null;
 
+      const historicalSelectedAt =
+        (newStatus === "joined" || newStatus === "selected") && effectiveJoiningDate
+          ? `${effectiveJoiningDate} 00:00:00`
+          : null;
+
       if (resume.jobJid) {
         await connection.query(
           `INSERT INTO job_resume_selection
-          (job_jid, res_id, selected_by_admin, selection_status, selection_note)
-        VALUES (?, ?, 'admin-panel', ?, ?)
+          (job_jid, res_id, selected_by_admin, selection_status, selection_note, selected_at)
+        VALUES (?, ?, 'admin-panel', ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
         ON DUPLICATE KEY UPDATE
           selected_by_admin = VALUES(selected_by_admin),
           selection_status = VALUES(selection_status),
           selection_note = VALUES(selection_note),
-          selected_at = CURRENT_TIMESTAMP`,
-          [resume.jobJid, normalizedResId, newStatus, selectionNoteValue],
+          selected_at = COALESCE(?, CURRENT_TIMESTAMP)`,
+          [
+            resume.jobJid,
+            normalizedResId,
+            newStatus,
+            selectionNoteValue,
+            historicalSelectedAt,
+            historicalSelectedAt,
+          ],
         );
       }
 
@@ -4208,20 +4263,25 @@ router.post(
         left: "leftAt",
       };
 
+      const eventTimestampValue =
+        newStatus === "joined" && effectiveJoiningDate
+          ? `${effectiveJoiningDate} 00:00:00`
+          : "__CURRENT_TIMESTAMP__";
+
       if (reasonField) {
         await upsertExtraInfoFields(connection, {
           resId: normalizedResId,
           jobJid: resume.jobJid || undefined,
           recruiterRid: resume.rid || undefined,
           [reasonField]: statusReasonValue,
-          [statusTimestampFieldMap[newStatus]]: "__CURRENT_TIMESTAMP__",
+          [statusTimestampFieldMap[newStatus]]: eventTimestampValue,
         });
       } else if (statusTimestampFieldMap[newStatus]) {
         await upsertExtraInfoFields(connection, {
           resId: normalizedResId,
           jobJid: resume.jobJid || undefined,
           recruiterRid: resume.rid || undefined,
-          [statusTimestampFieldMap[newStatus]]: "__CURRENT_TIMESTAMP__",
+          [statusTimestampFieldMap[newStatus]]: eventTimestampValue,
         });
       }
 
@@ -4233,6 +4293,9 @@ router.post(
             amount: joinedRevenueAmount,
             reason:
               joinedReason || effectiveReason || "candidate joined revenue",
+            createdAt: effectiveJoiningDate
+              ? `${effectiveJoiningDate} 00:00:00`
+              : null,
           },
         );
         if (!intakeEntry) {
@@ -4256,11 +4319,32 @@ router.post(
               "UPDATE recruiter SET points = COALESCE(points, 0) + ? WHERE rid = ?",
               [pts, resume.rid],
             );
-            await connection.query(
-              `INSERT INTO recruiter_points_log (recruiter_rid, job_jid, res_id, points, reason)
-             VALUES (?, ?, ?, ?, 'billed')`,
-              [resume.rid, resume.jobJid, normalizedResId, pts],
+            const pointsLogCreatedAt = effectiveJoiningDate
+              ? `${effectiveJoiningDate} 00:00:00`
+              : null;
+            const hasPointsCreatedCol = await columnExists(
+              "recruiter_points_log",
+              "created_at",
             );
+            if (hasPointsCreatedCol && pointsLogCreatedAt) {
+              await connection.query(
+                `INSERT INTO recruiter_points_log (recruiter_rid, job_jid, res_id, points, reason, created_at)
+               VALUES (?, ?, ?, ?, 'billed', ?)`,
+                [
+                  resume.rid,
+                  resume.jobJid,
+                  normalizedResId,
+                  pts,
+                  pointsLogCreatedAt,
+                ],
+              );
+            } else {
+              await connection.query(
+                `INSERT INTO recruiter_points_log (recruiter_rid, job_jid, res_id, points, reason)
+               VALUES (?, ?, ?, ?, 'billed')`,
+                [resume.rid, resume.jobJid, normalizedResId, pts],
+              );
+            }
           }
         }
 
@@ -4271,6 +4355,9 @@ router.post(
             amount: billedRevenueAmount,
             reason: effectiveReason || "candidate's bill",
             photo: toRevenueAttachmentDataUrl(req.file) || null,
+            createdAt: effectiveJoiningDate
+              ? `${effectiveJoiningDate} 00:00:00`
+              : null,
           },
         );
         if (!intakeEntry) {
@@ -4754,6 +4841,11 @@ router.get("/api/admin/performance", async (req, res) => {
         ) AS shortlistedAt,
         DATE_FORMAT(
           COALESCE(
+            CASE
+              WHEN jrs.selection_status = 'joined' AND c.joining_date IS NOT NULL
+                THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6))
+              ELSE NULL
+            END,
             ei.joined_at,
             CASE WHEN jrs.selection_status = 'joined' THEN jrs.selected_at ELSE NULL END
           ),

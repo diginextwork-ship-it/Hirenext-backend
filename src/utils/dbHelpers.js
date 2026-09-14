@@ -757,24 +757,23 @@ const upsertCandidateFields = async (connection, payload) => {
           changedRows: result.changedRows,
         });
       }
-      return;
-    }
+    } else {
+      const [result] = await connection.query(
+        `INSERT INTO candidate (${insertColumns.map((column) => `\`${column}\``).join(", ")})
+         VALUES (${placeholders.join(", ")})
+         ON DUPLICATE KEY UPDATE ${updates.join(", ")}`,
+        insertValues,
+      );
 
-    const [result] = await connection.query(
-      `INSERT INTO candidate (${insertColumns.map((column) => `\`${column}\``).join(", ")})
-       VALUES (${placeholders.join(", ")})
-       ON DUPLICATE KEY UPDATE ${updates.join(", ")}`,
-      insertValues,
-    );
-
-    if (String(process.env.DEBUG_CANDIDATE_UPSERT || "").trim() === "1") {
-      console.log("[candidate] Upserted candidate", {
-        cid: effectiveCid,
-        resId: normalizedResId,
-        affectedRows: result?.affectedRows,
-        changedRows: result?.changedRows,
-        warningStatus: result?.warningStatus,
-      });
+      if (String(process.env.DEBUG_CANDIDATE_UPSERT || "").trim() === "1") {
+        console.log("[candidate] Upserted candidate", {
+          cid: effectiveCid,
+          resId: normalizedResId,
+          affectedRows: result?.affectedRows,
+          changedRows: result?.changedRows,
+          warningStatus: result?.warningStatus,
+        });
+      }
     }
   } catch (error) {
     console.error("[candidate] Failed to upsert candidate", {
@@ -788,17 +787,114 @@ const upsertCandidateFields = async (connection, payload) => {
     });
     throw error;
   }
+
+  if (
+    normalizedResId &&
+    payload.joiningDate &&
+    /^\d{4}-\d{2}-\d{2}/.test(String(payload.joiningDate).trim())
+  ) {
+    try {
+      const formattedDate = String(payload.joiningDate).trim().slice(0, 10);
+      const formattedDateTime = `${formattedDate} 00:00:00`;
+
+      // 1. Sync money_sum intake record if present
+      if (await tableExists("money_sum", connection)) {
+        const moneySumColumns = await getTableColumns("money_sum", connection);
+        if (moneySumColumns.has("created_at") && moneySumColumns.has("res_id")) {
+          const [moneyRows] = await connection.query(
+            `SELECT id FROM money_sum WHERE res_id = ? LIMIT 1`,
+            [normalizedResId],
+          );
+          if (moneyRows.length > 0) {
+            await connection.query(
+              `UPDATE money_sum SET created_at = ? WHERE res_id = ?`,
+              [formattedDateTime, normalizedResId],
+            );
+            await recomputeMoneyProfit(connection);
+          }
+        }
+      }
+
+      // 2. Sync job_resume_selection if candidate is in joined status
+      if (await tableExists("job_resume_selection", connection)) {
+        await connection.query(
+          `UPDATE job_resume_selection
+           SET selected_at = ?
+           WHERE res_id = ? AND selection_status = 'joined'`,
+          [formattedDateTime, normalizedResId],
+        );
+      }
+
+      // 3. Sync extra_info joined_at
+      if (await tableExists("extra_info", connection)) {
+        const extraColumns = await getTableColumns("extra_info", connection);
+        if (extraColumns.has("joined_at")) {
+          await connection.query(
+            `UPDATE extra_info
+             SET joined_at = ?
+             WHERE res_id = ?`,
+            [formattedDateTime, normalizedResId],
+          );
+        }
+      }
+    } catch (syncErr) {
+      console.error("[candidate] Error syncing joining date to linked records:", syncErr.message);
+    }
+  }
+};
+
+const recomputeMoneyProfit = async (connection = pool) => {
+  if (!(await tableExists("money_sum", connection))) return;
+  const moneySumColumns = await getTableColumns("money_sum", connection);
+  if (!moneySumColumns.has("profit")) return;
+
+  const [rows] = await connection.query(
+    `SELECT id, COALESCE(company_rev, 0) AS companyRev, COALESCE(expense, 0) AS expense
+     FROM money_sum
+     ORDER BY created_at ASC, id ASC`,
+  );
+
+  let runningProfit = 0;
+  for (const row of rows || []) {
+    const rev = Number(row.companyRev) || 0;
+    const exp = Number(row.expense) || 0;
+    runningProfit = Math.round((runningProfit + rev - exp) * 100) / 100;
+    await connection.query("UPDATE money_sum SET profit = ? WHERE id = ?", [
+      runningProfit,
+      row.id,
+    ]);
+  }
 };
 
 const addCandidateBillIntakeEntry = async (
   connection,
   resId,
-  { amount = null, reason = "candidate's bill", photo = null, moneySumId = null } = {},
+  {
+    amount = null,
+    reason = "candidate's bill",
+    photo = null,
+    moneySumId = null,
+    createdAt = null,
+  } = {},
 ) => {
   const normalizedResId = String(resId || "").trim();
   if (!normalizedResId) return null;
   if (!(await tableExists("money_sum"))) {
     return null;
+  }
+
+  let effectiveCreatedAt = createdAt ? String(createdAt).trim() : null;
+  if (!effectiveCreatedAt && (await tableExists("candidate", connection))) {
+    const [candRows] = await connection.query(
+      `SELECT DATE_FORMAT(joining_date, '%Y-%m-%d') AS joiningDate FROM candidate WHERE res_id = ? LIMIT 1`,
+      [normalizedResId],
+    );
+    if (candRows?.[0]?.joiningDate) {
+      effectiveCreatedAt = `${candRows[0].joiningDate} 00:00:00`;
+    }
+  }
+  if (effectiveCreatedAt && /^\d{4}-\d{2}-\d{2}$/.test(effectiveCreatedAt)) {
+    effectiveCreatedAt = `${effectiveCreatedAt} 00:00:00`;
   }
 
   const explicitAmount = Number(amount);
@@ -828,6 +924,7 @@ const addCandidateBillIntakeEntry = async (
 
   const moneySumColumns = await getTableColumns("money_sum", connection);
   const hasMoneySumResId = moneySumColumns.has("res_id");
+  const hasCreatedAtCol = moneySumColumns.has("created_at");
   const normalizedMoneySumId = Number(moneySumId);
   let existingEntry = null;
 
@@ -889,20 +986,24 @@ const addCandidateBillIntakeEntry = async (
            reason = ?,
            photo = ?,
            entry_type = 'intake'
-           ${hasMoneySumResId ? ", res_id = ?" : ""},
+           ${hasMoneySumResId ? ", res_id = ?" : ""}
+           ${hasCreatedAtCol && effectiveCreatedAt ? ", created_at = ?" : ""},
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-      hasMoneySumResId
-        ? [
-            finalAmount,
-            finalProfit,
-            safeReason,
-            storedPhoto,
-            normalizedResId,
-            existingEntry.id,
-          ]
-        : [finalAmount, finalProfit, safeReason, storedPhoto, existingEntry.id],
+      [
+        finalAmount,
+        finalProfit,
+        safeReason,
+        storedPhoto,
+        ...(hasMoneySumResId ? [normalizedResId] : []),
+        ...(hasCreatedAtCol && effectiveCreatedAt ? [effectiveCreatedAt] : []),
+        existingEntry.id,
+      ],
     );
+
+    if (hasCreatedAtCol && effectiveCreatedAt) {
+      await recomputeMoneyProfit(connection);
+    }
 
     return {
       id: existingEntry.id,
@@ -913,13 +1014,36 @@ const addCandidateBillIntakeEntry = async (
     };
   }
 
+  const insertCols = [
+    ...(hasMoneySumResId ? ["res_id"] : []),
+    "company_rev",
+    "expense",
+    "profit",
+    "reason",
+    "photo",
+    "entry_type",
+    ...(hasCreatedAtCol && effectiveCreatedAt ? ["created_at"] : []),
+  ];
+  const insertVals = [
+    ...(hasMoneySumResId ? [normalizedResId] : []),
+    normalizedAmount,
+    0,
+    nextProfit,
+    safeReason,
+    safePhoto,
+    "intake",
+    ...(hasCreatedAtCol && effectiveCreatedAt ? [effectiveCreatedAt] : []),
+  ];
+
   const [insertResult] = await connection.query(
-    `INSERT INTO money_sum (${hasMoneySumResId ? "res_id, " : ""}company_rev, expense, profit, reason, photo, entry_type)
-     VALUES (${hasMoneySumResId ? "?, " : ""}?, 0, ?, ?, ?, 'intake')`,
-    hasMoneySumResId
-      ? [normalizedResId, normalizedAmount, nextProfit, safeReason, safePhoto]
-      : [normalizedAmount, nextProfit, safeReason, safePhoto],
+    `INSERT INTO money_sum (${insertCols.join(", ")})
+     VALUES (${insertCols.map(() => "?").join(", ")})`,
+    insertVals,
   );
+
+  if (hasCreatedAtCol && effectiveCreatedAt) {
+    await recomputeMoneyProfit(connection);
+  }
 
   return {
     id: Number(insertResult?.insertId) || null,
@@ -928,29 +1052,6 @@ const addCandidateBillIntakeEntry = async (
     reason: safeReason,
     photo: safePhoto,
   };
-};
-
-const recomputeMoneyProfit = async (connection = pool) => {
-  if (!(await tableExists("money_sum", connection))) return;
-  const moneySumColumns = await getTableColumns("money_sum", connection);
-  if (!moneySumColumns.has("profit")) return;
-
-  const [rows] = await connection.query(
-    `SELECT id, COALESCE(company_rev, 0) AS companyRev, COALESCE(expense, 0) AS expense
-     FROM money_sum
-     ORDER BY created_at ASC, id ASC`,
-  );
-
-  let runningProfit = 0;
-  for (const row of rows || []) {
-    const rev = Number(row.companyRev) || 0;
-    const exp = Number(row.expense) || 0;
-    runningProfit = Math.round((runningProfit + rev - exp) * 100) / 100;
-    await connection.query("UPDATE money_sum SET profit = ? WHERE id = ?", [
-      runningProfit,
-      row.id,
-    ]);
-  }
 };
 
 const removeCandidateBillIntakeEntry = async (connection = pool, resId) => {

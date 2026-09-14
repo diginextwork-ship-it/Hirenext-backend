@@ -563,7 +563,7 @@ router.get(
       }
 
       const dateCondition = hasDateRange
-        ? "AND COALESCE(jrs.selected_at, rd.uploaded_at) >= ? AND COALESCE(jrs.selected_at, rd.uploaded_at) < ?"
+        ? "AND COALESCE(CAST(CONCAT(c.joining_date, ' 00:00:00') AS DATETIME), ei.joined_at, jrs.selected_at, rd.uploaded_at) >= ? AND COALESCE(CAST(CONCAT(c.joining_date, ' 00:00:00') AS DATETIME), ei.joined_at, jrs.selected_at, rd.uploaded_at) < ?"
         : "";
       const queryParams = hasDateRange ? [startDateTime, endExclusiveDateTime] : [];
 
@@ -581,6 +581,10 @@ router.get(
           INNER JOIN job_resume_selection jrs
             ON jrs.job_jid = rd.job_jid
            AND jrs.res_id = rd.res_id
+          LEFT JOIN candidate c
+            ON c.res_id = rd.res_id
+          LEFT JOIN extra_info ei
+            ON ei.res_id = rd.res_id
           WHERE jrs.selection_status = 'joined'
             AND LOWER(TRIM(COALESCE(rd.submitted_by_role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')
             AND COALESCE(rd.duplicate_hidden, FALSE) = FALSE
@@ -703,7 +707,12 @@ router.get(
             '%Y-%m-%d %H:%i:%s.%f'
           ) AS shortlistedAt,
           DATE_FORMAT(
-            CASE WHEN jrs.selection_status = 'joined' THEN jrs.selected_at ELSE NULL END,
+            CASE
+              WHEN jrs.selection_status = 'joined' AND c.joining_date IS NOT NULL
+                THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6))
+              WHEN jrs.selection_status = 'joined' THEN jrs.selected_at
+              ELSE NULL
+            END,
             '%Y-%m-%d %H:%i:%s.%f'
           ) AS joinedAt,
           DATE_FORMAT(
@@ -1002,6 +1011,9 @@ router.get(
       const statusRangeCondition = hasDateRange
         ? "jrs.selected_at >= ? AND jrs.selected_at < ?"
         : "1=1";
+      const joinedRangeCondition = hasDateRange
+        ? "COALESCE(CAST(CONCAT(c.joining_date, ' 00:00:00') AS DATETIME), jrs.selected_at) >= ? AND COALESCE(CAST(CONCAT(c.joining_date, ' 00:00:00') AS DATETIME), jrs.selected_at) < ?"
+        : "1=1";
       const activityRangeCondition = hasDateRange
         ? "((rd.uploaded_at >= ? AND rd.uploaded_at < ?) OR (jrs.selected_at >= ? AND jrs.selected_at < ?))"
         : "1=1";
@@ -1073,7 +1085,7 @@ router.get(
             SUM(CASE WHEN jrs.selection_status = 'selected' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS selected,
             SUM(CASE WHEN jrs.selection_status IN ('shortlisted', 'pending_joining') AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS shortlisted,
             SUM(CASE WHEN jrs.selection_status = 'rejected' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS rejected,
-            SUM(CASE WHEN jrs.selection_status = 'joined' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS joined,
+            SUM(CASE WHEN jrs.selection_status = 'joined' AND ${joinedRangeCondition} THEN 1 ELSE 0 END) AS joined,
             SUM(CASE WHEN jrs.selection_status = 'dropout' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS dropout,
             SUM(CASE WHEN jrs.selection_status = 'billed' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS billed,
             SUM(CASE WHEN jrs.selection_status = 'left' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS \`left\`,
@@ -1083,6 +1095,8 @@ router.get(
           LEFT JOIN job_resume_selection jrs
             ON jrs.job_jid = rd.job_jid
            AND jrs.res_id = rd.res_id
+          LEFT JOIN candidate c
+            ON c.res_id = rd.res_id
           ${recruiterSubmissionFilter}
           GROUP BY rd.rid
         ) rs ON rs.recruiter_rid = r.rid
