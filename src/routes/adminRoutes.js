@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const express = require("express");
 const multer = require("multer");
+const ExcelJS = require("exceljs");
 const pool = require("../config/db");
 const {
   createAuthToken,
@@ -1529,6 +1530,442 @@ router.get("/api/admin/candidate-resumes", getCandidateResumesHandler);
 router.get(
   "/api/admin/candidate-submitted-resumes",
   getCandidateResumesHandler,
+);
+
+const buildSubmittedResumesFilter = ({
+  source = "all",
+  company = "",
+  city = "",
+  startDate = "",
+  endDate = "",
+  status = "",
+  statuses = [],
+  phone = "",
+  search = "",
+  candidate = "",
+} = {}) => {
+  const whereClauses = [];
+  const params = [];
+
+  const normalizedSource = String(source || "all").trim().toLowerCase();
+  if (normalizedSource === "candidate") {
+    whereClauses.push("COALESCE(rd.submitted_by_role, 'recruiter') = 'candidate'");
+  } else if (normalizedSource === "recruiter") {
+    whereClauses.push("COALESCE(rd.submitted_by_role, 'recruiter') <> 'candidate'");
+  }
+
+  const normalizedCompany = String(company || "").trim();
+  if (normalizedCompany) {
+    whereClauses.push("LOWER(TRIM(COALESCE(j.company_name, ''))) LIKE ?");
+    params.push(`%${normalizedCompany.toLowerCase()}%`);
+  }
+
+  const normalizedCity = String(city || "").trim();
+  if (normalizedCity) {
+    whereClauses.push(
+      "LOWER(TRIM(COALESCE(NULLIF(TRIM(ei.office_location_city), ''), NULLIF(TRIM(j.city), ''), ''))) LIKE ?",
+    );
+    params.push(`%${normalizedCity.toLowerCase()}%`);
+  }
+
+  const trimmedStartDate = String(startDate || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmedStartDate)) {
+    whereClauses.push("rd.uploaded_at >= ?");
+    params.push(`${trimmedStartDate} 00:00:00`);
+  }
+  const trimmedEndDate = String(endDate || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmedEndDate)) {
+    whereClauses.push("rd.uploaded_at <= ?");
+    params.push(`${trimmedEndDate} 23:59:59`);
+  }
+
+  const allStatuses = [
+    ...(Array.isArray(statuses) ? statuses : []),
+    ...(status ? String(status).split(",") : []),
+  ]
+    .map((s) => String(s || "").trim().toLowerCase().replace(/[\s-]+/g, "_"))
+    .filter(Boolean);
+
+  if (allStatuses.length > 0) {
+    const placeholders = allStatuses.map(() => "?").join(", ");
+    whereClauses.push(`COALESCE(jrs.selection_status, 'submitted') IN (${placeholders})`);
+    params.push(...allStatuses);
+  }
+
+  const rawPhoneDigits = String(phone || "").replace(/\D/g, "");
+  if (rawPhoneDigits) {
+    whereClauses.push(
+      "REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(c.phone, ''), ' ', ''), '-', ''), '+', ''), '(', '') LIKE ?",
+    );
+    params.push(`%${rawPhoneDigits}%`);
+  }
+
+  const candidateSearch = String(search || candidate || "").trim();
+  if (candidateSearch) {
+    whereClauses.push("LOWER(TRIM(COALESCE(c.name, ''))) LIKE ?");
+    params.push(`%${candidateSearch.toLowerCase()}%`);
+  }
+
+  const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+
+  return { whereSql, params };
+};
+
+const getAllSubmittedResumesHandler = async (req, res) => {
+  if (!ensureAdminAuthorized(req, res)) return;
+
+  try {
+    if (!(await tableExists("resumes_data"))) {
+      return res.status(200).json({
+        totalCount: 0,
+        filteredCount: 0,
+        page: 1,
+        limit: 200,
+        resumes: [],
+      });
+    }
+
+    const {
+      source,
+      company,
+      city,
+      startDate,
+      endDate,
+      status,
+      statuses,
+      phone,
+      search,
+      candidate,
+      page = 1,
+      limit = 200,
+    } = req.query;
+
+    const { whereSql, params } = buildSubmittedResumesFilter({
+      source,
+      company,
+      city,
+      startDate,
+      endDate,
+      status,
+      statuses: Array.isArray(statuses) ? statuses : (typeof statuses === "string" ? statuses.split(",") : []),
+      phone,
+      search,
+      candidate,
+    });
+
+    const parsedLimit = parseInt(limit, 10);
+    const parsedPage = Math.max(1, parseInt(page, 10) || 1);
+    const isUnlimited = parsedLimit === -1 || parsedLimit === 0 || limit === "all";
+    const safeLimit = isUnlimited ? 10000 : Math.min(1000, Math.max(1, parsedLimit || 200));
+    const offset = isUnlimited ? 0 : (parsedPage - 1) * safeLimit;
+
+    const [countRows] = await pool.query(
+      `SELECT COUNT(*) AS totalFiltered
+       FROM resumes_data rd
+       LEFT JOIN candidate c ON c.res_id = rd.res_id
+       LEFT JOIN jobs j ON j.jid = rd.job_jid
+       LEFT JOIN extra_info ei ON ei.res_id = rd.res_id
+       LEFT JOIN job_resume_selection jrs ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
+       ${whereSql}`,
+      params,
+    );
+    const filteredCount = Number(countRows?.[0]?.totalFiltered) || 0;
+
+    const [totalRows] = await pool.query("SELECT COUNT(*) AS totalAll FROM resumes_data");
+    const totalCount = Number(totalRows?.[0]?.totalAll) || 0;
+
+    const [rows] = await pool.query(
+      `SELECT
+        rd.res_id AS resId,
+        rd.job_jid AS jobJid,
+        rd.rid AS rid,
+        COALESCE(rd.submitted_by_role, 'recruiter') AS source,
+        rd.uploaded_at AS uploadedAt,
+        rd.resume_filename AS resumeFilename,
+        rd.resume_type AS resumeType,
+        rd.ats_score AS atsScore,
+        r.name AS recruiterName,
+        r.email AS recruiterEmail,
+        c.name AS candidateName,
+        c.phone AS candidatePhone,
+        c.email AS candidateEmail,
+        c.level_of_edu AS latestEducationLevel,
+        c.board_uni AS boardUniversity,
+        c.institution_name AS institutionName,
+        c.age AS age,
+        c.joining_date AS joiningDate,
+        c.walk_in AS walkInDate,
+        j.company_name AS companyName,
+        j.role_name AS roleName,
+        j.city AS jobCity,
+        ei.office_location_city AS officeLocationCity,
+        COALESCE(NULLIF(TRIM(ei.office_location_city), ''), NULLIF(TRIM(j.city), ''), 'N/A') AS city,
+        ei.submitted_reason AS submittedReason,
+        ei.verified_reason AS verifiedReason,
+        COALESCE(jrs.selection_status, 'submitted') AS workflowStatus
+      FROM resumes_data rd
+      LEFT JOIN recruiter r ON r.rid = rd.rid
+      LEFT JOIN candidate c ON c.res_id = rd.res_id
+      LEFT JOIN jobs j ON j.jid = rd.job_jid
+      LEFT JOIN extra_info ei ON ei.res_id = rd.res_id
+      LEFT JOIN job_resume_selection jrs ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
+      ${whereSql}
+      ORDER BY rd.uploaded_at DESC, rd.res_id DESC
+      LIMIT ? OFFSET ?`,
+      [...params, safeLimit, offset],
+    );
+
+    const resumes = rows.map((row) => {
+      const isCandidateSource = row.source === "candidate";
+      const candidateDisplayName = row.candidateName || "Name not found";
+      const recruiterDisplayName = isCandidateSource ? "N/A" : (row.recruiterName || "N/A");
+
+      return {
+        resId: row.resId,
+        jobJid: row.jobJid ? String(row.jobJid).trim() : null,
+        rid: row.rid || null,
+        _source: isCandidateSource ? "candidate" : "recruiter",
+        _recruiterName: recruiterDisplayName,
+        recruiterName: recruiterDisplayName,
+        recruiterEmail: isCandidateSource ? null : (row.recruiterEmail || null),
+        applicantName: candidateDisplayName,
+        candidateName: candidateDisplayName,
+        name: candidateDisplayName,
+        applicantPhone: row.candidatePhone || null,
+        candidatePhone: row.candidatePhone || null,
+        phone: row.candidatePhone || null,
+        applicantEmail: row.candidateEmail || null,
+        candidateEmail: row.candidateEmail || null,
+        email: row.candidateEmail || null,
+        latestEducationLevel: row.latestEducationLevel || null,
+        boardUniversity: row.boardUniversity || null,
+        institutionName: row.institutionName || null,
+        age: row.age === null || row.age === undefined ? null : Number(row.age),
+        companyName: row.companyName || null,
+        roleName: row.roleName || null,
+        city: row.city || null,
+        officeLocationCity: row.officeLocationCity || null,
+        jobCity: row.jobCity || null,
+        submittedReason: row.submittedReason || null,
+        verifiedReason: row.verifiedReason || null,
+        uploadedAt: row.uploadedAt || null,
+        submittedAt: row.uploadedAt || null,
+        joiningDate: row.joiningDate || null,
+        walkInDate: row.walkInDate || null,
+        atsScore: row.atsScore === null || row.atsScore === undefined ? null : Number(row.atsScore),
+        resumeFilename: row.resumeFilename || null,
+        resumeType: row.resumeType || null,
+        workflowStatus: row.workflowStatus || "submitted",
+        currentStatus: row.workflowStatus || "submitted",
+        status: row.workflowStatus || "submitted",
+        job: {
+          companyName: row.companyName || null,
+          roleName: row.roleName || null,
+          city: row.jobCity || null,
+        },
+      };
+    });
+
+    return res.status(200).json({
+      totalCount,
+      filteredCount,
+      page: parsedPage,
+      limit: safeLimit,
+      resumes,
+    });
+  } catch (error) {
+    console.error("GET /api/admin/all-submitted-resumes error:", error);
+    return res.status(500).json({
+      message: "Failed to fetch all submitted resumes.",
+      error: error.message,
+    });
+  }
+};
+
+const exportAllSubmittedResumesHandler = async (req, res) => {
+  if (!ensureAdminAuthorized(req, res)) return;
+
+  try {
+    if (!(await tableExists("resumes_data"))) {
+      return res.status(400).json({ message: "No resumes data available to export." });
+    }
+
+    const {
+      source,
+      company,
+      city,
+      startDate,
+      endDate,
+      status,
+      statuses,
+      phone,
+      search,
+      candidate,
+    } = req.query;
+
+    const { whereSql, params } = buildSubmittedResumesFilter({
+      source,
+      company,
+      city,
+      startDate,
+      endDate,
+      status,
+      statuses: Array.isArray(statuses) ? statuses : (typeof statuses === "string" ? statuses.split(",") : []),
+      phone,
+      search,
+      candidate,
+    });
+
+    const [rows] = await pool.query(
+      `SELECT
+        rd.res_id AS resId,
+        rd.job_jid AS jobJid,
+        COALESCE(rd.submitted_by_role, 'recruiter') AS source,
+        rd.uploaded_at AS uploadedAt,
+        rd.resume_filename AS resumeFilename,
+        rd.ats_score AS atsScore,
+        r.name AS recruiterName,
+        c.name AS candidateName,
+        c.phone AS candidatePhone,
+        c.email AS candidateEmail,
+        c.level_of_edu AS latestEducationLevel,
+        c.board_uni AS boardUniversity,
+        c.institution_name AS institutionName,
+        c.age AS age,
+        j.company_name AS companyName,
+        j.role_name AS roleName,
+        j.city AS jobCity,
+        ei.office_location_city AS officeLocationCity,
+        COALESCE(NULLIF(TRIM(ei.office_location_city), ''), NULLIF(TRIM(j.city), ''), 'N/A') AS city,
+        ei.submitted_reason AS submittedReason,
+        COALESCE(jrs.selection_status, 'submitted') AS workflowStatus
+      FROM resumes_data rd
+      LEFT JOIN recruiter r ON r.rid = rd.rid
+      LEFT JOIN candidate c ON c.res_id = rd.res_id
+      LEFT JOIN jobs j ON j.jid = rd.job_jid
+      LEFT JOIN extra_info ei ON ei.res_id = rd.res_id
+      LEFT JOIN job_resume_selection jrs ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
+      ${whereSql}
+      ORDER BY rd.uploaded_at DESC, rd.res_id DESC`,
+      params,
+    );
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = "HireNext Admin";
+    workbook.created = new Date();
+    const worksheet = workbook.addWorksheet("Submitted Resumes");
+
+    worksheet.columns = [
+      { header: "Recruiter Name", key: "recruiterName", width: 22 },
+      { header: "Candidate Name", key: "candidateName", width: 25 },
+      { header: "Phone", key: "phone", width: 16 },
+      { header: "Email", key: "email", width: 28 },
+      { header: "Job Company Name", key: "companyName", width: 25 },
+      { header: "Role", key: "role", width: 20 },
+      { header: "City", key: "city", width: 18 },
+      { header: "Education", key: "education", width: 25 },
+      { header: "Age", key: "age", width: 10 },
+      { header: "ATS Score", key: "atsScore", width: 14 },
+      { header: "Latest Status", key: "latestStatus", width: 18 },
+      { header: "Recruiter Note", key: "recruiterNote", width: 30 },
+      { header: "Submitted At", key: "submittedAt", width: 22 },
+      { header: "Resume File", key: "resumeFileUrl", width: 35 },
+    ];
+
+    const headerRow = worksheet.getRow(1);
+    headerRow.font = { bold: true, color: { argb: "FF1E293B" } };
+    headerRow.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FFF1F5F9" },
+    };
+    headerRow.alignment = { vertical: "middle" };
+    headerRow.height = 24;
+
+    const token = req.query.token || (req.headers.authorization ? req.headers.authorization.slice(7).trim() : "");
+    const baseUrl = `${req.protocol}://${req.get("host")}`;
+
+    rows.forEach((row) => {
+      const isCandidate = row.source === "candidate";
+      const recruiterDisplayName = isCandidate ? "N/A" : (row.recruiterName || "N/A");
+      const candidateDisplayName = row.candidateName || "Name not found";
+      const education = [row.latestEducationLevel, row.boardUniversity, row.institutionName]
+        .filter(Boolean)
+        .join(" / ") || "N/A";
+      const formattedStatus = String(row.workflowStatus || "submitted")
+        .split("_")
+        .filter(Boolean)
+        .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+        .join(" ");
+
+      let formattedDate = "N/A";
+      if (row.uploadedAt) {
+        try {
+          formattedDate = new Intl.DateTimeFormat("en-IN", {
+            timeZone: "Asia/Kolkata",
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: true,
+          }).format(new Date(row.uploadedAt));
+        } catch {
+          formattedDate = String(row.uploadedAt);
+        }
+      }
+
+      const fileUrl = row.resId && token
+        ? `${baseUrl}/api/admin/resumes/${encodeURIComponent(row.resId)}/file?token=${encodeURIComponent(token)}`
+        : "N/A";
+
+      worksheet.addRow({
+        recruiterName: recruiterDisplayName,
+        candidateName: candidateDisplayName,
+        phone: row.candidatePhone || "N/A",
+        email: row.candidateEmail || "N/A",
+        companyName: row.companyName || "N/A",
+        role: row.roleName || "N/A",
+        city: row.city || "N/A",
+        education,
+        age: row.age !== null && row.age !== undefined ? row.age : "N/A",
+        atsScore: row.atsScore !== null && row.atsScore !== undefined ? `${row.atsScore}%` : "N/A",
+        latestStatus: formattedStatus,
+        recruiterNote: row.submittedReason || "-",
+        submittedAt: formattedDate,
+        resumeFileUrl: fileUrl,
+      });
+    });
+
+    const fileDate = new Date().toISOString().slice(0, 10);
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="all-submitted-resumes-${fileDate}.xlsx"`,
+    );
+
+    await workbook.xlsx.write(res);
+    return res.end();
+  } catch (error) {
+    console.error("GET /api/admin/all-submitted-resumes/export error:", error);
+    return res.status(500).json({
+      message: "Failed to export all submitted resumes.",
+      error: error.message,
+    });
+  }
+};
+
+router.get("/api/admin/all-submitted-resumes", getAllSubmittedResumesHandler);
+router.get(
+  "/api/admin/all-submitted-resumes/export",
+  exportAllSubmittedResumesHandler,
+);
+router.get(
+  "/api/admin/candidate-resumes/export",
+  exportAllSubmittedResumesHandler,
 );
 
 router.post("/api/admin/resumes/:resId/accept", async (req, res) => {

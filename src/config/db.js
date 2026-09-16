@@ -1594,6 +1594,44 @@ const ensurePointsLogTable = async () => {
   );
 };
 
+const ensureAsrIndexes = async () => {
+  if (await tableExists("resumes_data")) {
+    if (
+      (await columnExists("resumes_data", "submitted_by_role")) &&
+      (await columnExists("resumes_data", "uploaded_at")) &&
+      !(await indexExists("resumes_data", "idx_resumes_role_uploaded"))
+    ) {
+      await pool.query(
+        "CREATE INDEX idx_resumes_role_uploaded ON resumes_data (submitted_by_role, uploaded_at)",
+      );
+    }
+  }
+  if (await tableExists("jobs")) {
+    if (
+      (await columnExists("jobs", "company_name")) &&
+      !(await indexExists("jobs", "idx_jobs_company_name"))
+    ) {
+      await pool.query("CREATE INDEX idx_jobs_company_name ON jobs (company_name)");
+    }
+    if (
+      (await columnExists("jobs", "city")) &&
+      !(await indexExists("jobs", "idx_jobs_city"))
+    ) {
+      await pool.query("CREATE INDEX idx_jobs_city ON jobs (city)");
+    }
+  }
+  if (await tableExists("extra_info")) {
+    if (
+      (await columnExists("extra_info", "office_location_city")) &&
+      !(await indexExists("extra_info", "idx_extra_info_office_city"))
+    ) {
+      await pool.query(
+        "CREATE INDEX idx_extra_info_office_city ON extra_info (office_location_city)",
+      );
+    }
+  }
+};
+
 const initDatabase = async () => {
   await ensureResumeIdSequenceTable();
   await ensureRecruiterTableColumns();
@@ -1609,6 +1647,7 @@ const initDatabase = async () => {
   await ensureJobAccessControlSchema();
   await ensureStatusTable();
   await ensurePointsLogTable();
+  await ensureAsrIndexes();
 };
 
 pool.initDatabase = initDatabase;
