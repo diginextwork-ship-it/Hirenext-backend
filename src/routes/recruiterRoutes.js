@@ -1219,10 +1219,8 @@ router.post(
 
         const hasSourceColumn = await columnExists("resumes_data", "source");
         const duplicateCheck = await findResumeDuplicateDecision(connection, {
-          candidateName,
           phone,
           email,
-          jobJid: safeJobId,
         });
 
         if (duplicateCheck.hasMatch) {
@@ -1577,11 +1575,8 @@ router.post(
         await connection.beginTransaction();
 
         const duplicateCheck = await findResumeDuplicateDecision(connection, {
-          candidateName:
-            candidateSnapshot.name || resumeAts.applicantName || null,
           phone: candidateSnapshot.phone || null,
           email: candidateSnapshot.email || null,
-          jobJid: safeJobId,
         });
 
         if (duplicateCheck.hasMatch) {
@@ -1974,7 +1969,6 @@ router.put(
       await connection.beginTransaction();
 
       const duplicateCheck = await findResumeDuplicateDecision(connection, {
-        candidateName,
         phone: candidatePhone,
         email: candidateEmail,
         excludeResId: normalizedResId,
@@ -1983,7 +1977,7 @@ router.put(
       if (duplicateCheck.hasMatch) {
         await connection.rollback();
         return res.status(409).json({
-          message: "A candidate with this name and contact details already exists.",
+          message: "A candidate with this phone number or email address already exists.",
           existingResume: duplicateCheck.latestMatch,
         });
       }

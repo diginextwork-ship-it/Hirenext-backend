@@ -311,40 +311,22 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
 
 const findExistingResumeMatches = async (
   connection,
-  { candidateName, phone, email, jobJid, excludeResId } = {},
+  { phone, email, excludeResId } = {},
 ) => {
-  const normalizedName = normalizeCandidateName(candidateName);
-  const lookupName = normalizedName.toLowerCase();
   const normalizedPhone = normalizePhoneForStorage(phone);
   const rawPhoneDigits = String(phone || "").replace(/\D/g, "");
   const last10Digits =
     rawPhoneDigits.length >= 10 ? rawPhoneDigits.slice(-10) : rawPhoneDigits;
   const normalizedEmail = String(email || "").trim().toLowerCase();
   const normalizedExcludeResId = String(excludeResId || "").trim();
-  const normalizedJobJid = normalizeJobJid(jobJid);
 
-  if (!lookupName || (!normalizedPhone && !normalizedEmail && !normalizedJobJid)) {
+  if (!normalizedPhone && !normalizedEmail) {
     return [];
   }
-  const [hasCandidateTable, hasApplicantNameColumn] = await Promise.all([
-    tableExists("candidate"),
-    columnExists("resumes_data", "applicant_name"),
-  ]);
-
+  const hasCandidateTable = await tableExists("candidate");
   if (!hasCandidateTable) {
     return [];
   }
-
-  const nameCondition = hasApplicantNameColumn
-    ? `(
-        LOWER(TRIM(REPLACE(REPLACE(COALESCE(c.name, ''), '  ', ' '), '  ', ' '))) = ?
-        OR (c.name IS NULL AND LOWER(TRIM(REPLACE(REPLACE(COALESCE(rd.applicant_name, ''), '  ', ' '), '  ', ' '))) = ?)
-      )`
-    : `LOWER(TRIM(REPLACE(REPLACE(COALESCE(c.name, ''), '  ', ' '), '  ', ' '))) = ?`;
-
-  const nameParams = hasApplicantNameColumn
-    ? [lookupName, lookupName]
-    : [lookupName];
 
   const excludeSql = normalizedExcludeResId ? "AND rd.res_id <> ?" : "";
   const excludeParams = normalizedExcludeResId ? [normalizedExcludeResId] : [];
@@ -357,7 +339,7 @@ const findExistingResumeMatches = async (
       rd.duplicate_group_id AS duplicateGroupId,
       rd.uploaded_at AS uploadedAt,
       COALESCE(jrs.selection_status, 'submitted') AS workflowStatus,
-      COALESCE(c.name, ${hasApplicantNameColumn ? "rd.applicant_name" : "NULL"}) AS candidateName,
+      c.name AS candidateName,
       c.phone AS candidatePhone,
       c.email AS candidateEmail
     FROM resumes_data rd
@@ -366,26 +348,21 @@ const findExistingResumeMatches = async (
     LEFT JOIN job_resume_selection jrs
       ON jrs.res_id = rd.res_id
      AND (jrs.job_jid = rd.job_jid OR (jrs.job_jid IS NULL AND rd.job_jid IS NULL))
-    WHERE ${nameCondition}
-      AND (
+    WHERE (
         (? <> '' AND (
           TRIM(COALESCE(c.phone, '')) = ?
           OR RIGHT(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(c.phone, ''), ' ', ''), '-', ''), '+', ''), '(', ''), 10) = ?
         ))
         OR (? <> '' AND LOWER(TRIM(COALESCE(c.email, ''))) = ?)
-        OR (? <> '' AND rd.job_jid = ?)
       )
       ${excludeSql}
     ORDER BY rd.uploaded_at DESC, rd.res_id DESC`,
     [
-      ...nameParams,
       normalizedPhone,
       normalizedPhone,
       last10Digits,
       normalizedEmail,
       normalizedEmail,
-      normalizedJobJid,
-      normalizedJobJid,
       ...excludeParams,
     ],
   );

@@ -659,6 +659,19 @@ const ensureCandidateTable = async () => {
      WHERE c.res_id IS NULL`,
   );
 
+  if (
+    (await columnExists("candidate", "phone")) &&
+    !(await indexExists("candidate", "idx_candidate_phone"))
+  ) {
+    await pool.query("CREATE INDEX idx_candidate_phone ON candidate (phone)");
+  }
+  if (
+    (await columnExists("candidate", "email")) &&
+    !(await indexExists("candidate", "idx_candidate_email"))
+  ) {
+    await pool.query("CREATE INDEX idx_candidate_email ON candidate (email)");
+  }
+
   const hasApplicationsTable = await tableExists("applications");
   const hasExtraInfoTable = await tableExists("extra_info");
   const hasSelectionTable = await tableExists("job_resume_selection");

@@ -2636,10 +2636,8 @@ router.post("/api/applications", async (req, res) => {
       await connection.beginTransaction();
 
       const duplicateCheck = await findResumeDuplicateDecision(connection, {
-        candidateName: finalName,
         phone: finalPhone,
         email: finalEmail,
-        jobJid: safeJobId,
       });
       if (!duplicateCheck.allowSubmission) {
         await connection.rollback();
