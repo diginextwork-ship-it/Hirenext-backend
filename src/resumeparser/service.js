@@ -1,6 +1,6 @@
 const { atsExtractor, calculateAtsScore } = require("./resumeparser");
 const { extractTextFromBuffer } = require("../utils/textExtractor");
-const { toNumberOrNull } = require("../utils/formatters");
+const { toNumberOrNull, normalizeCandidateName } = require("../utils/formatters");
 
 const SUPPORTED_RESUME_TYPES = new Set(["pdf", "docx"]);
 const IMAGE_RESUME_TYPES = new Set(["jpg", "jpeg", "png", "webp"]);
@@ -108,7 +108,7 @@ const extractApplicantName = (parsedData) => {
     parsedData.personalInfo?.name,
   );
 
-  return candidate || null;
+  return candidate ? normalizeCandidateName(candidate) : null;
 };
 
 const CONTACT_LINE_WINDOW = 12;
@@ -275,11 +275,10 @@ const mergeParsedDataWithFallback = ({ aiParsedData, fallbackParsedData, resumeT
     .map((line) => line.trim())
     .filter(Boolean);
 
-  const aiName = extractApplicantName(safeAi);
-  const fallbackName = extractApplicantName(safeFallback);
-  const mergedName = isLikelyNamePresentInText(aiName, lines, text)
+  const rawMergedName = isLikelyNamePresentInText(aiName, lines, text)
     ? aiName
     : fallbackName;
+  const mergedName = rawMergedName ? normalizeCandidateName(rawMergedName) : null;
 
   const aiEmail = pickFirstNonEmpty(safeAi.email, safeAi.mail).toLowerCase();
   const fallbackEmail = pickFirstNonEmpty(safeFallback.email, safeFallback.mail).toLowerCase();
@@ -312,6 +311,12 @@ const mergeParsedDataWithFallback = ({ aiParsedData, fallbackParsedData, resumeT
     ...safeFallback,
     ...safeAi,
     full_name: mergedName || null,
+    fullName: mergedName || null,
+    name: mergedName || null,
+    candidate_name: mergedName || null,
+    candidateName: mergedName || null,
+    applicant_name: mergedName || null,
+    applicantName: mergedName || null,
     email: mergedEmail || null,
     phone: mergedPhone || null,
     education: pickStructuredEducation(safeAi, safeFallback),

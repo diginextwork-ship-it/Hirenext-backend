@@ -46,6 +46,21 @@ const normalizePhoneForStorage = (phone) => {
   return digits;
 };
 
+const normalizeCandidateName = (value) => {
+  if (value === undefined || value === null) return "";
+  const cleaned = String(value).trim().replace(/\s+/g, " ");
+  if (!cleaned) return "";
+
+  return cleaned
+    .toLowerCase()
+    .split(" ")
+    .map((word) => {
+      if (!word) return "";
+      return word.replace(/(?:^|[-'])\p{L}/gu, (char) => char.toUpperCase());
+    })
+    .join(" ");
+};
+
 const safeJsonOrNull = (value) => {
   if (value === undefined || value === null) return null;
   return JSON.stringify(value);
@@ -163,16 +178,18 @@ const buildAutofillFromParsedData = (parsedData) => {
     ageValue || toAgeFromDob(safeData.dob || safeData.date_of_birth);
 
   return {
-    name: pickString(
-      safeData.full_name,
-      safeData.fullName,
-      safeData.name,
-      safeData.candidate_name,
-      safeData.candidateName,
-      safeData.applicant_name,
-      safeData.applicantName,
-      safeData.personal_info?.name,
-      safeData.personalInfo?.name,
+    name: normalizeCandidateName(
+      pickString(
+        safeData.full_name,
+        safeData.fullName,
+        safeData.name,
+        safeData.candidate_name,
+        safeData.candidateName,
+        safeData.applicant_name,
+        safeData.applicantName,
+        safeData.personal_info?.name,
+        safeData.personalInfo?.name,
+      ),
     ),
     phone: normalizePhoneForStorage(
       pickString(
@@ -228,7 +245,7 @@ const extractCandidateSnapshot = ({ source, parsedData, fallback } = {}) => {
   );
 
   return {
-    name: String(
+    name: normalizeCandidateName(
       pickFirstFilled(
         pickAlias(
           "candidate_name",
@@ -240,7 +257,7 @@ const extractCandidateSnapshot = ({ source, parsedData, fallback } = {}) => {
         autofill.name,
         safeFallback.name,
       ) || "",
-    ).trim(),
+    ),
     phone: normalizePhoneForStorage(
       pickFirstFilled(
         pickAlias(
@@ -344,6 +361,7 @@ module.exports = {
   toTrimmedString,
   normalizeAccessMode,
   normalizePhoneForStorage,
+  normalizeCandidateName,
   safeJsonOrNull,
   parseJsonField,
   escapeLike,

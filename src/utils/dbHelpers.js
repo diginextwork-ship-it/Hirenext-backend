@@ -1,6 +1,11 @@
 const pool = require("../config/db");
 const { normalizeWorkflowStatus } = require("./resumeStatusFlow");
 const { buildResumeCompatibilityFields } = require("./resumeCompatibility");
+const {
+  normalizeCandidateName,
+  normalizePhoneForStorage,
+  normalizeJobJid,
+} = require("./formatters");
 
 const tableExists = async (tableName) => {
   try {
@@ -306,18 +311,43 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
 
 const findExistingResumeMatches = async (
   connection,
-  { candidateName, phone, email } = {},
+  { candidateName, phone, email, jobJid, excludeResId } = {},
 ) => {
-  const normalizedName = String(candidateName || "").trim().toLowerCase();
-  const normalizedPhone = String(phone || "").trim();
+  const normalizedName = normalizeCandidateName(candidateName);
+  const lookupName = normalizedName.toLowerCase();
+  const normalizedPhone = normalizePhoneForStorage(phone);
+  const rawPhoneDigits = String(phone || "").replace(/\D/g, "");
+  const last10Digits =
+    rawPhoneDigits.length >= 10 ? rawPhoneDigits.slice(-10) : rawPhoneDigits;
   const normalizedEmail = String(email || "").trim().toLowerCase();
+  const normalizedExcludeResId = String(excludeResId || "").trim();
+  const normalizedJobJid = normalizeJobJid(jobJid);
 
-  if (!normalizedName || (!normalizedPhone && !normalizedEmail)) {
+  if (!lookupName || (!normalizedPhone && !normalizedEmail && !normalizedJobJid)) {
     return [];
   }
-  if (!(await tableExists("candidate"))) {
+  const [hasCandidateTable, hasApplicantNameColumn] = await Promise.all([
+    tableExists("candidate"),
+    columnExists("resumes_data", "applicant_name"),
+  ]);
+
+  if (!hasCandidateTable) {
     return [];
   }
+
+  const nameCondition = hasApplicantNameColumn
+    ? `(
+        LOWER(TRIM(REPLACE(REPLACE(COALESCE(c.name, ''), '  ', ' '), '  ', ' '))) = ?
+        OR (c.name IS NULL AND LOWER(TRIM(REPLACE(REPLACE(COALESCE(rd.applicant_name, ''), '  ', ' '), '  ', ' '))) = ?)
+      )`
+    : `LOWER(TRIM(REPLACE(REPLACE(COALESCE(c.name, ''), '  ', ' '), '  ', ' '))) = ?`;
+
+  const nameParams = hasApplicantNameColumn
+    ? [lookupName, lookupName]
+    : [lookupName];
+
+  const excludeSql = normalizedExcludeResId ? "AND rd.res_id <> ?" : "";
+  const excludeParams = normalizedExcludeResId ? [normalizedExcludeResId] : [];
 
   const [rows] = await connection.query(
     `SELECT
@@ -327,27 +357,36 @@ const findExistingResumeMatches = async (
       rd.duplicate_group_id AS duplicateGroupId,
       rd.uploaded_at AS uploadedAt,
       COALESCE(jrs.selection_status, 'submitted') AS workflowStatus,
-      c.name AS candidateName,
+      COALESCE(c.name, ${hasApplicantNameColumn ? "rd.applicant_name" : "NULL"}) AS candidateName,
       c.phone AS candidatePhone,
       c.email AS candidateEmail
-    FROM candidate c
-    INNER JOIN resumes_data rd
-      ON rd.res_id = c.res_id
+    FROM resumes_data rd
+    LEFT JOIN candidate c
+      ON c.res_id = rd.res_id
     LEFT JOIN job_resume_selection jrs
       ON jrs.res_id = rd.res_id
      AND (jrs.job_jid = rd.job_jid OR (jrs.job_jid IS NULL AND rd.job_jid IS NULL))
-    WHERE LOWER(TRIM(COALESCE(c.name, ''))) = ?
+    WHERE ${nameCondition}
       AND (
-        (? <> '' AND TRIM(COALESCE(c.phone, '')) = ?)
+        (? <> '' AND (
+          TRIM(COALESCE(c.phone, '')) = ?
+          OR RIGHT(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(c.phone, ''), ' ', ''), '-', ''), '+', ''), '(', ''), 10) = ?
+        ))
         OR (? <> '' AND LOWER(TRIM(COALESCE(c.email, ''))) = ?)
+        OR (? <> '' AND rd.job_jid = ?)
       )
+      ${excludeSql}
     ORDER BY rd.uploaded_at DESC, rd.res_id DESC`,
     [
-      normalizedName,
+      ...nameParams,
       normalizedPhone,
       normalizedPhone,
+      last10Digits,
       normalizedEmail,
       normalizedEmail,
+      normalizedJobJid,
+      normalizedJobJid,
+      ...excludeParams,
     ],
   );
 
@@ -364,7 +403,7 @@ const findExistingResumeMatches = async (
     duplicateGroupId: row.duplicateGroupId
       ? String(row.duplicateGroupId).trim()
       : null,
-    candidateName: row.candidateName ? String(row.candidateName).trim() : null,
+    candidateName: row.candidateName ? normalizeCandidateName(row.candidateName) : null,
     candidatePhone:
       row.candidatePhone === null || row.candidatePhone === undefined
         ? null
@@ -606,6 +645,18 @@ const upsertExtraInfoFields = async (connection, payload) => {
     updates.push("billed_reason = VALUES(billed_reason)");
   }
 
+  if (
+    (payload.candidateName !== undefined || payload.candidate_name !== undefined) &&
+    columns.has("candidate_name")
+  ) {
+    const rawCandidateName = payload.candidateName ?? payload.candidate_name;
+    const normalizedName = normalizeCandidateName(rawCandidateName) || null;
+    insertColumns.push("candidate_name");
+    insertValues.push(normalizedName);
+    placeholders.push("?");
+    updates.push("candidate_name = VALUES(candidate_name)");
+  }
+
   const timestampFieldMap = {
     submittedAt: "submitted_at",
     verifiedAt: "verified_at",
@@ -696,14 +747,27 @@ const upsertCandidateFields = async (connection, payload) => {
     }
   };
 
+  const normalizedCandidateName =
+    payload?.name !== undefined && payload?.name !== null
+      ? normalizeCandidateName(payload.name) || null
+      : undefined;
+  const normalizedCandidatePhone =
+    payload?.phone !== undefined && payload?.phone !== null
+      ? normalizePhoneForStorage(payload.phone) || null
+      : undefined;
+  const normalizedCandidateEmail =
+    payload?.email !== undefined && payload?.email !== null
+      ? String(payload.email).trim().toLowerCase() || null
+      : undefined;
+
   addColumnValue("cid", effectiveCid, { update: false });
   addColumnValue("res_id", normalizedResId || payload.resId, { update: false });
   addColumnValue("job_jid", payload.jobJid);
   addColumnValue("recruiter_rid", payload.recruiterRid);
   addColumnValue("rid", payload.recruiterRid);
-  addColumnValue("name", payload.name);
-  addColumnValue("phone", payload.phone);
-  addColumnValue("email", payload.email);
+  addColumnValue("name", normalizedCandidateName);
+  addColumnValue("phone", normalizedCandidatePhone);
+  addColumnValue("email", normalizedCandidateEmail);
   addColumnValue("level_of_edu", payload.levelOfEdu);
   addColumnValue("board_uni", payload.boardUni);
   addColumnValue("institution_name", payload.institutionName);

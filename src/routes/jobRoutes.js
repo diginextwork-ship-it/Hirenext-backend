@@ -34,6 +34,7 @@ const {
   toTrimmedString,
   normalizeAccessMode,
   normalizePhoneForStorage,
+  normalizeCandidateName,
   safeJsonOrNull,
   parseJsonField,
   dedupeStringList,
@@ -2500,7 +2501,7 @@ router.post("/api/applications", async (req, res) => {
       age,
     } = mergedBody;
 
-    const finalName = String(name || autofill.name || "").trim();
+    const finalName = normalizeCandidateName(name || autofill.name || "");
     const finalPhone = normalizePhoneForStorage(phone || autofill.phone || "");
     const finalEmail = String(email || autofill.email || "")
       .trim()
@@ -2638,6 +2639,7 @@ router.post("/api/applications", async (req, res) => {
         candidateName: finalName,
         phone: finalPhone,
         email: finalEmail,
+        jobJid: safeJobId,
       });
       if (!duplicateCheck.allowSubmission) {
         await connection.rollback();

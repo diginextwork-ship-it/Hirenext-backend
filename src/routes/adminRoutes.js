@@ -24,6 +24,7 @@ const {
   toMoneyOrNull,
   normalizeJobJid,
   normalizePhoneForStorage,
+  normalizeCandidateName,
   parseJsonField,
   extractCandidateSnapshot,
 } = require("../utils/formatters");

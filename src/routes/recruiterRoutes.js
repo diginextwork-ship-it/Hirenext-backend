@@ -35,6 +35,7 @@ const {
   normalizeJobJid,
   normalizeAccessMode: _normalizeAccessMode,
   normalizePhoneForStorage,
+  normalizeCandidateName,
   safeJsonOrNull,
   parseJsonField,
   escapeLike,
@@ -1221,6 +1222,7 @@ router.post(
           candidateName,
           phone,
           email,
+          jobJid: safeJobId,
         });
 
         if (duplicateCheck.hasMatch) {
@@ -1579,6 +1581,7 @@ router.post(
             candidateSnapshot.name || resumeAts.applicantName || null,
           phone: candidateSnapshot.phone || null,
           email: candidateSnapshot.email || null,
+          jobJid: safeJobId,
         });
 
         if (duplicateCheck.hasMatch) {
@@ -1937,9 +1940,9 @@ router.put(
     if (!authorizeRecruiterResourceView(req, res, rid)) return;
 
     const normalizedResId = String(resId || "").trim();
-    const candidateName = String(
+    const candidateName = normalizeCandidateName(
       req.body?.candidateName ?? req.body?.candidate_name ?? "",
-    ).trim();
+    );
     const candidateEmail = String(
       req.body?.candidateEmail ?? req.body?.candidate_email ?? req.body?.email ?? "",
     )
@@ -1969,6 +1972,21 @@ router.put(
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
+
+      const duplicateCheck = await findResumeDuplicateDecision(connection, {
+        candidateName,
+        phone: candidatePhone,
+        email: candidateEmail,
+        excludeResId: normalizedResId,
+      });
+
+      if (duplicateCheck.hasMatch) {
+        await connection.rollback();
+        return res.status(409).json({
+          message: "A candidate with this name and contact details already exists.",
+          existingResume: duplicateCheck.latestMatch,
+        });
+      }
 
       const [
         hasApplicantNameColumn,
