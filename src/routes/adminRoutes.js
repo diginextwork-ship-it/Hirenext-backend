@@ -1593,17 +1593,43 @@ const buildSubmittedResumesFilter = ({
   }
 
   const rawPhoneDigits = String(phone || "").replace(/\D/g, "");
+  const last10Digits = rawPhoneDigits.length >= 10 ? rawPhoneDigits.slice(-10) : "";
+  const trimmedPhone = String(phone || "").trim();
   if (rawPhoneDigits) {
-    whereClauses.push(
-      "REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(c.phone, ''), ' ', ''), '-', ''), '+', ''), '(', '') LIKE ?",
-    );
-    params.push(`%${rawPhoneDigits}%`);
+    if (last10Digits && last10Digits !== rawPhoneDigits) {
+      whereClauses.push(
+        "(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(c.phone, ''), ' ', ''), '-', ''), '+', ''), '(', '') LIKE ? OR REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(c.phone, ''), ' ', ''), '-', ''), '+', ''), '(', '') LIKE ? OR LOWER(TRIM(COALESCE(c.name, ''))) LIKE ?)",
+      );
+      params.push(`%${rawPhoneDigits}%`, `%${last10Digits}%`, `%${trimmedPhone.toLowerCase()}%`);
+    } else {
+      whereClauses.push(
+        "(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(c.phone, ''), ' ', ''), '-', ''), '+', ''), '(', '') LIKE ? OR LOWER(TRIM(COALESCE(c.name, ''))) LIKE ?)",
+      );
+      params.push(`%${rawPhoneDigits}%`, `%${trimmedPhone.toLowerCase()}%`);
+    }
+  } else if (trimmedPhone) {
+    whereClauses.push("LOWER(TRIM(COALESCE(c.name, ''))) LIKE ?");
+    params.push(`%${trimmedPhone.toLowerCase()}%`);
   }
 
   const candidateSearch = String(search || candidate || "").trim();
+  const searchDigits = candidateSearch.replace(/\D/g, "");
+  const searchLast10 = searchDigits.length >= 10 ? searchDigits.slice(-10) : "";
   if (candidateSearch) {
-    whereClauses.push("LOWER(TRIM(COALESCE(c.name, ''))) LIKE ?");
-    params.push(`%${candidateSearch.toLowerCase()}%`);
+    if (searchLast10 && searchLast10 !== searchDigits) {
+      whereClauses.push(
+        "(LOWER(TRIM(COALESCE(c.name, ''))) LIKE ? OR REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(c.phone, ''), ' ', ''), '-', ''), '+', ''), '(', '') LIKE ? OR REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(c.phone, ''), ' ', ''), '-', ''), '+', ''), '(', '') LIKE ?)",
+      );
+      params.push(`%${candidateSearch.toLowerCase()}%`, `%${searchDigits}%`, `%${searchLast10}%`);
+    } else if (searchDigits.length >= 4) {
+      whereClauses.push(
+        "(LOWER(TRIM(COALESCE(c.name, ''))) LIKE ? OR REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(c.phone, ''), ' ', ''), '-', ''), '+', ''), '(', '') LIKE ?)",
+      );
+      params.push(`%${candidateSearch.toLowerCase()}%`, `%${searchDigits}%`);
+    } else {
+      whereClauses.push("LOWER(TRIM(COALESCE(c.name, ''))) LIKE ?");
+      params.push(`%${candidateSearch.toLowerCase()}%`);
+    }
   }
 
   const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
@@ -1655,8 +1681,14 @@ const getAllSubmittedResumesHandler = async (req, res) => {
 
     const parsedLimit = parseInt(limit, 10);
     const parsedPage = Math.max(1, parseInt(page, 10) || 1);
-    const isUnlimited = parsedLimit === -1 || parsedLimit === 0 || limit === "all";
-    const safeLimit = isUnlimited ? 10000 : Math.min(1000, Math.max(1, parsedLimit || 200));
+    const isUnlimited =
+      parsedLimit === -1 ||
+      parsedLimit === 0 ||
+      limit === "all" ||
+      !limit;
+    const safeLimit = isUnlimited
+      ? 50000
+      : Math.min(50000, Math.max(1, parsedLimit || 200));
     const offset = isUnlimited ? 0 : (parsedPage - 1) * safeLimit;
 
     const [countRows] = await pool.query(
