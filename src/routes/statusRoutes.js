@@ -245,7 +245,6 @@ const normalizeWorkflowStatus = (value, joiningDate = null) => {
   if (normalized === "pendingjoining" || normalized === "pending_joining") {
     return "shortlisted";
   }
-  if (normalized === "shortlisted" && joiningDate) return "selected";
 
   return TEAM_LEADER_PERFORMANCE_EVENT_KEYS.includes(normalized)
     ? normalized
@@ -687,30 +686,34 @@ router.get(
             '%Y-%m-%d %H:%i:%s.%f'
           ) AS walkInAt,
           DATE_FORMAT(
-            CASE
-              WHEN jrs.selection_status = 'selected' AND c.joining_date IS NULL THEN jrs.selected_at
-              ELSE NULL
-            END,
+            COALESCE(
+              CASE WHEN jrs.selection_status = 'selected' THEN ei.selected_at ELSE NULL END,
+              CASE WHEN jrs.selection_status = 'selected' THEN jrs.selected_at ELSE NULL END
+            ),
             '%Y-%m-%d %H:%i:%s.%f'
           ) AS selectedAt,
           DATE_FORMAT(
-            CASE WHEN jrs.selection_status = 'rejected' THEN jrs.selected_at ELSE NULL END,
+            COALESCE(
+              CASE WHEN jrs.selection_status = 'rejected' THEN ei.rejected_at ELSE NULL END,
+              CASE WHEN jrs.selection_status = 'rejected' THEN jrs.selected_at ELSE NULL END
+            ),
             '%Y-%m-%d %H:%i:%s.%f'
           ) AS rejectedAt,
           DATE_FORMAT(
-            CASE
-              WHEN jrs.selection_status = 'selected' AND c.joining_date IS NOT NULL
-                THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6))
-              WHEN jrs.selection_status IN ('shortlisted', 'pending_joining') THEN jrs.selected_at
-              ELSE NULL
-            END,
+            COALESCE(
+              CASE WHEN jrs.selection_status IN ('shortlisted', 'pending_joining') THEN ei.shortlisted_at ELSE NULL END,
+              CASE WHEN jrs.selection_status IN ('shortlisted', 'pending_joining') THEN jrs.selected_at ELSE NULL END
+            ),
             '%Y-%m-%d %H:%i:%s.%f'
           ) AS shortlistedAt,
           DATE_FORMAT(
             CASE
-              WHEN jrs.selection_status = 'joined' AND c.joining_date IS NOT NULL
-                THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6))
-              WHEN jrs.selection_status = 'joined' THEN jrs.selected_at
+              WHEN jrs.selection_status = 'joined' THEN
+                COALESCE(
+                  ei.joined_at,
+                  CASE WHEN c.joining_date IS NOT NULL THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6)) ELSE NULL END,
+                  jrs.selected_at
+                )
               ELSE NULL
             END,
             '%Y-%m-%d %H:%i:%s.%f'
@@ -819,6 +822,9 @@ router.get(
         for (const metricKey of TEAM_LEADER_PERFORMANCE_EVENT_KEYS) {
           const eventAt = eventAtMap[metricKey];
           if (!isTimestampWithinInclusiveRange(eventAt, dateRange)) continue;
+
+          // Strictly isolate status stages: candidate must belong to their current active status
+          if (metricKey !== "submitted" && workflowStatus !== metricKey) continue;
 
           statusDrilldown[metricKey].push({
             resId: row.resId || null,

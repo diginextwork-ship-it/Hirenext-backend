@@ -81,10 +81,6 @@ const resolveResumeWorkflowStatus = (record = {}) => {
         record.status,
     ) || "pending";
 
-  if ((workflowStatus === "selected" || workflowStatus === "shortlisted") && joiningDate) {
-    return "pending_joining";
-  }
-
   return workflowStatus;
 };
 

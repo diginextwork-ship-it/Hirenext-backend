@@ -4133,15 +4133,11 @@ const resolveCanonicalWorkflowStatus = ({
   workflowStatus,
   selectionStatus,
   status,
-  joiningDate,
 } = {}) => {
   const candidates = [workflowStatus, selectionStatus, status];
   for (const candidate of candidates) {
     const normalized = normalizeResumeStatusInput(candidate);
     if (CANONICAL_WORKFLOW_STATUSES.includes(normalized)) {
-      if (normalized === "shortlisted" && hasNonEmptyValue(joiningDate)) {
-        return "selected";
-      }
       return normalized;
     }
   }
@@ -5313,42 +5309,35 @@ router.get("/api/admin/performance", async (req, res) => {
         ) AS walkInAt,
         DATE_FORMAT(
           COALESCE(
-            ei.selected_at,
-            CASE
-              WHEN jrs.selection_status = 'selected' AND c.joining_date IS NULL THEN jrs.selected_at
-              ELSE NULL
-            END
+            CASE WHEN jrs.selection_status = 'selected' THEN ei.selected_at ELSE NULL END,
+            CASE WHEN jrs.selection_status = 'selected' THEN jrs.selected_at ELSE NULL END
           ),
           '%Y-%m-%d %H:%i:%s.%f'
         ) AS selectedAt,
         DATE_FORMAT(
           COALESCE(
-            ei.rejected_at,
+            CASE WHEN jrs.selection_status = 'rejected' THEN ei.rejected_at ELSE NULL END,
             CASE WHEN jrs.selection_status = 'rejected' THEN jrs.selected_at ELSE NULL END
           ),
           '%Y-%m-%d %H:%i:%s.%f'
         ) AS rejectedAt,
         DATE_FORMAT(
           COALESCE(
-            ei.shortlisted_at,
-            CASE
-              WHEN jrs.selection_status = 'selected' AND c.joining_date IS NOT NULL
-                THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6))
-              ELSE NULL
-            END
+            CASE WHEN jrs.selection_status IN ('shortlisted', 'pending_joining') THEN ei.shortlisted_at ELSE NULL END,
+            CASE WHEN jrs.selection_status IN ('shortlisted', 'pending_joining') THEN jrs.selected_at ELSE NULL END
           ),
           '%Y-%m-%d %H:%i:%s.%f'
         ) AS shortlistedAt,
         DATE_FORMAT(
-          COALESCE(
-            CASE
-              WHEN jrs.selection_status = 'joined' AND c.joining_date IS NOT NULL
-                THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6))
-              ELSE NULL
-            END,
-            ei.joined_at,
-            CASE WHEN jrs.selection_status = 'joined' THEN jrs.selected_at ELSE NULL END
-          ),
+          CASE
+            WHEN jrs.selection_status = 'joined' THEN
+              COALESCE(
+                ei.joined_at,
+                CASE WHEN c.joining_date IS NOT NULL THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6)) ELSE NULL END,
+                jrs.selected_at
+              )
+            ELSE NULL
+          END,
           '%Y-%m-%d %H:%i:%s.%f'
         ) AS joinedAt,
         DATE_FORMAT(
@@ -5665,6 +5654,11 @@ router.get("/api/admin/performance", async (req, res) => {
         // Only count if this status event occurred in the date range
         if (!isTimestampWithinInclusiveRange(statusEvent.eventAt, dateRange))
           continue;
+
+        // Strictly isolate status stages: candidate must belong to their current active status
+        if (row.workflowStatus !== statusKey) {
+          continue;
+        }
 
         statusDrilldown[statusKey].push(
           normalizePerformanceDrilldownItem({
