@@ -2871,11 +2871,7 @@ router.post(
 
       const effectiveJoiningDate =
         joiningDate || resume.currentJoiningDate || null;
-      const historicalSelectedAt =
-        (targetStatus === "joined" || targetStatus === "selected") &&
-        effectiveJoiningDate
-          ? `${effectiveJoiningDate} 00:00:00`
-          : null;
+      const historicalSelectedAt = null;
 
       const connection = await pool.getConnection();
       try {
@@ -2939,10 +2935,7 @@ router.post(
         const reasonField = STATUS_REASON_FIELD_MAP[targetStatus];
         const statusReasonValue =
           targetStatus === "joined" ? joinedReason : reason;
-        const eventTimestampValue =
-          targetStatus === "joined" && effectiveJoiningDate
-            ? `${effectiveJoiningDate} 00:00:00`
-            : "__CURRENT_TIMESTAMP__";
+        const eventTimestampValue = "__CURRENT_TIMESTAMP__";
 
         if (reasonField) {
           const statusTimestampFieldMap = {

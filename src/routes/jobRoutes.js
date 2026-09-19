@@ -1717,11 +1717,7 @@ router.post(
         }
 
         // Update job_resume_selection
-        const historicalSelectedAt =
-          (persistedStatus === "joined" || persistedStatus === "selected") &&
-          effectiveJoiningDate
-            ? `${effectiveJoiningDate} 00:00:00`
-            : null;
+        const historicalSelectedAt = null;
 
         if (persistedStatus === "removed") {
           await connection.query(
@@ -1781,10 +1777,7 @@ router.post(
           left: "leftAt",
         };
 
-        const eventTimestampValue =
-          persistedStatus === "joined" && effectiveJoiningDate
-            ? `${effectiveJoiningDate} 00:00:00`
-            : "__CURRENT_TIMESTAMP__";
+        const eventTimestampValue = "__CURRENT_TIMESTAMP__";
 
         if (reasonField && statusReasonValue !== undefined) {
           await upsertExtraInfoFields(connection, {

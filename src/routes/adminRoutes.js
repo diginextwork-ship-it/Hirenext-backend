@@ -4832,10 +4832,7 @@ router.post(
           ? joinedReason || effectiveReason || null
           : effectiveReason || null;
 
-      const historicalSelectedAt =
-        (newStatus === "joined" || newStatus === "selected") && effectiveJoiningDate
-          ? `${effectiveJoiningDate} 00:00:00`
-          : null;
+      const historicalSelectedAt = null;
 
       if (resume.jobJid) {
         await connection.query(
@@ -4906,10 +4903,7 @@ router.post(
         left: "leftAt",
       };
 
-      const eventTimestampValue =
-        newStatus === "joined" && effectiveJoiningDate
-          ? `${effectiveJoiningDate} 00:00:00`
-          : "__CURRENT_TIMESTAMP__";
+      const eventTimestampValue = "__CURRENT_TIMESTAMP__";
 
       if (reasonField) {
         await upsertExtraInfoFields(connection, {
@@ -5480,8 +5474,8 @@ router.get("/api/admin/performance", async (req, res) => {
             WHEN jrs.selection_status = 'joined' THEN
               COALESCE(
                 ei.joined_at,
-                CASE WHEN c.joining_date IS NOT NULL THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6)) ELSE NULL END,
-                jrs.selected_at
+                jrs.selected_at,
+                CASE WHEN c.joining_date IS NOT NULL THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6)) ELSE NULL END
               )
             ELSE NULL
           END,
@@ -5773,6 +5767,9 @@ router.get("/api/admin/performance", async (req, res) => {
         },
         joined: {
           eventAt: row.joinedAt,
+          joiningDate: row.joiningDate
+            ? `${row.joiningDate} 00:00:00.000000`
+            : null,
           teamLeaderSource: row.statusActorRole,
           teamLeaderRid: row.statusActorRid,
           teamLeaderName: row.statusActorName,
@@ -5798,8 +5795,13 @@ router.get("/api/admin/performance", async (req, res) => {
       };
 
       for (const [statusKey, statusEvent] of Object.entries(statusEventMap)) {
-        // Only count if this status event occurred in the date range
-        if (!isTimestampWithinInclusiveRange(statusEvent.eventAt, dateRange))
+        // Only count if this status event occurred in the date range (or for joined, if scheduled joining date is in range)
+        const isEventInRange =
+          isTimestampWithinInclusiveRange(statusEvent.eventAt, dateRange) ||
+          (statusKey === "joined" &&
+            statusEvent.joiningDate &&
+            isTimestampWithinInclusiveRange(statusEvent.joiningDate, dateRange));
+        if (!isEventInRange)
           continue;
 
         // Strictly isolate status stages: candidate must belong to their current active status

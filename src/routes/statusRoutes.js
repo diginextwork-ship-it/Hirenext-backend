@@ -711,8 +711,8 @@ router.get(
               WHEN jrs.selection_status = 'joined' THEN
                 COALESCE(
                   ei.joined_at,
-                  CASE WHEN c.joining_date IS NOT NULL THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6)) ELSE NULL END,
-                  jrs.selected_at
+                  jrs.selected_at,
+                  CASE WHEN c.joining_date IS NOT NULL THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6)) ELSE NULL END
                 )
               ELSE NULL
             END,
@@ -821,7 +821,12 @@ router.get(
 
         for (const metricKey of TEAM_LEADER_PERFORMANCE_EVENT_KEYS) {
           const eventAt = eventAtMap[metricKey];
-          if (!isTimestampWithinInclusiveRange(eventAt, dateRange)) continue;
+          const isEventInRange =
+            isTimestampWithinInclusiveRange(eventAt, dateRange) ||
+            (metricKey === "joined" &&
+              row.joiningDate &&
+              isTimestampWithinInclusiveRange(`${row.joiningDate} 00:00:00.000000`, dateRange));
+          if (!isEventInRange) continue;
 
           // Strictly isolate status stages: candidate must belong to their current active status
           if (metricKey !== "submitted" && workflowStatus !== metricKey) continue;
