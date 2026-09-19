@@ -3952,6 +3952,153 @@ router.delete("/api/admin/revenue/entries/:id", async (req, res) => {
   }
 });
 
+const handleUpdateRevenueEntryAmount = async (req, res) => {
+  if (!ensureAdminAuthorized(req, res)) return;
+
+  await ensureMoneySumTable();
+
+  const entryId = Number(req.params.id);
+  if (!Number.isInteger(entryId) || entryId <= 0) {
+    return res
+      .status(400)
+      .json({ message: "Entry id must be a positive integer." });
+  }
+
+  const rawAmount = req.body?.amount;
+  const parsedAmount = Number(rawAmount);
+  if (!Number.isFinite(parsedAmount) || parsedAmount < 0) {
+    return res
+      .status(400)
+      .json({ message: "Amount must be a non-negative number." });
+  }
+
+  const normalizedAmount = Math.round(parsedAmount * 100) / 100;
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [existingRows] = await connection.query(
+      `SELECT
+        id,
+        company_rev AS companyRev,
+        expense,
+        profit,
+        reason,
+        photo,
+        res_id AS resId,
+        entry_type AS entryType,
+        created_at AS createdAt
+      FROM money_sum
+      WHERE id = ?
+      LIMIT 1`,
+      [entryId],
+    );
+
+    if (existingRows.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ message: "Revenue entry not found." });
+    }
+
+    const currentEntry = existingRows[0];
+    const isIntake =
+      String(currentEntry.entryType || "").toLowerCase() === "intake" ||
+      Number(currentEntry.companyRev) > 0;
+
+    if (isIntake) {
+      await connection.query(
+        "UPDATE money_sum SET company_rev = ?, expense = 0 WHERE id = ?",
+        [normalizedAmount, entryId],
+      );
+
+      // If tied to candidate placement revenue, sync candidate.revenue
+      const cResId = extractRevenueResumeId(currentEntry);
+      if (cResId && (await tableExists("candidate", connection))) {
+        await connection.query(
+          "UPDATE candidate SET revenue = ? WHERE res_id = ?",
+          [normalizedAmount, cResId],
+        );
+      }
+    } else {
+      await connection.query(
+        "UPDATE money_sum SET expense = ?, company_rev = 0 WHERE id = ?",
+        [normalizedAmount, entryId],
+      );
+    }
+
+    // Automatically recalculate running profit across all money_sum entries
+    await recomputeMoneyProfit(connection);
+
+    // Fetch the updated entry
+    const [updatedRows] = await connection.query(
+      `SELECT
+        id,
+        company_rev AS companyRev,
+        expense,
+        profit,
+        reason,
+        photo,
+        res_id AS resId,
+        entry_type AS entryType,
+        created_at AS createdAt
+      FROM money_sum
+      WHERE id = ?
+      LIMIT 1`,
+      [entryId],
+    );
+
+    // Calculate updated summary
+    const [summaryRows] = await connection.query(
+      `SELECT
+        COALESCE(SUM(company_rev), 0) AS totalIntake,
+        COALESCE(SUM(expense), 0) AS totalExpense
+      FROM money_sum`,
+    );
+
+    const totalIntake = toMoneyNumber(summaryRows?.[0]?.totalIntake);
+    const totalExpense = toMoneyNumber(summaryRows?.[0]?.totalExpense);
+    const netProfit = Math.round((totalIntake - totalExpense) * 100) / 100;
+
+    await connection.commit();
+
+    const updatedRow = updatedRows[0];
+    return res.status(200).json({
+      message: "Revenue entry amount updated successfully.",
+      entry: {
+        id: Number(updatedRow.id),
+        companyRev: toMoneyNumber(updatedRow.companyRev),
+        expense: toMoneyNumber(updatedRow.expense),
+        profit: toMoneyNumber(updatedRow.profit),
+        reason: updatedRow.reason || "",
+        photo: updatedRow.photo || null,
+        resId: updatedRow.resId || null,
+        entryType: updatedRow.entryType || (isIntake ? "intake" : "expense"),
+        createdAt: updatedRow.createdAt,
+      },
+      summary: {
+        totalIntake,
+        totalExpense,
+        netProfit,
+      },
+    });
+  } catch (error) {
+    await connection.rollback();
+    return res.status(500).json({
+      message: "Failed to update revenue entry amount.",
+      error: error.message,
+    });
+  } finally {
+    connection.release();
+  }
+};
+
+router.patch(
+  "/api/admin/revenue/entries/:id/amount",
+  handleUpdateRevenueEntryAmount,
+);
+router.patch("/api/admin/revenue/entries/:id", handleUpdateRevenueEntryAmount);
+router.put("/api/admin/revenue/entries/:id", handleUpdateRevenueEntryAmount);
+
 router.put("/api/admin/resumes/:resId/verified-reason", async (req, res) => {
   if (!ensureAdminAuthorized(req, res)) return;
 
