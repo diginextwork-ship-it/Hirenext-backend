@@ -1595,7 +1595,7 @@ const buildSubmittedResumesFilter = ({
   const rawPhoneDigits = String(phone || "").replace(/\D/g, "");
   const last10Digits = rawPhoneDigits.length >= 10 ? rawPhoneDigits.slice(-10) : "";
   const trimmedPhone = String(phone || "").trim();
-  if (rawPhoneDigits) {
+  if (rawPhoneDigits && rawPhoneDigits.length >= 4) {
     if (last10Digits && last10Digits !== rawPhoneDigits) {
       whereClauses.push(
         "(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(c.phone, ''), ' ', ''), '-', ''), '+', ''), '(', '') LIKE ? OR REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(c.phone, ''), ' ', ''), '-', ''), '+', ''), '(', '') LIKE ? OR LOWER(TRIM(COALESCE(c.name, ''))) LIKE ?)",
@@ -1613,23 +1613,54 @@ const buildSubmittedResumesFilter = ({
   }
 
   const candidateSearch = String(search || candidate || "").trim();
-  const searchDigits = candidateSearch.replace(/\D/g, "");
-  const searchLast10 = searchDigits.length >= 10 ? searchDigits.slice(-10) : "";
   if (candidateSearch) {
-    if (searchLast10 && searchLast10 !== searchDigits) {
-      whereClauses.push(
-        "(LOWER(TRIM(COALESCE(c.name, ''))) LIKE ? OR REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(c.phone, ''), ' ', ''), '-', ''), '+', ''), '(', '') LIKE ? OR REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(c.phone, ''), ' ', ''), '-', ''), '+', ''), '(', '') LIKE ?)",
-      );
-      params.push(`%${candidateSearch.toLowerCase()}%`, `%${searchDigits}%`, `%${searchLast10}%`);
-    } else if (searchDigits.length >= 4) {
-      whereClauses.push(
-        "(LOWER(TRIM(COALESCE(c.name, ''))) LIKE ? OR REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(c.phone, ''), ' ', ''), '-', ''), '+', ''), '(', '') LIKE ?)",
-      );
-      params.push(`%${candidateSearch.toLowerCase()}%`, `%${searchDigits}%`);
-    } else {
-      whereClauses.push("LOWER(TRIM(COALESCE(c.name, ''))) LIKE ?");
+    const searchDigits = candidateSearch.replace(/\D/g, "");
+    const searchLast10 = searchDigits.length >= 10 ? searchDigits.slice(-10) : "";
+    const words = candidateSearch.toLowerCase().split(/\s+/).filter(Boolean);
+
+    const searchConditions = [];
+
+    // All words must match candidate name
+    if (words.length > 0) {
+      const nameAllWords = words.map(() => "LOWER(COALESCE(c.name, '')) LIKE ?").join(" AND ");
+      searchConditions.push(`(${nameAllWords})`);
+      params.push(...words.map((w) => `%${w}%`));
+    }
+
+    // Phone matching if 4 or more digits present
+    if (searchDigits.length >= 4) {
+      if (searchLast10 && searchLast10 !== searchDigits) {
+        searchConditions.push(
+          "REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(c.phone, ''), ' ', ''), '-', ''), '+', ''), '(', '') LIKE ?",
+        );
+        params.push(`%${searchDigits}%`);
+        searchConditions.push(
+          "REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(c.phone, ''), ' ', ''), '-', ''), '+', ''), '(', '') LIKE ?",
+        );
+        params.push(`%${searchLast10}%`);
+      } else {
+        searchConditions.push(
+          "REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(c.phone, ''), ' ', ''), '-', ''), '+', ''), '(', '') LIKE ?",
+        );
+        params.push(`%${searchDigits}%`);
+      }
+    }
+
+    // Email matching
+    searchConditions.push("LOWER(COALESCE(c.email, '')) LIKE ?");
+    params.push(`%${candidateSearch.toLowerCase()}%`);
+
+    // Recruiter matching
+    searchConditions.push("LOWER(COALESCE(r.name, '')) LIKE ?");
+    params.push(`%${candidateSearch.toLowerCase()}%`);
+
+    // Company matching (if not pure numbers)
+    if (words.length > 0 && !/^\d+$/.test(candidateSearch)) {
+      searchConditions.push("LOWER(COALESCE(j.company_name, '')) LIKE ?");
       params.push(`%${candidateSearch.toLowerCase()}%`);
     }
+
+    whereClauses.push(`(${searchConditions.join(" OR ")})`);
   }
 
   const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
@@ -1683,17 +1714,16 @@ const getAllSubmittedResumesHandler = async (req, res) => {
     const parsedPage = Math.max(1, parseInt(page, 10) || 1);
     const isUnlimited =
       parsedLimit === -1 ||
-      parsedLimit === 0 ||
-      limit === "all" ||
-      !limit;
+      limit === "all";
     const safeLimit = isUnlimited
       ? 50000
-      : Math.min(50000, Math.max(1, parsedLimit || 200));
+      : Math.min(50000, Math.max(1, parsedLimit || 500));
     const offset = isUnlimited ? 0 : (parsedPage - 1) * safeLimit;
 
     const [countRows] = await pool.query(
       `SELECT COUNT(*) AS totalFiltered
        FROM resumes_data rd
+       LEFT JOIN recruiter r ON r.rid = rd.rid
        LEFT JOIN candidate c ON c.res_id = rd.res_id
        LEFT JOIN jobs j ON j.jid = rd.job_jid
        LEFT JOIN extra_info ei ON ei.res_id = rd.res_id
