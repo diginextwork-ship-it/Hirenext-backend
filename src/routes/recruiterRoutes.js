@@ -1285,7 +1285,8 @@ router.post(
           submittedAt,
         ];
 
-        if (await columnExists("resumes_data", "resume")) {
+        const hasBlobTable = await tableExists("resumes_blob", connection);
+        if (!hasBlobTable && (await columnExists("resumes_data", "resume"))) {
           resumeInsertColumns.splice(3, 0, "resume");
           resumeInsertValuesSql.splice(3, 0, "?");
           resumeInsertValues.splice(3, 0, resumeFile.buffer);

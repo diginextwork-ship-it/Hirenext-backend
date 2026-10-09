@@ -465,9 +465,7 @@ const storeResumeBinary = async (connection, resId, resumeBuffer) => {
       [normalizedResId, resumeBuffer],
     );
     stored = true;
-  }
-
-  if (storage.hasInlineResumeColumn) {
+  } else if (storage.hasInlineResumeColumn) {
     await connection.query(
       `UPDATE resumes_data
        SET resume = ?
@@ -1095,7 +1093,11 @@ const addCandidateBillIntakeEntry = async (
   };
 };
 
-const removeCandidateBillIntakeEntry = async (connection = pool, resId) => {
+const removeCandidateBillIntakeEntry = async (
+  connection = pool,
+  resId,
+  { isDeletingResume = false } = {},
+) => {
   const normalizedResId = String(resId || "").trim();
   if (!normalizedResId) return { removedCount: 0 };
   if (!(await tableExists("money_sum", connection))) {
@@ -1134,7 +1136,14 @@ const removeCandidateBillIntakeEntry = async (connection = pool, resId) => {
     removedCount = idsToDelete.length;
 
     // Recalculate running profit
-    await recomputeMoneyProfit(connection);
+    try {
+      await recomputeMoneyProfit(connection);
+    } catch (profitErr) {
+      console.warn(
+        `[removeCandidateBillIntakeEntry] Profit recalculation skipped:`,
+        profitErr.message,
+      );
+    }
   }
 
   // Revert any recruiter points awarded on billing
@@ -1150,12 +1159,19 @@ const removeCandidateBillIntakeEntry = async (connection = pool, resId) => {
     if (Array.isArray(pointRows) && pointRows.length > 0) {
       for (const pRow of pointRows) {
         if (pRow.recruiter_rid && Number(pRow.totalPoints) > 0) {
-          await connection.query(
-            `UPDATE recruiter
-             SET points = GREATEST(0, COALESCE(points, 0) - ?)
-             WHERE rid = ?`,
-            [Number(pRow.totalPoints), pRow.recruiter_rid],
-          );
+          try {
+            await connection.query(
+              `UPDATE recruiter
+               SET points = GREATEST(0, COALESCE(points, 0) - ?)
+               WHERE rid = ?`,
+              [Number(pRow.totalPoints), pRow.recruiter_rid],
+            );
+          } catch (ptErr) {
+            console.warn(
+              `[removeCandidateBillIntakeEntry] Recruiter point rollback skipped for ${pRow.recruiter_rid}:`,
+              ptErr.message,
+            );
+          }
         }
       }
       await connection.query(
@@ -1165,12 +1181,19 @@ const removeCandidateBillIntakeEntry = async (connection = pool, resId) => {
     }
   }
 
-  // Clear revenue in candidate table if candidate record exists
-  if (await tableExists("candidate", connection)) {
-    await connection.query(
-      `UPDATE candidate SET revenue = NULL WHERE res_id = ?`,
-      [normalizedResId],
-    );
+  // Clear revenue in candidate table if candidate record exists and is NOT being deleted
+  if (!isDeletingResume && (await tableExists("candidate", connection))) {
+    try {
+      await connection.query(
+        `UPDATE candidate SET revenue = NULL WHERE res_id = ?`,
+        [normalizedResId],
+      );
+    } catch (candErr) {
+      console.warn(
+        `[removeCandidateBillIntakeEntry] Candidate revenue clear skipped:`,
+        candErr.message,
+      );
+    }
   }
 
   return { removedCount };

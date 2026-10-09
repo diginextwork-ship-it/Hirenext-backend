@@ -6201,7 +6201,9 @@ const deleteAdminResumeHandler = async (req, res) => {
     }
 
     await conn.query("DELETE FROM applications WHERE res_id = ?", [resId]);
-    await removeCandidateBillIntakeEntry(conn, resId);
+    await removeCandidateBillIntakeEntry(conn, resId, {
+      isDeletingResume: true,
+    });
     await conn.query(
       "DELETE FROM extra_info WHERE res_id = ? OR resume_id = ?",
       [resId, resId],
@@ -6209,6 +6211,7 @@ const deleteAdminResumeHandler = async (req, res) => {
     await conn.query("DELETE FROM job_resume_selection WHERE res_id = ?", [
       resId,
     ]);
+    await conn.query("DELETE FROM resumes_blob WHERE res_id = ?", [resId]);
     await conn.query("DELETE FROM candidate WHERE res_id = ?", [resId]);
     await conn.query("DELETE FROM resumes_data WHERE res_id = ?", [resId]);
 
