@@ -1544,6 +1544,7 @@ const buildSubmittedResumesFilter = ({
   phone = "",
   search = "",
   candidate = "",
+  recruiter = "",
 } = {}) => {
   const whereClauses = [];
   const params = [];
@@ -1553,6 +1554,14 @@ const buildSubmittedResumesFilter = ({
     whereClauses.push("COALESCE(rd.submitted_by_role, 'recruiter') = 'candidate'");
   } else if (normalizedSource === "recruiter") {
     whereClauses.push("COALESCE(rd.submitted_by_role, 'recruiter') <> 'candidate'");
+  }
+
+  const normalizedRecruiter = String(recruiter || "").trim();
+  if (normalizedRecruiter) {
+    whereClauses.push(
+      "(LOWER(TRIM(COALESCE(r.name, ''))) LIKE ? OR LOWER(TRIM(COALESCE(r.rid, ''))) = ?)",
+    );
+    params.push(`%${normalizedRecruiter.toLowerCase()}%`, normalizedRecruiter.toLowerCase());
   }
 
   const normalizedCompany = String(company || "").trim();
@@ -1694,6 +1703,9 @@ const getAllSubmittedResumesHandler = async (req, res) => {
       phone,
       search,
       candidate,
+      recruiter,
+      recruiterName,
+      rid,
       page = 1,
       limit = 200,
     } = req.query;
@@ -1709,6 +1721,7 @@ const getAllSubmittedResumesHandler = async (req, res) => {
       phone,
       search,
       candidate,
+      recruiter: recruiter || recruiterName || rid,
     });
 
     const parsedLimit = parseInt(limit, 10);
@@ -1914,6 +1927,9 @@ const exportAllSubmittedResumesHandler = async (req, res) => {
       phone,
       search,
       candidate,
+      recruiter,
+      recruiterName,
+      rid,
     } = req.query;
 
     const { whereSql, params } = buildSubmittedResumesFilter({
@@ -1927,6 +1943,7 @@ const exportAllSubmittedResumesHandler = async (req, res) => {
       phone,
       search,
       candidate,
+      recruiter: recruiter || recruiterName || rid,
     });
 
     const [rows] = await pool.query(
