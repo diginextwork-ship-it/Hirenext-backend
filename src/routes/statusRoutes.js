@@ -279,6 +279,7 @@ router.get(
             ELSE 'recruiter'
           END AS member_role,
           COALESCE(r.points, 0) AS points,
+          COALESCE(r.team, 'Team BPO') AS team,
           COALESCE(rs.submitted, 0) AS submitted,
           COALESCE(rs.verified, 0) AS verified,
           COALESCE(rs.others, 0) AS others,
@@ -313,6 +314,7 @@ router.get(
           name: row.name,
           email: row.email,
           points: Number(row.points) || 0,
+          team: row.team || "Team BPO",
         },
         stats,
         calculatedMetrics: buildCalculatedMetrics(stats),
@@ -549,6 +551,8 @@ router.get(
   requireRoles("team leader", "team_leader", "job adder", "job_adder", "job creator", "recruiter", "admin"),
   async (req, res) => {
     try {
+      const rawTeam = String(req.query?.team || "").trim();
+      const hasTeamFilter = rawTeam && rawTeam.toLowerCase() !== "all";
       const {
         startDate,
         endDate,
@@ -565,12 +569,15 @@ router.get(
         ? "AND COALESCE(CAST(CONCAT(c.joining_date, ' 00:00:00') AS DATETIME), ei.joined_at, jrs.selected_at, rd.uploaded_at) >= ? AND COALESCE(CAST(CONCAT(c.joining_date, ' 00:00:00') AS DATETIME), ei.joined_at, jrs.selected_at, rd.uploaded_at) < ?"
         : "";
       const queryParams = hasDateRange ? [startDateTime, endExclusiveDateTime] : [];
+      const teamCondition = hasTeamFilter ? "AND COALESCE(r.team, 'Team BPO') = ?" : "";
+      if (hasTeamFilter) queryParams.push(rawTeam.toLowerCase().includes("nbfc") ? "Team NBFC" : "Team BPO");
 
       const [rows] = await pool.query(
         `SELECT
           r.rid,
           r.name,
           r.email,
+          COALESCE(r.team, 'Team BPO') AS team,
           COALESCE(stats.joined_count, 0) AS joined_count,
           COALESCE(r.points, 0) AS points
         FROM recruiter r
@@ -591,6 +598,7 @@ router.get(
           GROUP BY rd.rid
         ) stats ON stats.rid = r.rid
         WHERE LOWER(TRIM(COALESCE(r.role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')
+        ${teamCondition}
         ORDER BY COALESCE(stats.joined_count, 0) DESC, COALESCE(r.points, 0) DESC, r.name ASC`,
         queryParams,
       );
@@ -601,6 +609,7 @@ router.get(
           rid: row.rid,
           name: row.name,
           email: row.email,
+          team: row.team || 'Team BPO',
           joined: Number(row.joined_count) || 0,
           points: Number(row.points) || 0,
         })),
@@ -752,6 +761,8 @@ router.get(
           teamLeader.name AS teamLeaderName,
           c.name AS candidateName,
           c.phone AS candidatePhone,
+          c.level_of_edu AS latestEducationLevel,
+          c.level_of_edu AS highestQualification,
           j.company_name AS companyName,
           j.city AS city,
           ei.office_location_city AS officeLocationCity
@@ -841,6 +852,9 @@ router.get(
             candidateName: row.candidateName || null,
             candidatePhone: row.candidatePhone || null,
             phone: row.candidatePhone || null,
+            latestEducationLevel: row.latestEducationLevel || null,
+            highestQualification:
+              row.highestQualification || row.latestEducationLevel || null,
             jobJid:
               row.jobJid === null || row.jobJid === undefined
                 ? null

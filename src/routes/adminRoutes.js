@@ -506,12 +506,12 @@ const compareSalaryOwnerPriority = (left, right) => {
 const attachSalaryCreditMetadata = (rows) => {
   const normalizedRows = Array.isArray(rows)
     ? rows.map((row) => ({
-        ...row,
-        phone: normalizeStoredStaffPhone(row?.phone),
-        salaryCreditTargetRid: String(
-          row?.salaryCreditTargetRid || row?.salary_credit_target_rid || "",
-        ).trim(),
-      }))
+      ...row,
+      phone: normalizeStoredStaffPhone(row?.phone),
+      salaryCreditTargetRid: String(
+        row?.salaryCreditTargetRid || row?.salary_credit_target_rid || "",
+      ).trim(),
+    }))
     : [];
 
   const grouped = new Map();
@@ -618,9 +618,9 @@ const fetchSalaryCreditContext = async (
     groupRows =
       linkedRows.length > 0
         ? linkedRows.map((row) => ({
-            ...row,
-            phone: normalizeStoredStaffPhone(row?.phone),
-          }))
+          ...row,
+          phone: normalizeStoredStaffPhone(row?.phone),
+        }))
         : [subjectRow];
   }
 
@@ -670,7 +670,7 @@ const getRecruiterSalarySnapshot = async (
   await ensureRecruiterSalaryHistoryTable();
   const salaryMeta = await getRecruiterSalaryColumnMeta();
   const [rows] = await connection.query(
-     `SELECT
+    `SELECT
        r.rid,
        r.name,
        r.email,
@@ -929,7 +929,7 @@ const recomputeMoneyProfit = async (connection) => {
         (runningProfit +
           toMoneyNumber(row.companyRev) -
           toMoneyNumber(row.expense)) *
-          100,
+        100,
       ) / 100;
     await connection.query("UPDATE money_sum SET profit = ? WHERE id = ?", [
       runningProfit,
@@ -1148,6 +1148,7 @@ router.get("/api/admin/dashboard", async (_req, res) => {
           candidatePhone: row.candidatePhone || null,
           phone: row.candidatePhone || null,
           latestEducationLevel: row.latestEducationLevel || null,
+          highestQualification: row.latestEducationLevel || null,
           boardUniversity: row.boardUniversity || null,
           institutionName: row.institutionName || null,
           age: row.age === null || row.age === undefined ? null : Number(row.age),
@@ -1173,7 +1174,7 @@ router.get("/api/admin/dashboard", async (_req, res) => {
               : Number(row.atsScore),
           atsMatchPercentage:
             row.atsMatchPercentage === null ||
-            row.atsMatchPercentage === undefined
+              row.atsMatchPercentage === undefined
               ? null
               : Number(row.atsMatchPercentage),
           isAccepted: Boolean(row.isAccepted),
@@ -1466,7 +1467,7 @@ const getCandidateResumesHandler = async (req, res) => {
             row.age === null || row.age === undefined ? null : Number(row.age),
           hasPriorExperience:
             row.hasPriorExperience === null ||
-            row.hasPriorExperience === undefined
+              row.hasPriorExperience === undefined
               ? null
               : Boolean(row.hasPriorExperience),
           experience: {
@@ -1483,7 +1484,7 @@ const getCandidateResumesHandler = async (req, res) => {
             noticePeriod: row.noticePeriod || null,
             yearsOfExperience:
               row.yearsOfExperience === null ||
-              row.yearsOfExperience === undefined
+                row.yearsOfExperience === undefined
                 ? null
                 : Number(row.yearsOfExperience),
           },
@@ -1495,7 +1496,7 @@ const getCandidateResumesHandler = async (req, res) => {
               : Number(row.atsScore),
           atsMatchPercentage:
             row.atsMatchPercentage === null ||
-            row.atsMatchPercentage === undefined
+              row.atsMatchPercentage === undefined
               ? null
               : Number(row.atsMatchPercentage),
           submittedReason: row.submittedReason || null,
@@ -1764,6 +1765,17 @@ const getAllSubmittedResumesHandler = async (req, res) => {
         COALESCE(NULLIF(TRIM(ei.office_location_city), ''), NULLIF(TRIM(j.city), ''), 'N/A') AS city,
         ei.submitted_reason AS submittedReason,
         ei.verified_reason AS verifiedReason,
+        ei.others_reason AS othersReason,
+        ei.walk_in_reason AS walkInReason,
+        ei.further_reason AS furtherReason,
+        ei.select_reason AS selectReason,
+        ei.shortlisted_reason AS shortlistedReason,
+        ei.reject_reason AS rejectReason,
+        ei.joined_reason AS joinedReason,
+        ei.dropout_reason AS dropoutReason,
+        ei.billed_reason AS billedReason,
+        ei.left_reason AS leftReason,
+        jrs.selection_note AS selectionNote,
         COALESCE(jrs.selection_status, 'submitted') AS workflowStatus
       FROM resumes_data rd
       LEFT JOIN recruiter r ON r.rid = rd.rid
@@ -1781,6 +1793,33 @@ const getAllSubmittedResumesHandler = async (req, res) => {
       const isCandidateSource = row.source === "candidate";
       const candidateDisplayName = row.candidateName || "Name not found";
       const recruiterDisplayName = isCandidateSource ? "N/A" : (row.recruiterName || "N/A");
+
+      const currentWorkflowStatus = String(row.workflowStatus || "submitted")
+        .trim()
+        .toLowerCase()
+        .replace(/[\s-]+/g, "_");
+
+      const stageNoteMap = {
+        submitted: row.submittedReason,
+        verified: row.verifiedReason,
+        others: row.othersReason,
+        walk_in: row.walkInReason,
+        further: row.furtherReason,
+        selected: row.selectReason,
+        shortlisted: row.shortlistedReason,
+        pending_joining: row.shortlistedReason,
+        joined: row.joinedReason,
+        dropout: row.dropoutReason,
+        billed: row.billedReason,
+        left: row.leftReason,
+        rejected: row.rejectReason,
+      };
+
+      const currentRecruiterNote =
+        stageNoteMap[currentWorkflowStatus] ||
+        row.selectionNote ||
+        (currentWorkflowStatus === "submitted" ? row.submittedReason : null) ||
+        null;
 
       return {
         resId: row.resId,
@@ -1810,6 +1849,18 @@ const getAllSubmittedResumesHandler = async (req, res) => {
         jobCity: row.jobCity || null,
         submittedReason: row.submittedReason || null,
         verifiedReason: row.verifiedReason || null,
+        othersReason: row.othersReason || null,
+        walkInReason: row.walkInReason || null,
+        furtherReason: row.furtherReason || null,
+        selectReason: row.selectReason || null,
+        shortlistedReason: row.shortlistedReason || null,
+        rejectReason: row.rejectReason || null,
+        joinedReason: row.joinedReason || null,
+        dropoutReason: row.dropoutReason || null,
+        billedReason: row.billedReason || null,
+        leftReason: row.leftReason || null,
+        selectionNote: row.selectionNote || null,
+        recruiterNote: currentRecruiterNote,
         uploadedAt: row.uploadedAt || null,
         submittedAt: row.uploadedAt || null,
         joiningDate: row.joiningDate || null,
@@ -1900,6 +1951,18 @@ const exportAllSubmittedResumesHandler = async (req, res) => {
         ei.office_location_city AS officeLocationCity,
         COALESCE(NULLIF(TRIM(ei.office_location_city), ''), NULLIF(TRIM(j.city), ''), 'N/A') AS city,
         ei.submitted_reason AS submittedReason,
+        ei.verified_reason AS verifiedReason,
+        ei.others_reason AS othersReason,
+        ei.walk_in_reason AS walkInReason,
+        ei.further_reason AS furtherReason,
+        ei.select_reason AS selectReason,
+        ei.shortlisted_reason AS shortlistedReason,
+        ei.reject_reason AS rejectReason,
+        ei.joined_reason AS joinedReason,
+        ei.dropout_reason AS dropoutReason,
+        ei.billed_reason AS billedReason,
+        ei.left_reason AS leftReason,
+        jrs.selection_note AS selectionNote,
         COALESCE(jrs.selection_status, 'submitted') AS workflowStatus
       FROM resumes_data rd
       LEFT JOIN recruiter r ON r.rid = rd.rid
@@ -1960,6 +2023,33 @@ const exportAllSubmittedResumesHandler = async (req, res) => {
         .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
         .join(" ");
 
+      const currentWorkflowStatus = String(row.workflowStatus || "submitted")
+        .trim()
+        .toLowerCase()
+        .replace(/[\s-]+/g, "_");
+
+      const stageNoteMap = {
+        submitted: row.submittedReason,
+        verified: row.verifiedReason,
+        others: row.othersReason,
+        walk_in: row.walkInReason,
+        further: row.furtherReason,
+        selected: row.selectReason,
+        shortlisted: row.shortlistedReason,
+        pending_joining: row.shortlistedReason,
+        joined: row.joinedReason,
+        dropout: row.dropoutReason,
+        billed: row.billedReason,
+        left: row.leftReason,
+        rejected: row.rejectReason,
+      };
+
+      const currentRecruiterNote =
+        stageNoteMap[currentWorkflowStatus] ||
+        row.selectionNote ||
+        (currentWorkflowStatus === "submitted" ? row.submittedReason : null) ||
+        "-";
+
       let formattedDate = "N/A";
       if (row.uploadedAt) {
         try {
@@ -1993,7 +2083,7 @@ const exportAllSubmittedResumesHandler = async (req, res) => {
         age: row.age !== null && row.age !== undefined ? row.age : "N/A",
         atsScore: row.atsScore !== null && row.atsScore !== undefined ? `${row.atsScore}%` : "N/A",
         latestStatus: formattedStatus,
-        recruiterNote: row.submittedReason || "-",
+        recruiterNote: currentRecruiterNote,
         submittedAt: formattedDate,
         resumeFileUrl: fileUrl,
       });
@@ -2266,11 +2356,10 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
         ${resumeJoiningDateSelect}
         c.joining_date AS joiningDate,
         ${hasJoinedReasonColumn ? "ei.joined_reason AS joinedReason," : "NULL AS joinedReason,"}
-        ${
-          hasOfficeLocationCityColumn
-            ? "ei.office_location_city AS officeLocationCity"
-            : "NULL AS officeLocationCity"
-        }
+        ${hasOfficeLocationCityColumn
+        ? "ei.office_location_city AS officeLocationCity"
+        : "NULL AS officeLocationCity"
+      }
       FROM resumes_data rd
       INNER JOIN recruiter r ON r.rid = rd.rid
       LEFT JOIN candidate c ON c.res_id = rd.res_id
@@ -2558,15 +2647,14 @@ router.get("/api/admin/attendance", async (req, res) => {
           ),
           ${salaryMeta.hasDailySalaryColumn ? "r.daily_salary," : ""}
           ${salaryMeta.hasMonthlySalaryColumn ? "ROUND(r.monthly_salary / 30, 2)," : ""}
-          ${
-            salaryMeta.hasSalaryColumn
-              ? `CASE
+          ${salaryMeta.hasSalaryColumn
+        ? `CASE
             WHEN TRIM(COALESCE(r.salary, '')) REGEXP '^[0-9]+(\\.[0-9]+)?$'
               THEN ROUND(CAST(TRIM(r.salary) AS DECIMAL(12,2)) / 30, 2)
             ELSE 0
           END`
-              : "0"
-          }
+        : "0"
+      }
         ) AS dailySalary,
         ra.id AS attendanceId,
         ra.status,
@@ -2629,7 +2717,7 @@ router.get("/api/admin/attendance", async (req, res) => {
         accumulator.dailyExpense =
           Math.round(
             (accumulator.dailyExpense + toMoneyNumber(member.salaryAmount)) *
-              100,
+            100,
           ) / 100;
         if (member.status === "present") accumulator.presentCount += 1;
         else if (member.status === "half_day") accumulator.halfDayCount += 1;
@@ -3198,6 +3286,7 @@ router.get("/api/admin/recruiters/list", async (req, res) => {
          r.phone,
          COALESCE(NULLIF(TRIM(r.account_status), ''), 'active') AS accountStatus,
          COALESCE(r.role, 'recruiter') AS role,
+         COALESCE(r.team, 'Team BPO') AS team,
          r.salary_credit_target_rid AS salaryCreditTargetRid,
          ${salaryMeta.salarySelect}
          ${salaryMeta.monthlySalarySelect}
@@ -3239,10 +3328,11 @@ router.get("/api/admin/recruiters/list", async (req, res) => {
           phone: row.phone || null,
           accountStatus:
             String(row.accountStatus || "active").trim().toLowerCase() ===
-            "inactive"
+              "inactive"
               ? "inactive"
               : "active",
           role: normalizeStaffRole(row.role),
+          team: row.team || "Team BPO",
           currentSalary:
             toMoneyOrNull(effectiveSalaryRow.historyMonthlySalary) ??
             legacySalary.monthlySalary,
@@ -3772,7 +3862,7 @@ router.post(
         effectiveRecruiterRid = salaryContext?.owner?.rid || effectiveRecruiterRid;
         recruiterName = salaryContext?.owner?.name || "";
         recruiterPhone = salaryContext?.owner?.phone || "";
-      } catch {}
+      } catch { }
     }
 
     const reasonResult = revenueReasonFromPayload({
@@ -3885,16 +3975,16 @@ router.post(
         entry:
           entryRows.length > 0
             ? {
-                id: Number(entryRows[0].id),
-                companyRev: toMoneyNumber(entryRows[0].companyRev),
-                expense: toMoneyNumber(entryRows[0].expense),
-                profit: toMoneyNumber(entryRows[0].profit),
-                reason: entryRows[0].reason || "",
-                photo: normalizePhotoValue(entryRows[0].photo),
-                resId: entryRows[0].resId || normalizedResId || null,
-                entryType: normalizeRevenueEntryType(entryRows[0].entryType),
-                createdAt: entryRows[0].createdAt,
-              }
+              id: Number(entryRows[0].id),
+              companyRev: toMoneyNumber(entryRows[0].companyRev),
+              expense: toMoneyNumber(entryRows[0].expense),
+              profit: toMoneyNumber(entryRows[0].profit),
+              reason: entryRows[0].reason || "",
+              photo: normalizePhotoValue(entryRows[0].photo),
+              resId: entryRows[0].resId || normalizedResId || null,
+              entryType: normalizeRevenueEntryType(entryRows[0].entryType),
+              createdAt: entryRows[0].createdAt,
+            }
             : null,
       });
     } catch (error) {
@@ -4105,7 +4195,7 @@ router.put("/api/admin/resumes/:resId/verified-reason", async (req, res) => {
   const resId = String(req.params.resId || "").trim();
   const verifiedReason =
     req.body?.verified_reason === undefined ||
-    req.body?.verified_reason === null
+      req.body?.verified_reason === null
       ? null
       : String(req.body.verified_reason).trim();
 
@@ -4450,46 +4540,46 @@ const buildWorkflowResponseFields = (row = {}, options = {}) => {
     options.includeSelection !== undefined
       ? options.includeSelection
       : workflowStatus !== DEFAULT_WORKFLOW_STATUS ||
-        hasNonEmptyValue(row.selectionStatus) ||
-        hasNonEmptyValue(row.selectionNote) ||
-        hasNonEmptyValue(row.selectedAt);
+      hasNonEmptyValue(row.selectionStatus) ||
+      hasNonEmptyValue(row.selectionNote) ||
+      hasNonEmptyValue(row.selectedAt);
 
   const selection = includeSelection
     ? {
-        ...(row.selection || {}),
-        status: workflowStatus,
-        note: row.selection?.note ?? row.selectionNote ?? row.note ?? null,
-        selectedByAdmin:
-          row.selection?.selectedByAdmin ?? row.selectedByAdmin ?? null,
-        selectedAt: row.selection?.selectedAt ?? row.selectedAt ?? null,
-        walkInDate:
-          row.selection?.walkInDate ??
-          row.walkInDate ??
-          row.currentWalkInDate ??
-          null,
-        resumeJoiningDate:
-          row.selection?.resumeJoiningDate ??
-          row.resumeJoiningDate ??
-          row.currentJoiningDate ??
-          null,
-        joiningDate:
-          row.selection?.joiningDate ??
-          row.joiningDate ??
-          row.currentJoiningDate ??
-          null,
-        joinedReason:
-          row.selection?.joinedReason ??
-          row.joinedReason ??
-          row.joiningNote ??
-          null,
-        joiningNote:
-          row.selection?.joiningNote ??
-          row.joinedReason ??
-          row.joiningNote ??
-          null,
-        dropoutReason:
-          row.selection?.dropoutReason ?? row.dropoutReason ?? null,
-      }
+      ...(row.selection || {}),
+      status: workflowStatus,
+      note: row.selection?.note ?? row.selectionNote ?? row.note ?? null,
+      selectedByAdmin:
+        row.selection?.selectedByAdmin ?? row.selectedByAdmin ?? null,
+      selectedAt: row.selection?.selectedAt ?? row.selectedAt ?? null,
+      walkInDate:
+        row.selection?.walkInDate ??
+        row.walkInDate ??
+        row.currentWalkInDate ??
+        null,
+      resumeJoiningDate:
+        row.selection?.resumeJoiningDate ??
+        row.resumeJoiningDate ??
+        row.currentJoiningDate ??
+        null,
+      joiningDate:
+        row.selection?.joiningDate ??
+        row.joiningDate ??
+        row.currentJoiningDate ??
+        null,
+      joinedReason:
+        row.selection?.joinedReason ??
+        row.joinedReason ??
+        row.joiningNote ??
+        null,
+      joiningNote:
+        row.selection?.joiningNote ??
+        row.joinedReason ??
+        row.joiningNote ??
+        null,
+      dropoutReason:
+        row.selection?.dropoutReason ?? row.dropoutReason ?? null,
+    }
     : null;
 
   return {
@@ -5535,6 +5625,8 @@ router.get("/api/admin/performance", async (req, res) => {
         jrs.selection_note AS selectionNote,
         c.name AS candidateName,
         c.phone AS candidatePhone,
+        c.level_of_edu AS latestEducationLevel,
+        c.level_of_edu AS highestQualification,
         c.revenue AS candidateRevenue,
         j.revenue AS companyRevenue,
         j.company_name AS companyName,
@@ -5553,20 +5645,23 @@ router.get("/api/admin/performance", async (req, res) => {
         ei.left_reason AS leftReason
       FROM resumes_data rd
       LEFT JOIN candidate c ON c.res_id = rd.res_id
-      INNER JOIN recruiter recruiter ON recruiter.rid = rd.rid
+      LEFT JOIN recruiter recruiter ON recruiter.rid = rd.rid
       LEFT JOIN job_resume_selection jrs
         ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
       LEFT JOIN jobs j ON j.jid = rd.job_jid
       LEFT JOIN recruiter teamLeader ON teamLeader.rid = j.recruiter_rid
       LEFT JOIN recruiter statusActor ON statusActor.rid = jrs.selected_by_admin
       ${buildExtraInfoJoin("rd.res_id")}
-      WHERE COALESCE(LOWER(TRIM(rd.submitted_by_role)), 'recruiter') <> 'candidate'
-        AND LOWER(TRIM(COALESCE(recruiter.role, 'recruiter'))) IN (
+      WHERE (
+        recruiter.rid IS NULL
+        OR LOWER(TRIM(COALESCE(recruiter.role, 'recruiter'))) IN (
           'recruiter',
           'team leader',
           'team_leader',
-          'job creator'
+          'job creator',
+          'admin'
         )
+      )
       ORDER BY rd.uploaded_at DESC, rd.res_id DESC`,
     );
 
@@ -5593,6 +5688,9 @@ router.get("/api/admin/performance", async (req, res) => {
         city: row.city || null,
         resumeFilename: row.resumeFilename || null,
         candidateName: row.candidateName || null,
+        latestEducationLevel: row.latestEducationLevel || null,
+        highestQualification:
+          row.highestQualification || row.latestEducationLevel || null,
         submittedAt: row.submittedAt || row.uploadedAt || null,
         uploadedAt: row.submittedAt || row.uploadedAt || null,
         walkInDate: row.walkInDate || null,
@@ -5794,25 +5892,107 @@ router.get("/api/admin/performance", async (req, res) => {
         },
       };
 
+      const LINEAR_STAGES = [
+        "submitted",
+        "verified",
+        "walk_in",
+        "shortlisted",
+        "selected",
+        "joined",
+        "billed",
+      ];
+
+      const hasRowPassedStage = (candidateRow, targetStage) => {
+        const target = String(targetStage || "").trim().toLowerCase();
+        if (!target) return false;
+
+        const current = String(candidateRow.workflowStatus || "submitted")
+          .trim()
+          .toLowerCase();
+
+        if (current === target) return true;
+        if (target === "submitted") return true;
+
+        const hasRecord = (key) => {
+          switch (key) {
+            case "verified":
+              return Boolean(candidateRow.verifiedAt || candidateRow.verifiedReason);
+            case "others":
+              return Boolean(candidateRow.othersAt || candidateRow.othersReason);
+            case "walk_in":
+              return Boolean(candidateRow.walkInAt || candidateRow.walkInDate || candidateRow.walkInReason);
+            case "shortlisted":
+              return Boolean(candidateRow.shortlistedAt || candidateRow.shortlistedReason);
+            case "selected":
+              return Boolean(candidateRow.selectedAt || candidateRow.selectReason);
+            case "joined":
+              return Boolean(candidateRow.joinedAt || candidateRow.joiningDate || candidateRow.joinedReason);
+            case "billed":
+              return Boolean(candidateRow.billedAt || candidateRow.billedReason);
+            case "dropout":
+              return Boolean(candidateRow.dropoutAt || candidateRow.dropoutReason || current === "dropout");
+            case "rejected":
+              return Boolean(candidateRow.rejectedAt || candidateRow.rejectReason || current === "rejected");
+            case "left":
+              return Boolean(candidateRow.leftAt || candidateRow.leftReason || current === "left");
+            default:
+              return false;
+          }
+        };
+
+        if (hasRecord(target)) return true;
+
+        const targetIndex = LINEAR_STAGES.indexOf(target);
+        if (targetIndex !== -1) {
+          const currentIndex = LINEAR_STAGES.indexOf(current);
+          if (currentIndex > targetIndex) {
+            if (target === "verified" && hasRecord("others") && !hasRecord("verified")) {
+              return false;
+            }
+            return true;
+          }
+
+          if (current === "dropout") {
+            const dropoutMax = (candidateRow.joiningDate || candidateRow.selectedAt) ? 4 : 3;
+            return targetIndex <= dropoutMax;
+          }
+
+          if (current === "left") {
+            return targetIndex <= 5;
+          }
+
+          if (current === "rejected") {
+            if (candidateRow.joiningDate && targetIndex <= 4) return true;
+            if ((candidateRow.walkInDate || candidateRow.walkInReason || candidateRow.walkInAt) && targetIndex <= 2) return true;
+            if ((candidateRow.verifiedReason || candidateRow.verifiedAt) && targetIndex <= 1) return true;
+          }
+        }
+
+        return false;
+      };
+
       for (const [statusKey, statusEvent] of Object.entries(statusEventMap)) {
-        // Only count if this status event occurred in the date range (or for joined, if scheduled joining date is in range)
+        if (!hasRowPassedStage(row, statusKey)) {
+          continue;
+        }
+
+        const effectiveEventAt =
+          statusEvent.eventAt ||
+          row.submittedAt;
+
+        // Count if this status event occurred in the date range (or for joined, if scheduled joining date is in range)
         const isEventInRange =
-          isTimestampWithinInclusiveRange(statusEvent.eventAt, dateRange) ||
+          isTimestampWithinInclusiveRange(effectiveEventAt, dateRange) ||
           (statusKey === "joined" &&
             statusEvent.joiningDate &&
             isTimestampWithinInclusiveRange(statusEvent.joiningDate, dateRange));
         if (!isEventInRange)
           continue;
 
-        // Strictly isolate status stages: candidate must belong to their current active status
-        if (row.workflowStatus !== statusKey) {
-          continue;
-        }
-
         statusDrilldown[statusKey].push(
           normalizePerformanceDrilldownItem({
             ...row,
-            eventAt: statusEvent.eventAt,
+            eventAt: statusEvent.eventAt || row.submittedAt,
             teamLeaderRid: isTeamLeaderLikeRole(statusEvent.teamLeaderSource)
               ? statusEvent.teamLeaderRid || null
               : null,
@@ -5826,9 +6006,9 @@ router.get("/api/admin/performance", async (req, res) => {
           recruiterStats[PERFORMANCE_EVENT_META[statusKey].recruiterField] += 1;
           if (
             !recruiterStats.lastUpdated ||
-            statusEvent.eventAt > recruiterStats.lastUpdated
+            (effectiveEventAt && effectiveEventAt > recruiterStats.lastUpdated)
           ) {
-            recruiterStats.lastUpdated = statusEvent.eventAt;
+            recruiterStats.lastUpdated = effectiveEventAt;
           }
         }
       }
@@ -5915,6 +6095,54 @@ router.get("/api/admin/performance", async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // DELETE /api/admin/recruiters/:rid — Cascade-delete recruiter & all data
 // ═══════════════════════════════════════════════════════════════════════════
+
+router.patch("/api/admin/recruiters/:rid/team", async (req, res) => {
+  if (!ensureAdminAuthorized(req, res)) return;
+
+  const rid = String(req.params?.rid || "").trim();
+  const rawTeam = String(req.body?.team || "").trim();
+  const normalizedTeam = rawTeam.toLowerCase().includes("nbfc")
+    ? "Team NBFC"
+    : "Team BPO";
+
+  if (!rid) {
+    return res.status(400).json({ message: "Recruiter ID is required." });
+  }
+
+  try {
+    if (!(await columnExists("recruiter", "team"))) {
+      await pool.query(
+        "ALTER TABLE recruiter ADD COLUMN team VARCHAR(50) NOT NULL DEFAULT 'Team BPO'",
+      );
+    }
+
+    const [recruiterRows] = await pool.query(
+      "SELECT rid, name, email, role FROM recruiter WHERE rid = ? LIMIT 1",
+      [rid],
+    );
+
+    if (recruiterRows.length === 0) {
+      return res.status(404).json({ message: "Recruiter not found." });
+    }
+
+    await pool.query("UPDATE recruiter SET team = ? WHERE rid = ?", [
+      normalizedTeam,
+      rid,
+    ]);
+
+    return res.status(200).json({
+      message: "Recruiter team updated successfully.",
+      rid,
+      team: normalizedTeam,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to update recruiter team.",
+      error: error.message,
+    });
+  }
+});
+
 router.patch("/api/admin/recruiters/:rid/account-status", async (req, res) => {
   if (!ensureAdminAuthorized(req, res)) return;
 

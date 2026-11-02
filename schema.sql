@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS recruiter (
   monthly_salary DECIMAL(12,2) NULL,
   daily_salary DECIMAL(12,2) NULL,
   addjob BOOLEAN NOT NULL DEFAULT FALSE,
+  team VARCHAR(50) NOT NULL DEFAULT 'Team BPO',
   success INT NOT NULL DEFAULT 0,
   points INT NOT NULL DEFAULT 0
 );
@@ -22,7 +23,7 @@ SET role = CASE WHEN addjob = TRUE THEN 'job creator' ELSE 'recruiter' END
 WHERE role IS NULL OR TRIM(role) = '';
 
 CREATE TABLE IF NOT EXISTS jobs (
-  jid INT AUTO_INCREMENT PRIMARY KEY,
+  jid VARCHAR(30) PRIMARY KEY,
   recruiter_rid VARCHAR(20) NOT NULL,
   city VARCHAR(120) NOT NULL,
   state VARCHAR(120) NOT NULL,
@@ -71,7 +72,7 @@ ALTER TABLE recruiter
 
 CREATE TABLE IF NOT EXISTS applications (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  job_jid INT NOT NULL,
+  job_jid VARCHAR(30) NOT NULL,
   res_id VARCHAR(30) NULL,
   resume_filename VARCHAR(255) NULL,
   resume_parsed_data JSON NULL,
@@ -134,7 +135,7 @@ CREATE TABLE IF NOT EXISTS recruiter_candidate_clicks (
 CREATE TABLE IF NOT EXISTS resumes_data (
   res_id VARCHAR(30) PRIMARY KEY,
   rid VARCHAR(20) NOT NULL,
-  job_jid INT NULL,
+  job_jid VARCHAR(30) NULL,
   submitted_by_role VARCHAR(30) NULL DEFAULT 'recruiter',
   source VARCHAR(50) NULL,
   is_accepted BOOLEAN NOT NULL DEFAULT FALSE,
@@ -166,7 +167,7 @@ CREATE TABLE IF NOT EXISTS resumes_data (
 CREATE TABLE IF NOT EXISTS extra_info (
   res_id VARCHAR(30) NOT NULL,
   resume_id VARCHAR(30) NULL,
-  job_jid INT NULL,
+  job_jid VARCHAR(30) NULL,
   recruiter_rid VARCHAR(50) NULL,
   rid VARCHAR(50) NULL,
   submitted_reason TEXT NULL,
@@ -258,7 +259,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_resumes_data_file_hash ON resumes_data (fi
 CREATE TABLE IF NOT EXISTS candidate (
   cid VARCHAR(20) PRIMARY KEY,
   res_id VARCHAR(30) NOT NULL,
-  job_jid INT NULL,
+  job_jid VARCHAR(30) NULL,
   recruiter_rid VARCHAR(20) NULL,
   rid VARCHAR(20) NULL,
   name VARCHAR(100) NOT NULL,
@@ -301,7 +302,7 @@ CREATE TABLE IF NOT EXISTS resume_id_sequence (
 
 CREATE TABLE IF NOT EXISTS job_resume_selection (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
-  job_jid INT NOT NULL,
+  job_jid VARCHAR(30) NOT NULL,
   res_id VARCHAR(30) NOT NULL,
   selected_by_admin VARCHAR(50) NOT NULL,
   selection_status ENUM('selected', 'rejected', 'on_hold') NOT NULL DEFAULT 'selected',
@@ -396,7 +397,7 @@ CREATE TABLE IF NOT EXISTS recruiter_salary_history (
 
 CREATE TABLE IF NOT EXISTS job_recruiter_access (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
-  job_jid INT NOT NULL,
+  job_jid VARCHAR(30) NOT NULL,
   recruiter_rid VARCHAR(20) NOT NULL,
   granted_by VARCHAR(20) NOT NULL,
   granted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -451,7 +452,7 @@ ALTER TABLE recruiter
 CREATE TABLE IF NOT EXISTS recruiter_points_log (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   recruiter_rid VARCHAR(20) NOT NULL,
-  job_jid INT NULL,
+  job_jid VARCHAR(30) NULL,
   res_id VARCHAR(30) NULL,
   points INT NOT NULL DEFAULT 0,
   reason VARCHAR(100) NOT NULL DEFAULT 'billed',

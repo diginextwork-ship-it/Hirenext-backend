@@ -238,15 +238,29 @@ const ensureJobsTableColumns = async () => {
     );
   }
 
+  if (!(await columnExists("jobs", "access_mode"))) {
+    const hasRoleName = await columnExists("jobs", "role_name");
+    const afterClause = hasRoleName ? " AFTER role_name" : "";
+    await pool.query(
+      `ALTER TABLE jobs ADD COLUMN access_mode ENUM('open','restricted') NOT NULL DEFAULT 'open'${afterClause}`,
+    );
+  }
+
   if (!(await indexExists("jobs", "idx_jobs_created_at"))) {
     await pool.query("CREATE INDEX idx_jobs_created_at ON jobs (created_at)");
   }
 
-  if (!(await indexExists("jobs", "idx_jobs_access_mode"))) {
+  if (
+    (await columnExists("jobs", "access_mode")) &&
+    !(await indexExists("jobs", "idx_jobs_access_mode"))
+  ) {
     await pool.query("CREATE INDEX idx_jobs_access_mode ON jobs (access_mode)");
   }
 
-  if (!(await indexExists("jobs", "idx_jobs_recruiter_rid"))) {
+  if (
+    (await columnExists("jobs", "recruiter_rid")) &&
+    !(await indexExists("jobs", "idx_jobs_recruiter_rid"))
+  ) {
     await pool.query(
       "CREATE INDEX idx_jobs_recruiter_rid ON jobs (recruiter_rid)",
     );
@@ -302,6 +316,12 @@ const ensureRecruiterTableColumns = async () => {
   if (!(await columnExists("recruiter", "salary_credit_target_rid"))) {
     await pool.query(
       "ALTER TABLE recruiter ADD COLUMN salary_credit_target_rid VARCHAR(20) NULL",
+    );
+  }
+
+  if (!(await columnExists("recruiter", "team"))) {
+    await pool.query(
+      "ALTER TABLE recruiter ADD COLUMN team VARCHAR(50) NOT NULL DEFAULT 'Team BPO'",
     );
   }
 

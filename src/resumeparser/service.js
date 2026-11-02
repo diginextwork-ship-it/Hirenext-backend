@@ -275,6 +275,8 @@ const mergeParsedDataWithFallback = ({ aiParsedData, fallbackParsedData, resumeT
     .map((line) => line.trim())
     .filter(Boolean);
 
+  const aiName = extractApplicantName(safeAi);
+  const fallbackName = extractApplicantName(safeFallback);
   const rawMergedName = isLikelyNamePresentInText(aiName, lines, text)
     ? aiName
     : fallbackName;

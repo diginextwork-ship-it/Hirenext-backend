@@ -501,7 +501,9 @@ router.post(
   requireAuth,
   requireRoles("admin"),
   async (req, res) => {
-    const { name, email, phone, password, role, monthlySalary } = req.body || {};
+    const { name, email, phone, password, role, monthlySalary, team } = req.body || {};
+    const rawTeam = String(team || "").trim();
+    const normalizedTeam = rawTeam.toLowerCase().includes("nbfc") ? "Team NBFC" : "Team BPO";
 
     if (!name || !email || !phone || !password || !String(role || "").trim()) {
       return res.status(400).json({
@@ -628,6 +630,11 @@ router.post(
         insertColumns.push("daily_salary");
         insertValues.push(dailySalaryAmount);
       }
+      const hasTeamColumn = await columnExists("recruiter", "team");
+      if (hasTeamColumn) {
+        insertColumns.push("team");
+        insertValues.push(normalizedTeam);
+      }
 
       const placeholders = insertColumns.map(() => "?").join(", ");
       await connection.query(
@@ -663,6 +670,7 @@ router.post(
           salary: normalizedMonthlySalary || null,
           monthlySalary: monthlySalaryAmount,
           dailySalary: dailySalaryAmount,
+          team: normalizedTeam,
         },
       });
     } catch (error) {

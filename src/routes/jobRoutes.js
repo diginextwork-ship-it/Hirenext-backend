@@ -38,6 +38,7 @@ const {
   safeJsonOrNull,
   parseJsonField,
   dedupeStringList,
+  normalizeEducationLevel,
   buildAutofillFromParsedData,
   extractCandidateSnapshot,
   buildJobAtsContext,
@@ -2499,9 +2500,11 @@ router.post("/api/applications", async (req, res) => {
     const finalEmail = String(email || autofill.email || "")
       .trim()
       .toLowerCase();
-    const finalLatestEducationLevel = String(
+    const rawLatestEducationLevel = String(
       latestEducationLevel || autofill.latestEducationLevel || "",
     ).trim();
+    const finalLatestEducationLevel =
+      normalizeEducationLevel(rawLatestEducationLevel) || rawLatestEducationLevel;
     const finalBoardUniversity = String(
       boardUniversity || autofill.boardUniversity || "",
     ).trim();

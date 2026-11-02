@@ -61,6 +61,63 @@ const normalizeCandidateName = (value) => {
     .join(" ");
 };
 
+const normalizeEducationLevel = (value) => {
+  if (!value) return "";
+  const cleaned = String(value).trim().toLowerCase();
+  if (["phd", "doctorate", "ph.d", "doctor"].some((k) => cleaned.includes(k))) {
+    return "PhD";
+  }
+  if (
+    [
+      "master",
+      "mtech",
+      "m.tech",
+      "me",
+      "m.e",
+      "mca",
+      "mba",
+      "msc",
+      "m.sc",
+      "post graduate",
+      "pg",
+    ].some((k) => cleaned.includes(k))
+  ) {
+    return "Master's";
+  }
+  if (
+    ["undergraduate", "diploma", "polytechnic"].some((k) => cleaned.includes(k))
+  ) {
+    return "Undergraduate";
+  }
+  if (
+    [
+      "bachelor",
+      "btech",
+      "b.tech",
+      "be",
+      "b.e",
+      "bca",
+      "bsc",
+      "b.sc",
+      "bcom",
+      "b.com",
+      "ba",
+      "b.a",
+      "graduate",
+      "degree",
+    ].some((k) => cleaned.includes(k))
+  ) {
+    return "Bachelor's";
+  }
+  if (["12th", "intermediate", "higher secondary"].some((k) => cleaned.includes(k))) {
+    return "12th Standard";
+  }
+  if (["10th", "secondary", "matriculation"].some((k) => cleaned.includes(k))) {
+    return "10th Standard";
+  }
+  return String(value).trim();
+};
+
 const safeJsonOrNull = (value) => {
   if (value === undefined || value === null) return null;
   return JSON.stringify(value);
@@ -368,6 +425,7 @@ module.exports = {
   sha256Hex,
   dedupeStringList,
   pickFirstFilled,
+  normalizeEducationLevel,
   buildAutofillFromParsedData,
   extractCandidateSnapshot,
   buildJobAtsContext,
