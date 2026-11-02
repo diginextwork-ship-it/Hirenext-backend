@@ -3353,6 +3353,116 @@ router.get("/api/admin/recruiters/list", async (req, res) => {
   }
 });
 
+router.get("/api/admin/recruiters/:rid/resumes", async (req, res) => {
+  if (!ensureAdminAuthorized(req, res)) return;
+
+  const recruiterRid = String(req.params?.rid || "").trim();
+  if (!recruiterRid) {
+    return res.status(400).json({ message: "Recruiter ID is required." });
+  }
+
+  try {
+    const [recruiterRows] = await pool.query(
+      `SELECT rid, name, email, phone, COALESCE(team, 'Team BPO') AS team,
+              COALESCE(NULLIF(TRIM(account_status), ''), 'active') AS accountStatus
+       FROM recruiter
+       WHERE rid = ?
+       LIMIT 1`,
+      [recruiterRid]
+    );
+
+    if (recruiterRows.length === 0) {
+      return res.status(404).json({ message: "Recruiter not found." });
+    }
+
+    const recruiter = recruiterRows[0];
+
+    const hasAtsScoreColumn = await columnExists("resumes_data", "ats_score");
+    const atsScoreSelect = hasAtsScoreColumn ? "rd.ats_score AS atsScore," : "NULL AS atsScore,";
+
+    const [rows] = await pool.query(
+      `SELECT
+        rd.res_id AS resId,
+        rd.job_jid AS jobJid,
+        rd.rid AS rid,
+        rd.uploaded_at AS uploadedAt,
+        DATE_FORMAT(COALESCE(rd.uploaded_at, ei.submitted_at), '%Y-%m-%d %H:%i:%s') AS submittedAt,
+        rd.resume_filename AS resumeFilename,
+        rd.resume_type AS resumeType,
+        ${atsScoreSelect}
+        c.name AS candidateName,
+        c.phone AS candidatePhone,
+        c.email AS candidateEmail,
+        DATE_FORMAT(c.walk_in, '%Y-%m-%d') AS walkInDate,
+        DATE_FORMAT(c.joining_date, '%Y-%m-%d') AS joiningDate,
+        j.company_name AS companyName,
+        j.role_name AS roleName,
+        j.city AS city,
+        COALESCE(jrs.selection_status, 'submitted') AS workflowStatus,
+        jrs.selection_note AS workflowNote,
+        jrs.selected_at AS workflowUpdatedAt,
+        ei.submitted_reason AS submittedReason,
+        ei.verified_reason AS verifiedReason,
+        ei.others_reason AS othersReason,
+        ei.walk_in_reason AS walkInReason,
+        ei.select_reason AS selectReason,
+        ei.shortlisted_reason AS shortlistedReason,
+        ei.reject_reason AS rejectReason,
+        ei.joined_reason AS joinedReason,
+        ei.dropout_reason AS dropoutReason,
+        ei.billed_reason AS billedReason,
+        ei.left_reason AS leftReason
+       FROM resumes_data rd
+       LEFT JOIN candidate c ON c.res_id = rd.res_id
+       LEFT JOIN jobs j ON j.jid = rd.job_jid
+       ${buildExtraInfoJoin("rd.res_id")}
+       LEFT JOIN job_resume_selection jrs ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
+       WHERE rd.rid = ?
+       ORDER BY rd.uploaded_at DESC, rd.res_id DESC`,
+      [recruiterRid]
+    );
+
+    return res.status(200).json({
+      recruiter,
+      totalCount: rows.length,
+      resumes: rows.map((r) => ({
+        resId: r.resId,
+        jobJid: r.jobJid,
+        candidateName: r.candidateName || "N/A",
+        candidatePhone: r.candidatePhone || "N/A",
+        candidateEmail: r.candidateEmail || "N/A",
+        companyName: r.companyName || "N/A",
+        roleName: r.roleName || "N/A",
+        city: r.city || "N/A",
+        workflowStatus: r.workflowStatus || "submitted",
+        resumeFilename: r.resumeFilename || null,
+        walkInDate: r.walkInDate || null,
+        joiningDate: r.joiningDate || null,
+        submittedAt: r.submittedAt || r.uploadedAt,
+        uploadedAt: r.uploadedAt,
+        atsScore: r.atsScore,
+        note:
+          r.workflowNote ||
+          r.joinedReason ||
+          r.selectReason ||
+          r.shortlistedReason ||
+          r.verifiedReason ||
+          r.submittedReason ||
+          r.rejectReason ||
+          r.othersReason ||
+          r.leftReason ||
+          null,
+      })),
+    });
+  } catch (error) {
+    console.error("GET /api/admin/recruiters/:rid/resumes error:", error);
+    return res.status(500).json({
+      message: "Failed to fetch recruiter resumes.",
+      error: error.message,
+    });
+  }
+});
+
 router.get("/api/admin/recruiters/:rid/salary-history", async (req, res) => {
   if (!ensureAdminAuthorized(req, res)) return;
 
