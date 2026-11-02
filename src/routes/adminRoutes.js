@@ -5459,6 +5459,7 @@ router.get("/api/admin/performance", async (req, res) => {
         r.rid,
         r.name,
         r.email,
+        COALESCE(r.team, 'Team BPO') AS team,
         COALESCE(NULLIF(TRIM(r.account_status), ''), 'active') AS accountStatus,
         COALESCE(r.points, 0) AS points,
         COALESCE(jc.jobs_created, 0) AS jobsCreated,
@@ -5486,6 +5487,7 @@ router.get("/api/admin/performance", async (req, res) => {
       rid: row.rid,
       name: row.name,
       email: row.email,
+      team: row.team || "Team BPO",
       accountStatus:
         String(row.accountStatus || "active")
           .trim()
@@ -5504,6 +5506,7 @@ router.get("/api/admin/performance", async (req, res) => {
         r.rid,
         r.name,
         r.email,
+        COALESCE(r.team, 'Team BPO') AS team,
         COALESCE(NULLIF(TRIM(r.account_status), ''), 'active') AS accountStatus,
         COALESCE(r.points, 0) AS points
       FROM recruiter r
@@ -5738,6 +5741,7 @@ router.get("/api/admin/performance", async (req, res) => {
           rid: row.rid,
           name: row.name,
           email: row.email,
+          team: row.team || "Team BPO",
           accountStatus:
             String(row.accountStatus || "active")
               .trim()
