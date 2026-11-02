@@ -76,6 +76,7 @@ const allowedOrigins = new Set(
     "https://hirenextindia.com",
     "https://www.hirenextindia.com",
     "https://app.hirenextindia.com",
+    "https://api.hirenextindia.com",
     "https://hotpink-starling-791289.hostingersite.com",
     "https://mediumvioletred-rhinoceros-257319.hostingersite.com",
   ]
