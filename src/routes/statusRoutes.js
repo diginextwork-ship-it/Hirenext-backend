@@ -572,12 +572,25 @@ router.get(
       const teamCondition = hasTeamFilter ? "AND COALESCE(r.team, 'Team BPO') = ?" : "";
       if (hasTeamFilter) queryParams.push(rawTeam.toLowerCase().includes("nbfc") ? "Team NBFC" : "Team BPO");
 
+      const hasAccountStatusColumn = await columnExists("recruiter", "account_status");
+      const accountStatusFilter = hasAccountStatusColumn
+        ? "AND COALESCE(NULLIF(TRIM(r.account_status), ''), 'active') = 'active'"
+        : "";
+      const accountStatusSelect = hasAccountStatusColumn
+        ? "COALESCE(NULLIF(TRIM(r.account_status), ''), 'active') AS account_status,"
+        : "'active' AS account_status,";
+      const hasPhoneColumn = await columnExists("recruiter", "phone");
+      const phoneSelect = hasPhoneColumn ? "r.phone," : "NULL AS phone,";
+
       const [rows] = await pool.query(
         `SELECT
           r.rid,
           r.name,
           r.email,
+          ${phoneSelect}
+          COALESCE(r.role, 'recruiter') AS role,
           COALESCE(r.team, 'Team BPO') AS team,
+          ${accountStatusSelect}
           COALESCE(stats.joined_count, 0) AS joined_count,
           COALESCE(r.points, 0) AS points
         FROM recruiter r
@@ -598,7 +611,8 @@ router.get(
           GROUP BY rd.rid
         ) stats ON stats.rid = r.rid
         WHERE LOWER(TRIM(COALESCE(r.role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator')
-        ${teamCondition}
+          ${accountStatusFilter}
+          ${teamCondition}
         ORDER BY COALESCE(stats.joined_count, 0) DESC, COALESCE(r.points, 0) DESC, r.name ASC`,
         queryParams,
       );
@@ -609,7 +623,10 @@ router.get(
           rid: row.rid,
           name: row.name,
           email: row.email,
+          phone: row.phone || null,
+          role: row.role || 'recruiter',
           team: row.team || 'Team BPO',
+          accountStatus: row.account_status || 'active',
           joined: Number(row.joined_count) || 0,
           points: Number(row.points) || 0,
         })),
