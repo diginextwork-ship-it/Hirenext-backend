@@ -1757,11 +1757,9 @@ router.get(
           rd.rid AS rid,
           COALESCE(NULLIF(TRIM(uploader.name), ''), rd.rid) AS name,
           COUNT(rd.res_id) AS resumeCount,
-          MAX(rd.uploaded_at) AS latestUpload,
-          GROUP_CONCAT(DISTINCT j.company_name SEPARATOR ', ') AS sampleCompanies
+          MAX(rd.uploaded_at) AS latestUpload
         FROM resumes_data rd
         LEFT JOIN recruiter uploader ON uploader.rid = rd.rid
-        LEFT JOIN jobs j ON j.jid = rd.job_jid
         LEFT JOIN job_resume_selection jrs
           ON jrs.job_jid = rd.job_jid
          AND jrs.res_id = rd.res_id
@@ -1780,7 +1778,6 @@ router.get(
         name: row.name || "Other Recruiter",
         count: Number(row.resumeCount || 0),
         latestUpload: row.latestUpload || null,
-        companiesList: row.sampleCompanies || "",
       }));
 
       const totalResumes = recruiters.reduce((sum, r) => sum + r.count, 0);
