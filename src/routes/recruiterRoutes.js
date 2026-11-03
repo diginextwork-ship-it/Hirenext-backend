@@ -1751,6 +1751,8 @@ router.get(
     const { rid } = req.params;
     if (!authorizeRecruiterResourceView(req, res, rid)) return;
 
+    const onlyOwn = String(req.query?.own || "").trim().toLowerCase() === "true";
+
     try {
       const hasAtsScoreColumn = await columnExists("resumes_data", "ats_score");
       const hasAtsMatchColumn = await columnExists(
@@ -1767,6 +1769,8 @@ router.get(
       const [rows] = await pool.query(
         `SELECT
         rd.res_id AS resId,
+        rd.rid AS rid,
+        COALESCE(uploader.name, rd.rid) AS recruiterName,
         rd.job_jid AS jobJid,
         rd.ats_raw_json AS atsRawJson,
         c.name AS candidateName,
@@ -1793,6 +1797,7 @@ router.get(
         j.role_name AS roleName,
         j.city AS city
       FROM resumes_data rd
+      LEFT JOIN recruiter uploader ON uploader.rid = rd.rid
       LEFT JOIN candidate c ON c.res_id = rd.res_id
       LEFT JOIN jobs j ON j.jid = rd.job_jid
       ${buildExtraInfoJoin("rd.res_id")}
@@ -1800,7 +1805,13 @@ router.get(
         ON jrs.job_jid = rd.job_jid
        AND jrs.res_id = rd.res_id
       LEFT JOIN recruiter statusActor ON statusActor.rid = jrs.selected_by_admin
-      WHERE rd.rid = ?
+      WHERE (
+        rd.rid = ?
+        OR (
+          ${onlyOwn ? "FALSE" : `rd.uploaded_at < DATE_SUB(NOW(), INTERVAL 15 DAY)
+          AND LOWER(COALESCE(jrs.selection_status, 'submitted')) NOT IN ('selected', 'shortlisted', 'pending_joining', 'joined', 'billed')`}
+        )
+      )
         AND COALESCE(rd.duplicate_hidden, FALSE) = FALSE
       ORDER BY rd.uploaded_at DESC`,
         [rid],
@@ -1850,6 +1861,8 @@ router.get(
             ...row,
             ...extraInfo,
             ...compatibilityFields,
+            rid: row.rid,
+            recruiterName: row.recruiterName || compatibilityFields.recruiterName || null,
             name: compatibilityFields.candidateName,
             phone: compatibilityFields.candidatePhone,
             email: compatibilityFields.email,
@@ -1897,7 +1910,17 @@ router.get(
         rd.resume_type AS resumeType
       FROM resumes_data rd
       ${resumeJoinSql}
-      WHERE rd.res_id = ? AND rd.rid = ?
+      LEFT JOIN job_resume_selection jrs
+        ON jrs.job_jid = rd.job_jid
+       AND jrs.res_id = rd.res_id
+      WHERE rd.res_id = ?
+        AND (
+          rd.rid = ?
+          OR (
+            rd.uploaded_at < DATE_SUB(NOW(), INTERVAL 15 DAY)
+            AND LOWER(COALESCE(jrs.selection_status, 'submitted')) NOT IN ('selected', 'shortlisted', 'pending_joining', 'joined', 'billed')
+          )
+        )
       LIMIT 1`,
         [resId, rid],
       );
@@ -2014,7 +2037,17 @@ router.put(
           rd.job_jid AS jobJid,
           rd.ats_raw_json AS atsRawJson
         FROM resumes_data rd
-        WHERE rd.res_id = ? AND rd.rid = ?
+        LEFT JOIN job_resume_selection jrs
+          ON jrs.job_jid = rd.job_jid
+         AND jrs.res_id = rd.res_id
+        WHERE rd.res_id = ?
+          AND (
+            rd.rid = ?
+            OR (
+              rd.uploaded_at < DATE_SUB(NOW(), INTERVAL 15 DAY)
+              AND LOWER(COALESCE(jrs.selection_status, 'submitted')) NOT IN ('selected', 'shortlisted', 'pending_joining', 'joined', 'billed')
+            )
+          )
         LIMIT 1
         FOR UPDATE`,
         [normalizedResId, rid],
@@ -2833,7 +2866,14 @@ router.post(
         LEFT JOIN jobs j ON j.jid = rd.job_jid
         LEFT JOIN job_resume_selection jrs
           ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
-        WHERE rd.res_id = ? AND rd.rid = ?
+        WHERE rd.res_id = ?
+          AND (
+            rd.rid = ?
+            OR (
+              rd.uploaded_at < DATE_SUB(NOW(), INTERVAL 15 DAY)
+              AND LOWER(COALESCE(jrs.selection_status, 'submitted')) NOT IN ('selected', 'shortlisted', 'pending_joining', 'joined', 'billed')
+            )
+          )
         LIMIT 1`,
         [resId, rid],
       );
@@ -3124,7 +3164,14 @@ router.post(
           ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
         LEFT JOIN candidate c ON c.res_id = rd.res_id
         ${buildExtraInfoJoin("rd.res_id")}
-        WHERE rd.res_id = ? AND rd.rid = ?
+        WHERE rd.res_id = ?
+          AND (
+            rd.rid = ?
+            OR (
+              rd.uploaded_at < DATE_SUB(NOW(), INTERVAL 15 DAY)
+              AND LOWER(COALESCE(jrs.selection_status, 'submitted')) NOT IN ('selected', 'shortlisted', 'pending_joining', 'joined', 'billed')
+            )
+          )
         LIMIT 1
         FOR UPDATE`,
         [normalizedResId, rid],
