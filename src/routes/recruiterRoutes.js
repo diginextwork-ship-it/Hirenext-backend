@@ -1744,6 +1744,61 @@ router.post(
 );
 
 router.get(
+  "/api/recruiters/:rid/others-recruiters",
+  requireAuth,
+  requireRoles("recruiter", "team leader", "team_leader"),
+  async (req, res) => {
+    const { rid } = req.params;
+    if (!authorizeRecruiterResourceView(req, res, rid)) return;
+
+    try {
+      const [rows] = await pool.query(
+        `SELECT
+          rd.rid AS rid,
+          COALESCE(NULLIF(TRIM(uploader.name), ''), rd.rid) AS name,
+          COUNT(rd.res_id) AS resumeCount,
+          MAX(rd.uploaded_at) AS latestUpload,
+          GROUP_CONCAT(DISTINCT j.company_name SEPARATOR ', ') AS sampleCompanies
+        FROM resumes_data rd
+        LEFT JOIN recruiter uploader ON uploader.rid = rd.rid
+        LEFT JOIN jobs j ON j.jid = rd.job_jid
+        LEFT JOIN job_resume_selection jrs
+          ON jrs.job_jid = rd.job_jid
+         AND jrs.res_id = rd.res_id
+        WHERE rd.rid != ?
+          AND rd.uploaded_at < DATE_SUB(NOW(), INTERVAL 15 DAY)
+          AND LOWER(COALESCE(jrs.selection_status, 'submitted')) NOT IN ('selected', 'shortlisted', 'pending_joining', 'joined', 'billed')
+          AND COALESCE(rd.duplicate_hidden, FALSE) = FALSE
+        GROUP BY rd.rid, COALESCE(NULLIF(TRIM(uploader.name), ''), rd.rid)
+        ORDER BY resumeCount DESC, name ASC`,
+        [rid],
+      );
+
+      const recruiters = rows.map((row) => ({
+        key: String(row.rid || row.name || "").trim().toLowerCase(),
+        rid: row.rid || null,
+        name: row.name || "Other Recruiter",
+        count: Number(row.resumeCount || 0),
+        latestUpload: row.latestUpload || null,
+        companiesList: row.sampleCompanies || "",
+      }));
+
+      const totalResumes = recruiters.reduce((sum, r) => sum + r.count, 0);
+
+      return res.status(200).json({
+        recruiters,
+        totalResumes,
+      });
+    } catch (error) {
+      return res.status(500).json({
+        message: "Failed to fetch recruiters summary for shared pool.",
+        error: error.message,
+      });
+    }
+  },
+);
+
+router.get(
   "/api/recruiters/:rid/resumes",
   requireAuth,
   requireRoles("recruiter", "team leader", "team_leader"),
@@ -1759,6 +1814,13 @@ router.get(
       scope === "own" ||
       String(req.query?.own || "").trim().toLowerCase() === "true";
 
+    const targetRecruiterRid = String(
+      req.query?.targetRecruiterRid || req.query?.recruiterRid || "",
+    ).trim();
+    const targetRecruiterName = String(
+      req.query?.targetRecruiterName || req.query?.recruiterName || "",
+    ).trim();
+
     try {
       const hasAtsScoreColumn = await columnExists("resumes_data", "ats_score");
       const hasAtsMatchColumn = await columnExists(
@@ -1772,11 +1834,20 @@ router.get(
         ? "ats_match_percentage AS atsMatchPercentage,"
         : "NULL AS atsMatchPercentage,";
 
+      const queryParams = [rid];
       let visibilityWhere = "";
       if (isOthers) {
         visibilityWhere = `rd.rid != ?
           AND rd.uploaded_at < DATE_SUB(NOW(), INTERVAL 15 DAY)
           AND LOWER(COALESCE(jrs.selection_status, 'submitted')) NOT IN ('selected', 'shortlisted', 'pending_joining', 'joined', 'billed')`;
+
+        if (targetRecruiterRid) {
+          visibilityWhere += ` AND rd.rid = ?`;
+          queryParams.push(targetRecruiterRid);
+        } else if (targetRecruiterName) {
+          visibilityWhere += ` AND LOWER(TRIM(COALESCE(uploader.name, ''))) = LOWER(TRIM(?))`;
+          queryParams.push(targetRecruiterName);
+        }
       } else if (onlyOwn) {
         visibilityWhere = `rd.rid = ?`;
       } else {
@@ -1831,7 +1902,7 @@ router.get(
       WHERE ${visibilityWhere}
         AND COALESCE(rd.duplicate_hidden, FALSE) = FALSE
       ORDER BY rd.uploaded_at DESC`,
-        [rid],
+        queryParams,
       );
 
       const extraInfoByResumeId = await fetchExtraInfoByResumeIds(
