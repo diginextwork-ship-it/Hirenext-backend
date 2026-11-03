@@ -572,14 +572,35 @@ router.get(
       const teamCondition = hasTeamFilter ? "AND COALESCE(r.team, 'Team BPO') = ?" : "";
       if (hasTeamFilter) queryParams.push(rawTeam.toLowerCase().includes("nbfc") ? "Team NBFC" : "Team BPO");
 
-      const hasAccountStatusColumn = await columnExists("recruiter", "account_status");
+      let hasAccountStatusColumn = false;
+      try {
+        const [colRows] = await pool.query("SHOW COLUMNS FROM recruiter LIKE 'account_status'");
+        hasAccountStatusColumn = Array.isArray(colRows) && colRows.length > 0;
+      } catch (_) {
+        hasAccountStatusColumn = false;
+      }
+
+      if (!hasAccountStatusColumn) {
+        try {
+          await pool.query("ALTER TABLE recruiter ADD COLUMN account_status VARCHAR(20) NOT NULL DEFAULT 'active'");
+          hasAccountStatusColumn = true;
+        } catch (_) {}
+      }
+
       const accountStatusFilter = hasAccountStatusColumn
-        ? "AND COALESCE(NULLIF(TRIM(r.account_status), ''), 'active') = 'active'"
+        ? "AND LOWER(TRIM(COALESCE(r.account_status, 'active'))) NOT IN ('inactive', 'disabled', 'deactivated', 'blocked')"
         : "";
       const accountStatusSelect = hasAccountStatusColumn
         ? "COALESCE(NULLIF(TRIM(r.account_status), ''), 'active') AS account_status,"
         : "'active' AS account_status,";
-      const hasPhoneColumn = await columnExists("recruiter", "phone");
+
+      let hasPhoneColumn = false;
+      try {
+        const [phoneColRows] = await pool.query("SHOW COLUMNS FROM recruiter LIKE 'phone'");
+        hasPhoneColumn = Array.isArray(phoneColRows) && phoneColRows.length > 0;
+      } catch (_) {
+        hasPhoneColumn = false;
+      }
       const phoneSelect = hasPhoneColumn ? "r.phone," : "NULL AS phone,";
 
       const [rows] = await pool.query(
