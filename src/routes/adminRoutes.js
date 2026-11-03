@@ -1559,9 +1559,13 @@ const buildSubmittedResumesFilter = ({
   const normalizedRecruiter = String(recruiter || "").trim();
   if (normalizedRecruiter) {
     whereClauses.push(
-      "(LOWER(TRIM(COALESCE(r.name, ''))) LIKE ? OR LOWER(TRIM(COALESCE(r.rid, ''))) = ?)",
+      "(LOWER(TRIM(COALESCE(r.name, ''))) LIKE ? OR LOWER(TRIM(COALESCE(r.rid, ''))) = ? OR LOWER(TRIM(COALESCE(rd.rid, ''))) = ?)",
     );
-    params.push(`%${normalizedRecruiter.toLowerCase()}%`, normalizedRecruiter.toLowerCase());
+    params.push(
+      `%${normalizedRecruiter.toLowerCase()}%`,
+      normalizedRecruiter.toLowerCase(),
+      normalizedRecruiter.toLowerCase(),
+    );
   }
 
   const normalizedCompany = String(company || "").trim();
