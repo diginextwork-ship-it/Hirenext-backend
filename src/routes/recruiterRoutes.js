@@ -1751,7 +1751,13 @@ router.get(
     const { rid } = req.params;
     if (!authorizeRecruiterResourceView(req, res, rid)) return;
 
-    const onlyOwn = String(req.query?.own || "").trim().toLowerCase() === "true";
+    const scope = String(req.query?.scope || "").trim().toLowerCase();
+    const isOthers =
+      scope === "others" ||
+      String(req.query?.others || "").trim().toLowerCase() === "true";
+    const onlyOwn =
+      scope === "own" ||
+      String(req.query?.own || "").trim().toLowerCase() === "true";
 
     try {
       const hasAtsScoreColumn = await columnExists("resumes_data", "ats_score");
@@ -1765,6 +1771,23 @@ router.get(
       const atsMatchSelection = hasAtsMatchColumn
         ? "ats_match_percentage AS atsMatchPercentage,"
         : "NULL AS atsMatchPercentage,";
+
+      let visibilityWhere = "";
+      if (isOthers) {
+        visibilityWhere = `rd.rid != ?
+          AND rd.uploaded_at < DATE_SUB(NOW(), INTERVAL 15 DAY)
+          AND LOWER(COALESCE(jrs.selection_status, 'submitted')) NOT IN ('selected', 'shortlisted', 'pending_joining', 'joined', 'billed')`;
+      } else if (onlyOwn) {
+        visibilityWhere = `rd.rid = ?`;
+      } else {
+        visibilityWhere = `(
+          rd.rid = ?
+          OR (
+            rd.uploaded_at < DATE_SUB(NOW(), INTERVAL 15 DAY)
+            AND LOWER(COALESCE(jrs.selection_status, 'submitted')) NOT IN ('selected', 'shortlisted', 'pending_joining', 'joined', 'billed')
+          )
+        )`;
+      }
 
       const [rows] = await pool.query(
         `SELECT
@@ -1805,13 +1828,7 @@ router.get(
         ON jrs.job_jid = rd.job_jid
        AND jrs.res_id = rd.res_id
       LEFT JOIN recruiter statusActor ON statusActor.rid = jrs.selected_by_admin
-      WHERE (
-        rd.rid = ?
-        OR (
-          ${onlyOwn ? "FALSE" : `rd.uploaded_at < DATE_SUB(NOW(), INTERVAL 15 DAY)
-          AND LOWER(COALESCE(jrs.selection_status, 'submitted')) NOT IN ('selected', 'shortlisted', 'pending_joining', 'joined', 'billed')`}
-        )
-      )
+      WHERE ${visibilityWhere}
         AND COALESCE(rd.duplicate_hidden, FALSE) = FALSE
       ORDER BY rd.uploaded_at DESC`,
         [rid],
