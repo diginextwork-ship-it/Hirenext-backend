@@ -1981,7 +1981,7 @@ router.get(
   requireRoles("recruiter", "team leader", "team_leader"),
   async (req, res) => {
     const { rid, resId } = req.params;
-    if (!authorizeRecruiterResourceView(req, res, rid)) return;
+    const authRid = String(req.auth?.rid || "").trim();
 
     try {
       const { resumeSelectSql, resumeJoinSql } = await buildResumeBinarySelect(
@@ -2001,13 +2001,14 @@ router.get(
       WHERE rd.res_id = ?
         AND (
           rd.rid = ?
+          OR rd.rid = ?
           OR (
             rd.uploaded_at < DATE_SUB(NOW(), INTERVAL 15 DAY)
             AND LOWER(COALESCE(jrs.selection_status, 'submitted')) NOT IN ('selected', 'shortlisted', 'pending_joining', 'joined', 'billed')
           )
         )
       LIMIT 1`,
-        [resId, rid],
+        [resId, rid, authRid],
       );
 
       if (rows.length === 0) {
