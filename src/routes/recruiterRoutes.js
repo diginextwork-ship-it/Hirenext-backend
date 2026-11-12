@@ -2918,6 +2918,12 @@ router.post(
       });
     }
 
+    if (targetStatus === "billed") {
+      return res.status(403).json({
+        message: "Only admin can move a candidate to billed status.",
+      });
+    }
+
     if (
       (targetStatus === "others" ||
         targetStatus === "billed" ||

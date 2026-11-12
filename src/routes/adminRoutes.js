@@ -963,16 +963,31 @@ router.use("/api/admin", requireAuth, requireRoles("admin"));
 router.post("/api/admin/billing/process", async (req, res) => {
   if (!ensureAdminAuthorized(req, res)) return;
 
+  return res.status(200).json({
+    message:
+      "Auto-billing is disabled. Candidates can only be moved to billed status manually by admin.",
+    transitioned: 0,
+  });
+});
+
+router.post("/api/admin/billing/revert-auto-billed", async (req, res) => {
+  if (!ensureAdminAuthorized(req, res)) return;
+
   try {
-    const { processBillingTransitions } = require("./jobRoutes");
-    const result = await processBillingTransitions();
+    const [result] = await pool.query(
+      `UPDATE job_resume_selection
+       SET selection_status = 'joined',
+           selection_note = NULL
+       WHERE selection_status = 'billed'
+         AND selection_note = 'Auto-billed after billing period'`,
+    );
     return res.status(200).json({
-      message: `Billing processing complete. ${result.transitioned} candidate(s) transitioned from joined to billed.`,
-      transitioned: result.transitioned,
+      message: `Reverted ${result.changedRows || 0} auto-billed candidate(s) back to joined status.`,
+      revertedCount: result.changedRows || 0,
     });
   } catch (error) {
     return res.status(500).json({
-      message: "Failed to process billing transitions.",
+      message: "Failed to revert auto-billed candidates.",
       error: error.message,
     });
   }

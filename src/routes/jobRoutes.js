@@ -1593,6 +1593,12 @@ router.post(
       });
     }
 
+    if (normalizedStatus === "billed") {
+      return res.status(403).json({
+        message: "Only admin can move a candidate to billed status.",
+      });
+    }
+
     if (isPendingJoiningRequest) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(joiningDate || "")) {
         return res.status(400).json({
@@ -2788,111 +2794,16 @@ router.post("/api/applications", async (req, res) => {
 // AUTO-BILLING BACKGROUND JOB
 // ────────────────────────────────────────────────────────────────────────────
 
-const BILLING_PERIOD_DAYS = Math.max(
-  0,
-  Number(process.env.BILLING_PERIOD_DAYS) || 90,
-);
-
 /**
- * Auto-billing: Move "joined" candidates to "billed" after BILLING_PERIOD_DAYS
- * Credits points to recruiter and records billing history
+ * Billing processing: Auto-billing is DISABLED.
+ * Candidates can only be moved to "billed" manually by admin.
  */
 const processBillingTransitions = async () => {
-  try {
-    const hasTable = await tableExists("job_resume_selection");
-    if (!hasTable) return { transitioned: 0 };
-
-    const hasBilledStatus = await columnExists("status", "billed");
-    if (!hasBilledStatus) return { transitioned: 0 };
-
-    // Find all "joined" candidates whose selected_at is older than the billing period
-    const [joinedRows] = await pool.query(
-      `SELECT jrs.id, jrs.job_jid, jrs.res_id, rd.rid AS recruiterRid,
-              COALESCE(j.points_per_joining, 0) AS pointsPerJoining
-       FROM job_resume_selection jrs
-       INNER JOIN resumes_data rd ON rd.res_id = jrs.res_id AND rd.job_jid = jrs.job_jid
-       LEFT JOIN jobs j ON j.jid = jrs.job_jid
-       WHERE jrs.selection_status = 'joined'
-         AND jrs.selected_at <= DATE_SUB(NOW(), INTERVAL ? DAY)`,
-      [BILLING_PERIOD_DAYS],
-    );
-
-    if (joinedRows.length === 0) return { transitioned: 0 };
-
-    let transitioned = 0;
-    for (const row of joinedRows) {
-      const connection = await pool.getConnection();
-      try {
-        await connection.beginTransaction();
-
-        await connection.query(
-          `UPDATE job_resume_selection
-           SET selection_status = 'billed',
-               selection_note = 'Auto-billed after billing period',
-               selected_at = CURRENT_TIMESTAMP
-           WHERE id = ? AND selection_status = 'joined'`,
-          [row.id],
-        );
-
-        await upsertExtraInfoFields(connection, {
-          resId: row.res_id,
-          jobJid: row.job_jid,
-          recruiterRid: row.recruiterRid || undefined,
-          billedAt: "__CURRENT_TIMESTAMP__",
-        });
-
-        if (row.recruiterRid) {
-          await connection.query(
-            `INSERT INTO status (recruiter_rid, submitted, billed, joined, last_updated)
-             VALUES (?, 0, 1, 0, CURRENT_TIMESTAMP)
-             ON DUPLICATE KEY UPDATE
-               billed = GREATEST(0, COALESCE(billed, 0) + 1),
-               joined = GREATEST(0, COALESCE(joined, 0) - 1),
-               last_updated = CURRENT_TIMESTAMP`,
-            [row.recruiterRid],
-          );
-
-          // Credit points_per_joining to the recruiter on billed status
-          const pts = Number(row.pointsPerJoining) || 0;
-          if (pts > 0) {
-            await connection.query(
-              "UPDATE recruiter SET points = COALESCE(points, 0) + ? WHERE rid = ?",
-              [pts, row.recruiterRid],
-            );
-            await connection.query(
-              `INSERT INTO recruiter_points_log (recruiter_rid, job_jid, res_id, points, reason)
-               VALUES (?, ?, ?, ?, 'billed')`,
-              [row.recruiterRid, row.job_jid, row.res_id, pts],
-            );
-          }
-        }
-
-        await addCandidateBillIntakeEntry(connection, row.res_id);
-
-        await connection.commit();
-        transitioned += 1;
-      } catch (innerError) {
-        await connection.rollback();
-        console.error(
-          `[auto-billing] Failed to transition res_id=${row.res_id}:`,
-          innerError.message,
-        );
-      } finally {
-        connection.release();
-      }
-    }
-
-    if (transitioned > 0) {
-      console.log(
-        `[auto-billing] Transitioned ${transitioned} candidate(s) from joined to billed`,
-      );
-    }
-
-    return { transitioned };
-  } catch (error) {
-    console.error("[auto-billing] Error:", error.message);
-    return { transitioned: 0, error: error.message };
-  }
+  return {
+    transitioned: 0,
+    message:
+      "Auto-billing is disabled. Candidates can only be moved to billed status manually by admin.",
+  };
 };
 
 module.exports = router;

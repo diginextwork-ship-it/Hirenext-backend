@@ -1652,6 +1652,29 @@ const ensureAsrIndexes = async () => {
   }
 };
 
+const revertAutoBilledCandidates = async () => {
+  if (!(await tableExists("job_resume_selection"))) return;
+  try {
+    const [result] = await pool.query(
+      `UPDATE job_resume_selection
+       SET selection_status = 'joined',
+           selection_note = NULL
+       WHERE selection_status = 'billed'
+         AND selection_note = 'Auto-billed after billing period'`,
+    );
+    if (result.changedRows > 0) {
+      console.log(
+        `[billing] Reverted ${result.changedRows} candidate(s) from auto-billed back to joined. Only admin can move candidates to billed.`,
+      );
+    }
+  } catch (error) {
+    console.warn(
+      "[billing] Could not revert auto-billed candidates:",
+      error.message,
+    );
+  }
+};
+
 const initDatabase = async () => {
   await ensureResumeIdSequenceTable();
   await ensureRecruiterTableColumns();
@@ -1668,8 +1691,10 @@ const initDatabase = async () => {
   await ensureStatusTable();
   await ensurePointsLogTable();
   await ensureAsrIndexes();
+  await revertAutoBilledCandidates();
 };
 
 pool.initDatabase = initDatabase;
+pool.revertAutoBilledCandidates = revertAutoBilledCandidates;
 
 module.exports = pool;

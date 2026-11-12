@@ -13,11 +13,8 @@ console.log("Starting server.js...");
 
 const app = require("./src/app");
 const pool = require("./src/config/db");
-const { processBillingTransitions } = require("./src/routes/jobRoutes");
 
 const PORT = systemPort || (process.env.NODE_ENV === "production" ? (process.env.PORT || 3000) : (process.env.PORT || 5001));
-const BILLING_CHECK_INTERVAL_MS =
-  Number(process.env.BILLING_CHECK_INTERVAL_MS) || 3600000; // default 1 hour
 
 const startServer = async () => {
   const server = app.listen(PORT, () => {
@@ -30,17 +27,23 @@ const startServer = async () => {
   try {
     await pool.initDatabase();
     console.log("Database initialized successfully");
-
-    // Start auto-billing background job after DB is ready
-    processBillingTransitions(); // Run once immediately
-    setInterval(processBillingTransitions, BILLING_CHECK_INTERVAL_MS);
-    console.log(
-      `Auto-billing check scheduled every ${Math.round(BILLING_CHECK_INTERVAL_MS / 60000)} minute(s)`,
-    );
   } catch (error) {
     console.error("Database initialization failed:", error.message);
     // Don't exit - let server continue running to serve error responses
   }
+
+  try {
+    if (typeof pool.revertAutoBilledCandidates === "function") {
+      await pool.revertAutoBilledCandidates();
+    }
+  } catch (revertError) {
+    console.warn("Revert auto-billed candidates check:", revertError.message);
+  }
+
+  // Auto-billing is disabled: candidates can only be moved to billed status manually by admin.
+  console.log(
+    "Auto-billing is disabled. Candidates can only be moved to billed by admin.",
+  );
 
   process.on("SIGTERM", () => {
     console.log("SIGTERM received, closing server...");

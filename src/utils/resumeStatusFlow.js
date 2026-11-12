@@ -71,7 +71,7 @@ const RECRUITER_STATUS_TRANSITIONS = {
   walk_in: ["shortlisted", "rejected"],
   shortlisted: ["selected", "dropout", "rejected"],
   selected: ["joined", "dropout", "rejected"],
-  joined: ["billed", "left"],
+  joined: ["left"],
   rejected: ["joined"],
 };
 
