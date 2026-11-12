@@ -1724,7 +1724,21 @@ router.post(
         }
 
         // Update job_resume_selection
-        const historicalSelectedAt = null;
+        const customDateRaw =
+          req.body?.custom_date ??
+          req.body?.customDate ??
+          req.body?.status_date ??
+          req.body?.statusDate ??
+          req.body?.event_date ??
+          req.body?.eventDate ??
+          req.body?.date;
+        const customDate =
+          customDateRaw && /^\d{4}-\d{2}-\d{2}$/.test(String(customDateRaw).trim())
+            ? String(customDateRaw).trim()
+            : null;
+        const nowTimeStr = new Date().toTimeString().slice(0, 8);
+        const customTimestamp = customDate ? `${customDate} ${nowTimeStr}` : null;
+        const historicalSelectedAt = customTimestamp || null;
 
         if (persistedStatus === "removed") {
           await connection.query(
@@ -1762,10 +1776,17 @@ router.post(
           });
         }
 
+        if (persistedStatus === "walk_in" && customDate) {
+          await upsertCandidateFields(connection, {
+            resId: normalizedResId,
+            walkIn: customDate,
+          });
+        }
+
         if (persistedStatus === "joined") {
           await upsertCandidateFields(connection, {
             resId: normalizedResId,
-            joiningDate: effectiveJoiningDate,
+            joiningDate: effectiveJoiningDate || customDate,
           });
         }
 
@@ -1784,7 +1805,7 @@ router.post(
           left: "leftAt",
         };
 
-        const eventTimestampValue = "__CURRENT_TIMESTAMP__";
+        const eventTimestampValue = customTimestamp || "__CURRENT_TIMESTAMP__";
 
         if (reasonField && statusReasonValue !== undefined) {
           await upsertExtraInfoFields(connection, {

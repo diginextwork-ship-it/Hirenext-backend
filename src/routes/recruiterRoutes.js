@@ -3012,7 +3012,21 @@ router.post(
 
       const effectiveJoiningDate =
         joiningDate || resume.currentJoiningDate || null;
-      const historicalSelectedAt = null;
+      const customDateRaw =
+        req.body?.custom_date ??
+        req.body?.customDate ??
+        req.body?.status_date ??
+        req.body?.statusDate ??
+        req.body?.event_date ??
+        req.body?.eventDate ??
+        req.body?.date;
+      const customDate =
+        customDateRaw && /^\d{4}-\d{2}-\d{2}$/.test(String(customDateRaw).trim())
+          ? String(customDateRaw).trim()
+          : null;
+      const nowTimeStr = new Date().toTimeString().slice(0, 8);
+      const customTimestamp = customDate ? `${customDate} ${nowTimeStr}` : null;
+      const historicalSelectedAt = customTimestamp || null;
 
       const connection = await pool.getConnection();
       try {
@@ -3061,22 +3075,22 @@ router.post(
           await upsertCandidateFields(connection, {
             resId,
             cid: undefined,
-            walkIn: getCurrentDateOnlyInBusinessTimeZone(),
+            walkIn: customDate || getCurrentDateOnlyInBusinessTimeZone(),
           });
         }
 
-        if (targetStatus === "joined" && effectiveJoiningDate) {
+        if (targetStatus === "joined") {
           await upsertCandidateFields(connection, {
             resId,
             cid: undefined,
-            joiningDate: effectiveJoiningDate,
+            joiningDate: effectiveJoiningDate || customDate,
           });
         }
 
         const reasonField = STATUS_REASON_FIELD_MAP[targetStatus];
         const statusReasonValue =
           targetStatus === "joined" ? joinedReason : reason;
-        const eventTimestampValue = "__CURRENT_TIMESTAMP__";
+        const eventTimestampValue = customTimestamp || "__CURRENT_TIMESTAMP__";
 
         if (reasonField) {
           const statusTimestampFieldMap = {

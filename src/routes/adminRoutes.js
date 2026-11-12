@@ -4874,6 +4874,20 @@ router.post(
     const newStatus = normalizeResumeStatusInput(req.body?.status);
     const reason = resolveStatusReasonInput(req.body, newStatus);
     const joiningDate = String(req.body?.joining_date || "").trim();
+    const customDateRaw =
+      req.body?.custom_date ??
+      req.body?.customDate ??
+      req.body?.status_date ??
+      req.body?.statusDate ??
+      req.body?.event_date ??
+      req.body?.eventDate ??
+      req.body?.date;
+    const customDate =
+      customDateRaw && /^\d{4}-\d{2}-\d{2}$/.test(String(customDateRaw).trim())
+        ? String(customDateRaw).trim()
+        : null;
+    const nowTimeStr = new Date().toTimeString().slice(0, 8);
+    const customTimestamp = customDate ? `${customDate} ${nowTimeStr}` : null;
     const joinedReasonSource =
       req.body?.joinedReason ??
       req.body?.joined_reason ??
@@ -5068,7 +5082,7 @@ router.post(
           ? joinedReason || effectiveReason || null
           : effectiveReason || null;
 
-      const historicalSelectedAt = null;
+      const historicalSelectedAt = customTimestamp || null;
 
       if (resume.jobJid) {
         await connection.query(
@@ -5096,9 +5110,12 @@ router.post(
         candidateJoiningDateValue = null;
       } else if (newStatus === "selected") {
         candidateJoiningDateValue = joiningDate;
-      } else if (newStatus === "joined" && effectiveJoiningDate) {
-        candidateJoiningDateValue = effectiveJoiningDate;
+      } else if (newStatus === "joined" && (effectiveJoiningDate || customDate)) {
+        candidateJoiningDateValue = effectiveJoiningDate || customDate;
       }
+
+      const candidateWalkInValue =
+        newStatus === "walk_in" ? customDate || resume.walkIn || null : undefined;
 
       await upsertCandidateFields(connection, {
         resId: normalizedResId,
@@ -5114,6 +5131,7 @@ router.post(
           adminStatusCandidateSnapshot.institutionName || undefined,
         age: adminStatusCandidateSnapshot.age,
         joiningDate: candidateJoiningDateValue,
+        walkIn: candidateWalkInValue,
         revenue:
           newStatus === "joined"
             ? joinedRevenueAmount
@@ -5139,7 +5157,7 @@ router.post(
         left: "leftAt",
       };
 
-      const eventTimestampValue = "__CURRENT_TIMESTAMP__";
+      const eventTimestampValue = customTimestamp || "__CURRENT_TIMESTAMP__";
 
       if (reasonField) {
         await upsertExtraInfoFields(connection, {
@@ -5159,6 +5177,11 @@ router.post(
       }
 
       if (newStatus === "joined") {
+        const intakeCreatedAt = customTimestamp
+          ? customTimestamp
+          : effectiveJoiningDate
+            ? `${effectiveJoiningDate} 00:00:00`
+            : null;
         const intakeEntry = await addCandidateBillIntakeEntry(
           connection,
           normalizedResId,
@@ -5166,9 +5189,7 @@ router.post(
             amount: joinedRevenueAmount,
             reason:
               joinedReason || effectiveReason || "candidate joined revenue",
-            createdAt: effectiveJoiningDate
-              ? `${effectiveJoiningDate} 00:00:00`
-              : null,
+            createdAt: intakeCreatedAt,
           },
         );
         if (!intakeEntry) {
@@ -5192,9 +5213,11 @@ router.post(
               "UPDATE recruiter SET points = COALESCE(points, 0) + ? WHERE rid = ?",
               [pts, resume.rid],
             );
-            const pointsLogCreatedAt = effectiveJoiningDate
-              ? `${effectiveJoiningDate} 00:00:00`
-              : null;
+            const pointsLogCreatedAt = customTimestamp
+              ? customTimestamp
+              : effectiveJoiningDate
+                ? `${effectiveJoiningDate} 00:00:00`
+                : null;
             const hasPointsCreatedCol = await columnExists(
               "recruiter_points_log",
               "created_at",
@@ -5221,6 +5244,11 @@ router.post(
           }
         }
 
+        const billedCreatedAt = customTimestamp
+          ? customTimestamp
+          : effectiveJoiningDate
+            ? `${effectiveJoiningDate} 00:00:00`
+            : null;
         const intakeEntry = await addCandidateBillIntakeEntry(
           connection,
           normalizedResId,
@@ -5228,9 +5256,7 @@ router.post(
             amount: billedRevenueAmount,
             reason: effectiveReason || "candidate's bill",
             photo: toRevenueAttachmentDataUrl(req.file) || null,
-            createdAt: effectiveJoiningDate
-              ? `${effectiveJoiningDate} 00:00:00`
-              : null,
+            createdAt: billedCreatedAt,
           },
         );
         if (!intakeEntry) {
@@ -5689,35 +5715,31 @@ router.get("/api/admin/performance", async (req, res) => {
         ) AS walkInAt,
         DATE_FORMAT(
           COALESCE(
-            CASE WHEN jrs.selection_status = 'selected' THEN ei.selected_at ELSE NULL END,
+            ei.selected_at,
             CASE WHEN jrs.selection_status = 'selected' THEN jrs.selected_at ELSE NULL END
           ),
           '%Y-%m-%d %H:%i:%s.%f'
         ) AS selectedAt,
         DATE_FORMAT(
           COALESCE(
-            CASE WHEN jrs.selection_status = 'rejected' THEN ei.rejected_at ELSE NULL END,
+            ei.rejected_at,
             CASE WHEN jrs.selection_status = 'rejected' THEN jrs.selected_at ELSE NULL END
           ),
           '%Y-%m-%d %H:%i:%s.%f'
         ) AS rejectedAt,
         DATE_FORMAT(
           COALESCE(
-            CASE WHEN jrs.selection_status IN ('shortlisted', 'pending_joining') THEN ei.shortlisted_at ELSE NULL END,
+            ei.shortlisted_at,
             CASE WHEN jrs.selection_status IN ('shortlisted', 'pending_joining') THEN jrs.selected_at ELSE NULL END
           ),
           '%Y-%m-%d %H:%i:%s.%f'
         ) AS shortlistedAt,
         DATE_FORMAT(
-          CASE
-            WHEN jrs.selection_status = 'joined' THEN
-              COALESCE(
-                ei.joined_at,
-                jrs.selected_at,
-                CASE WHEN c.joining_date IS NOT NULL THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6)) ELSE NULL END
-              )
-            ELSE NULL
-          END,
+          COALESCE(
+            ei.joined_at,
+            CASE WHEN jrs.selection_status = 'joined' THEN jrs.selected_at ELSE NULL END,
+            CASE WHEN c.joining_date IS NOT NULL THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6)) ELSE NULL END
+          ),
           '%Y-%m-%d %H:%i:%s.%f'
         ) AS joinedAt,
         DATE_FORMAT(
