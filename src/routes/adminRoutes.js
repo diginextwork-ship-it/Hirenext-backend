@@ -6326,6 +6326,61 @@ router.patch("/api/admin/recruiters/:rid/team", async (req, res) => {
   }
 });
 
+router.patch("/api/admin/recruiters/:rid/role", async (req, res) => {
+  if (!ensureAdminAuthorized(req, res)) return;
+
+  const rid = String(req.params?.rid || "").trim();
+  const rawRole = String(req.body?.role || "").trim().toLowerCase();
+
+  if (!rid) {
+    return res.status(400).json({ message: "Recruiter ID is required." });
+  }
+
+  const targetRole =
+    rawRole === "team leader" || rawRole === "team_leader"
+      ? "team leader"
+      : "recruiter";
+
+  try {
+    const [recruiterRows] = await pool.query(
+      "SELECT rid, name, email, role FROM recruiter WHERE rid = ? LIMIT 1",
+      [rid],
+    );
+
+    if (recruiterRows.length === 0) {
+      return res.status(404).json({ message: "Recruiter not found." });
+    }
+
+    const currentRole = recruiterRows[0].role;
+    const canAddJob = targetRole === "team leader" ? 1 : 0;
+    const hasAddJobColumn = await columnExists("recruiter", "addjob");
+
+    if (hasAddJobColumn) {
+      await pool.query(
+        "UPDATE recruiter SET role = ?, addjob = ? WHERE rid = ?",
+        [targetRole, canAddJob, rid],
+      );
+    } else {
+      await pool.query(
+        "UPDATE recruiter SET role = ? WHERE rid = ?",
+        [targetRole, rid],
+      );
+    }
+
+    return res.status(200).json({
+      message: `Role updated to ${targetRole === "team leader" ? "Team Leader" : "Recruiter"} successfully.`,
+      rid,
+      previousRole: currentRole,
+      role: targetRole,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to update recruiter role.",
+      error: error.message,
+    });
+  }
+});
+
 router.patch("/api/admin/recruiters/:rid/account-status", async (req, res) => {
   if (!ensureAdminAuthorized(req, res)) return;
 
