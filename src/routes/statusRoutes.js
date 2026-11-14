@@ -1082,6 +1082,9 @@ router.get(
       const statusRangeCondition = hasDateRange
         ? "jrs.selected_at >= ? AND jrs.selected_at < ?"
         : "1=1";
+      const walkInRangeCondition = hasDateRange
+        ? "COALESCE(CAST(CONCAT(c.walk_in, ' 00:00:00') AS DATETIME), jrs.selected_at) >= ? AND COALESCE(CAST(CONCAT(c.walk_in, ' 00:00:00') AS DATETIME), jrs.selected_at) < ?"
+        : "1=1";
       const joinedRangeCondition = hasDateRange
         ? "COALESCE(CAST(CONCAT(c.joining_date, ' 00:00:00') AS DATETIME), jrs.selected_at) >= ? AND COALESCE(CAST(CONCAT(c.joining_date, ' 00:00:00') AS DATETIME), jrs.selected_at) < ?"
         : "1=1";
@@ -1151,7 +1154,7 @@ router.get(
             SUM(CASE WHEN ${submittedRangeCondition} THEN 1 ELSE 0 END) AS submitted,
             SUM(CASE WHEN jrs.selection_status = 'verified' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS verified,
             SUM(CASE WHEN jrs.selection_status = 'others' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS others,
-            SUM(CASE WHEN jrs.selection_status = 'walk_in' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS walk_in,
+            SUM(CASE WHEN jrs.selection_status = 'walk_in' AND ${walkInRangeCondition} THEN 1 ELSE 0 END) AS walk_in,
             SUM(CASE WHEN jrs.selection_status = 'further' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS further,
             SUM(CASE WHEN jrs.selection_status = 'selected' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS selected,
             SUM(CASE WHEN jrs.selection_status IN ('shortlisted', 'pending_joining') AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS shortlisted,
