@@ -5673,6 +5673,14 @@ router.get("/api/admin/performance", async (req, res) => {
       restrictedJobs: Number(row.restrictedJobs) || 0,
     }));
 
+    if (!(await columnExists("recruiter", "joining_target"))) {
+      try {
+        await pool.query(
+          "ALTER TABLE recruiter ADD COLUMN joining_target INT NOT NULL DEFAULT 0",
+        );
+      } catch (_) {}
+    }
+
     const [recruiterBaseRows] = await pool.query(
       `SELECT
         r.rid,
@@ -5680,7 +5688,8 @@ router.get("/api/admin/performance", async (req, res) => {
         r.email,
         COALESCE(r.team, 'Team BPO') AS team,
         COALESCE(NULLIF(TRIM(r.account_status), ''), 'active') AS accountStatus,
-        COALESCE(r.points, 0) AS points
+        COALESCE(r.points, 0) AS points,
+        COALESCE(r.joining_target, 0) AS joiningTarget
       FROM recruiter r
       WHERE LOWER(TRIM(COALESCE(r.role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader')
       ORDER BY r.name ASC`,
@@ -5917,6 +5926,8 @@ router.get("/api/admin/performance", async (req, res) => {
               ? "inactive"
               : "active",
           points: Number(row.points) || 0,
+          joiningTarget: Number(row.joiningTarget) || 0,
+          target: Number(row.joiningTarget) || 0,
           submitted: 0,
           verified: 0,
           others: 0,
@@ -6665,5 +6676,107 @@ router.delete(
   requireRoles("admin"),
   deleteAdminResumeHandler,
 );
+
+router.patch("/api/admin/recruiters/:rid/target", async (req, res) => {
+  if (!ensureAdminAuthorized(req, res)) return;
+
+  const rid = String(req.params?.rid || "").trim();
+  const rawTarget =
+    req.body?.target ??
+    req.body?.joiningTarget ??
+    req.body?.joining_target;
+
+  if (!rid) {
+    return res.status(400).json({ message: "Recruiter ID is required." });
+  }
+
+  const targetValue = Math.max(0, parseInt(rawTarget, 10) || 0);
+
+  try {
+    if (!(await columnExists("recruiter", "joining_target"))) {
+      await pool.query(
+        "ALTER TABLE recruiter ADD COLUMN joining_target INT NOT NULL DEFAULT 0",
+      );
+    }
+
+    const [recruiterRows] = await pool.query(
+      "SELECT rid, name, email FROM recruiter WHERE rid = ? LIMIT 1",
+      [rid],
+    );
+
+    if (recruiterRows.length === 0) {
+      return res.status(404).json({ message: "Recruiter not found." });
+    }
+
+    await pool.query(
+      "UPDATE recruiter SET joining_target = ? WHERE rid = ?",
+      [targetValue, rid],
+    );
+
+    return res.status(200).json({
+      message: `Target updated successfully for ${recruiterRows[0].name || rid}.`,
+      rid,
+      target: targetValue,
+      joiningTarget: targetValue,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to update recruiter target.",
+      error: error.message,
+    });
+  }
+});
+
+router.post("/api/admin/recruiters/targets", async (req, res) => {
+  if (!ensureAdminAuthorized(req, res)) return;
+
+  const targets = req.body?.targets;
+  if (!targets || typeof targets !== "object") {
+    return res.status(400).json({ message: "targets map or array is required." });
+  }
+
+  try {
+    if (!(await columnExists("recruiter", "joining_target"))) {
+      await pool.query(
+        "ALTER TABLE recruiter ADD COLUMN joining_target INT NOT NULL DEFAULT 0",
+      );
+    }
+
+    const entries = Array.isArray(targets)
+      ? targets.map((item) => [
+          item.rid,
+          Math.max(
+            0,
+            parseInt(
+              item.target ?? item.joiningTarget ?? item.joining_target,
+              10,
+            ) || 0,
+          ),
+        ])
+      : Object.entries(targets).map(([rid, val]) => [
+          rid,
+          Math.max(0, parseInt(val, 10) || 0),
+        ]);
+
+    for (const [rid, targetVal] of entries) {
+      if (rid) {
+        await pool.query(
+          "UPDATE recruiter SET joining_target = ? WHERE rid = ?",
+          [targetVal, rid],
+        );
+      }
+    }
+
+    return res.status(200).json({
+      message: "Recruiter targets updated successfully.",
+      count: entries.length,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to update targets in bulk.",
+      error: error.message,
+    });
+  }
+});
 
 module.exports = router;
