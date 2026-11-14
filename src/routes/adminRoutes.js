@@ -6677,6 +6677,320 @@ router.delete(
   deleteAdminResumeHandler,
 );
 
+async function ensureRecruiterTargetsTable() {
+  if (!(await columnExists("recruiter", "joining_target"))) {
+    try {
+      await pool.query(
+        "ALTER TABLE recruiter ADD COLUMN joining_target INT NOT NULL DEFAULT 0",
+      );
+    } catch (_) {}
+  }
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS recruiter_targets (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      recruiter_rid VARCHAR(100) NOT NULL,
+      start_date DATE NOT NULL,
+      end_date DATE NOT NULL,
+      target INT NOT NULL DEFAULT 0,
+      note VARCHAR(255) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_recruiter_target_period (recruiter_rid, start_date, end_date),
+      INDEX idx_target_period (start_date, end_date),
+      INDEX idx_target_rid (recruiter_rid)
+    )
+  `);
+}
+
+router.get("/api/admin/recruiter-targets", async (req, res) => {
+  if (!ensureAdminAuthorized(req, res)) return;
+
+  try {
+    await ensureRecruiterTargetsTable();
+
+    let startDate = String(req.query?.startDate || "").trim();
+    let endDate = String(req.query?.endDate || "").trim();
+
+    const now = new Date();
+    const toYmd = (d) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+    if (!startDate || !endDate) {
+      const year = now.getFullYear();
+      const month = now.getMonth();
+      const firstDay = new Date(year, month, 1);
+      const lastDay = new Date(year, month + 1, 0);
+      if (!startDate) startDate = toYmd(firstDay);
+      if (!endDate) endDate = toYmd(lastDay);
+    }
+
+    const [recruiters] = await pool.query(`
+      SELECT
+        r.rid,
+        r.name,
+        r.email,
+        COALESCE(r.team, 'Team BPO') AS team,
+        COALESCE(NULLIF(TRIM(r.account_status), ''), 'active') AS accountStatus,
+        COALESCE(r.joining_target, 0) AS defaultTarget
+      FROM recruiter r
+      WHERE LOWER(TRIM(COALESCE(r.role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader')
+      ORDER BY r.name ASC
+    `);
+
+    const [periodTargets] = await pool.query(
+      `SELECT recruiter_rid, target, note, updated_at
+       FROM recruiter_targets
+       WHERE start_date = ? AND end_date = ?`,
+      [startDate, endDate],
+    );
+
+    const targetMap = new Map();
+    for (const pt of periodTargets) {
+      targetMap.set(pt.recruiter_rid, {
+        target: Number(pt.target) || 0,
+        note: pt.note || null,
+        updatedAt: pt.updated_at,
+      });
+    }
+
+    const startDt = `${startDate} 00:00:00.000000`;
+    const endDt = `${endDate} 23:59:59.999999`;
+
+    const [statsRows] = await pool.query(`
+      SELECT
+        rd.rid AS recruiterRid,
+        COUNT(DISTINCT CASE
+          WHEN COALESCE(rd.uploaded_at, ei.submitted_at) >= ?
+           AND COALESCE(rd.uploaded_at, ei.submitted_at) <= ?
+          THEN rd.res_id ELSE NULL
+        END) AS submittedCount,
+        COUNT(DISTINCT CASE
+          WHEN COALESCE(
+            ei.walk_in_at,
+            CASE
+              WHEN c.walk_in IS NOT NULL THEN CAST(CONCAT(c.walk_in, ' 00:00:00.000000') AS DATETIME(6))
+              WHEN jrs.selection_status = 'walk_in' THEN jrs.selected_at
+              ELSE NULL
+            END
+          ) >= ?
+           AND COALESCE(
+            ei.walk_in_at,
+            CASE
+              WHEN c.walk_in IS NOT NULL THEN CAST(CONCAT(c.walk_in, ' 00:00:00.000000') AS DATETIME(6))
+              WHEN jrs.selection_status = 'walk_in' THEN jrs.selected_at
+              ELSE NULL
+            END
+          ) <= ?
+          THEN rd.res_id ELSE NULL
+        END) AS walkInCount,
+        COUNT(DISTINCT CASE
+          WHEN COALESCE(
+            ei.joined_at,
+            CASE WHEN jrs.selection_status = 'joined' THEN jrs.selected_at ELSE NULL END,
+            CASE WHEN c.joining_date IS NOT NULL THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6)) ELSE NULL END
+          ) >= ?
+           AND COALESCE(
+            ei.joined_at,
+            CASE WHEN jrs.selection_status = 'joined' THEN jrs.selected_at ELSE NULL END,
+            CASE WHEN c.joining_date IS NOT NULL THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6)) ELSE NULL END
+          ) <= ?
+          THEN rd.res_id ELSE NULL
+        END) AS joinedCount
+      FROM resumes_data rd
+      LEFT JOIN candidate c ON c.res_id = rd.res_id
+      LEFT JOIN job_resume_selection jrs
+        ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
+      ${buildExtraInfoJoin("rd.res_id")}
+      WHERE rd.rid IS NOT NULL
+      GROUP BY rd.rid
+    `, [startDt, endDt, startDt, endDt, startDt, endDt]);
+
+    const statsMap = new Map();
+    for (const s of statsRows) {
+      statsMap.set(s.recruiterRid, {
+        submitted: Number(s.submittedCount) || 0,
+        walkIn: Number(s.walkInCount) || 0,
+        joined: Number(s.joinedCount) || 0,
+      });
+    }
+
+    const result = recruiters.map((r) => {
+      const pTarget = targetMap.get(r.rid);
+      const stats = statsMap.get(r.rid) || { submitted: 0, walkIn: 0, joined: 0 };
+      const targetVal = pTarget !== undefined ? pTarget.target : Number(r.defaultTarget) || 0;
+      const joinedVal = stats.joined;
+      const progressPct =
+        targetVal > 0
+          ? Math.min(100, Math.round((joinedVal / targetVal) * 100))
+          : joinedVal > 0
+          ? 100
+          : 0;
+
+      return {
+        rid: r.rid,
+        name: r.name,
+        email: r.email,
+        team: r.team,
+        accountStatus: r.accountStatus,
+        target: targetVal,
+        defaultTarget: Number(r.defaultTarget) || 0,
+        isCustomPeriodTarget: Boolean(pTarget),
+        joined: joinedVal,
+        submitted: stats.submitted,
+        walkIn: stats.walkIn,
+        progressPct,
+        targetUpdatedAt: pTarget?.updatedAt || null,
+      };
+    });
+
+    return res.status(200).json({
+      startDate,
+      endDate,
+      recruiters: result,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to load recruiter targets.",
+      error: error.message,
+    });
+  }
+});
+
+router.get("/api/admin/recruiter-targets/history", async (req, res) => {
+  if (!ensureAdminAuthorized(req, res)) return;
+
+  try {
+    await ensureRecruiterTargetsTable();
+
+    const filterRid = String(req.query?.rid || "").trim();
+
+    const queryParams = [];
+    let whereClause = "";
+    if (filterRid) {
+      whereClause = "WHERE t.recruiter_rid = ?";
+      queryParams.push(filterRid);
+    }
+
+    const [rows] = await pool.query(
+      `SELECT
+        t.id,
+        t.recruiter_rid AS rid,
+        r.name,
+        COALESCE(r.team, 'Team BPO') AS team,
+        DATE_FORMAT(t.start_date, '%Y-%m-%d') AS startDate,
+        DATE_FORMAT(t.end_date, '%Y-%m-%d') AS endDate,
+        t.target,
+        t.note,
+        t.updated_at AS updatedAt
+      FROM recruiter_targets t
+      LEFT JOIN recruiter r ON r.rid = t.recruiter_rid
+      ${whereClause}
+      ORDER BY t.start_date DESC, t.end_date DESC, r.name ASC`,
+      queryParams,
+    );
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+
+    // Compute achievements for each period record
+    const history = await Promise.all(
+      rows.map(async (row) => {
+        const startDt = `${row.startDate} 00:00:00.000000`;
+        const endDt = `${row.endDate} 23:59:59.999999`;
+
+        const [cntRows] = await pool.query(`
+          SELECT
+            COUNT(DISTINCT CASE
+              WHEN COALESCE(rd.uploaded_at, ei.submitted_at) >= ?
+               AND COALESCE(rd.uploaded_at, ei.submitted_at) <= ?
+              THEN rd.res_id ELSE NULL
+            END) AS submittedCount,
+            COUNT(DISTINCT CASE
+              WHEN COALESCE(
+                ei.walk_in_at,
+                CASE
+                  WHEN c.walk_in IS NOT NULL THEN CAST(CONCAT(c.walk_in, ' 00:00:00.000000') AS DATETIME(6))
+                  WHEN jrs.selection_status = 'walk_in' THEN jrs.selected_at
+                  ELSE NULL
+                END
+              ) >= ?
+               AND COALESCE(
+                ei.walk_in_at,
+                CASE
+                  WHEN c.walk_in IS NOT NULL THEN CAST(CONCAT(c.walk_in, ' 00:00:00.000000') AS DATETIME(6))
+                  WHEN jrs.selection_status = 'walk_in' THEN jrs.selected_at
+                  ELSE NULL
+                END
+              ) <= ?
+              THEN rd.res_id ELSE NULL
+            END) AS walkInCount,
+            COUNT(DISTINCT CASE
+              WHEN COALESCE(
+                ei.joined_at,
+                CASE WHEN jrs.selection_status = 'joined' THEN jrs.selected_at ELSE NULL END,
+                CASE WHEN c.joining_date IS NOT NULL THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6)) ELSE NULL END
+              ) >= ?
+               AND COALESCE(
+                ei.joined_at,
+                CASE WHEN jrs.selection_status = 'joined' THEN jrs.selected_at ELSE NULL END,
+                CASE WHEN c.joining_date IS NOT NULL THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6)) ELSE NULL END
+              ) <= ?
+              THEN rd.res_id ELSE NULL
+            END) AS joinedCount
+          FROM resumes_data rd
+          LEFT JOIN candidate c ON c.res_id = rd.res_id
+          LEFT JOIN job_resume_selection jrs
+            ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
+          ${buildExtraInfoJoin("rd.res_id")}
+          WHERE rd.rid = ?
+        `, [startDt, endDt, startDt, endDt, startDt, endDt, row.rid]);
+
+        const joinedVal = Number(cntRows[0]?.joinedCount) || 0;
+        const submittedVal = Number(cntRows[0]?.submittedCount) || 0;
+        const walkInVal = Number(cntRows[0]?.walkInCount) || 0;
+        const targetVal = Number(row.target) || 0;
+        const progressPct =
+          targetVal > 0
+            ? Math.min(100, Math.round((joinedVal / targetVal) * 100))
+            : joinedVal > 0
+            ? 100
+            : 0;
+
+        let status = "in_progress";
+        if (targetVal > 0 && joinedVal >= targetVal) {
+          status = "achieved";
+        } else if (row.endDate < todayStr) {
+          status = "missed";
+        }
+
+        return {
+          id: row.id,
+          rid: row.rid,
+          name: row.name || "Unknown",
+          team: row.team || "Team BPO",
+          startDate: row.startDate,
+          endDate: row.endDate,
+          target: targetVal,
+          joined: joinedVal,
+          submitted: submittedVal,
+          walkIn: walkInVal,
+          progressPct,
+          status,
+          note: row.note || "",
+          updatedAt: row.updatedAt,
+        };
+      }),
+    );
+
+    return res.status(200).json({ history });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to load target history.",
+      error: error.message,
+    });
+  }
+});
+
 router.patch("/api/admin/recruiters/:rid/target", async (req, res) => {
   if (!ensureAdminAuthorized(req, res)) return;
 
@@ -6686,6 +7000,10 @@ router.patch("/api/admin/recruiters/:rid/target", async (req, res) => {
     req.body?.joiningTarget ??
     req.body?.joining_target;
 
+  const startDate = String(req.body?.startDate || req.body?.start_date || "").trim();
+  const endDate = String(req.body?.endDate || req.body?.end_date || "").trim();
+  const note = req.body?.note || null;
+
   if (!rid) {
     return res.status(400).json({ message: "Recruiter ID is required." });
   }
@@ -6693,11 +7011,7 @@ router.patch("/api/admin/recruiters/:rid/target", async (req, res) => {
   const targetValue = Math.max(0, parseInt(rawTarget, 10) || 0);
 
   try {
-    if (!(await columnExists("recruiter", "joining_target"))) {
-      await pool.query(
-        "ALTER TABLE recruiter ADD COLUMN joining_target INT NOT NULL DEFAULT 0",
-      );
-    }
+    await ensureRecruiterTargetsTable();
 
     const [recruiterRows] = await pool.query(
       "SELECT rid, name, email FROM recruiter WHERE rid = ? LIMIT 1",
@@ -6708,16 +7022,27 @@ router.patch("/api/admin/recruiters/:rid/target", async (req, res) => {
       return res.status(404).json({ message: "Recruiter not found." });
     }
 
+    if (startDate && endDate) {
+      await pool.query(
+        `INSERT INTO recruiter_targets (recruiter_rid, start_date, end_date, target, note)
+         VALUES (?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE target = VALUES(target), note = VALUES(note), updated_at = CURRENT_TIMESTAMP`,
+        [rid, startDate, endDate, targetValue, note],
+      );
+    }
+
     await pool.query(
       "UPDATE recruiter SET joining_target = ? WHERE rid = ?",
       [targetValue, rid],
     );
 
     return res.status(200).json({
-      message: `Target updated successfully for ${recruiterRows[0].name || rid}.`,
+      message: `Target (${targetValue} joins) updated successfully for ${recruiterRows[0].name || rid}.`,
       rid,
       target: targetValue,
       joiningTarget: targetValue,
+      startDate: startDate || null,
+      endDate: endDate || null,
     });
   } catch (error) {
     return res.status(500).json({
@@ -6731,16 +7056,16 @@ router.post("/api/admin/recruiters/targets", async (req, res) => {
   if (!ensureAdminAuthorized(req, res)) return;
 
   const targets = req.body?.targets;
+  const startDate = String(req.body?.startDate || req.body?.start_date || "").trim();
+  const endDate = String(req.body?.endDate || req.body?.end_date || "").trim();
+  const note = req.body?.note || null;
+
   if (!targets || typeof targets !== "object") {
     return res.status(400).json({ message: "targets map or array is required." });
   }
 
   try {
-    if (!(await columnExists("recruiter", "joining_target"))) {
-      await pool.query(
-        "ALTER TABLE recruiter ADD COLUMN joining_target INT NOT NULL DEFAULT 0",
-      );
-    }
+    await ensureRecruiterTargetsTable();
 
     const entries = Array.isArray(targets)
       ? targets.map((item) => [
@@ -6760,6 +7085,15 @@ router.post("/api/admin/recruiters/targets", async (req, res) => {
 
     for (const [rid, targetVal] of entries) {
       if (rid) {
+        if (startDate && endDate) {
+          await pool.query(
+            `INSERT INTO recruiter_targets (recruiter_rid, start_date, end_date, target, note)
+             VALUES (?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE target = VALUES(target), note = VALUES(note), updated_at = CURRENT_TIMESTAMP`,
+            [rid, startDate, endDate, targetVal, note],
+          );
+        }
+
         await pool.query(
           "UPDATE recruiter SET joining_target = ? WHERE rid = ?",
           [targetVal, rid],
@@ -6768,8 +7102,10 @@ router.post("/api/admin/recruiters/targets", async (req, res) => {
     }
 
     return res.status(200).json({
-      message: "Recruiter targets updated successfully.",
+      message: `Recruiter targets updated successfully for ${entries.length} recruiters.`,
       count: entries.length,
+      startDate: startDate || null,
+      endDate: endDate || null,
     });
   } catch (error) {
     return res.status(500).json({
