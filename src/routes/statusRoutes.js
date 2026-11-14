@@ -569,8 +569,24 @@ router.get(
         ? "AND COALESCE(CAST(CONCAT(c.joining_date, ' 00:00:00') AS DATETIME), ei.joined_at, jrs.selected_at, rd.uploaded_at) >= ? AND COALESCE(CAST(CONCAT(c.joining_date, ' 00:00:00') AS DATETIME), ei.joined_at, jrs.selected_at, rd.uploaded_at) < ?"
         : "";
       const queryParams = hasDateRange ? [startDateTime, endExclusiveDateTime] : [];
-      const teamCondition = hasTeamFilter ? "AND COALESCE(r.team, 'Team BPO') = ?" : "";
-      if (hasTeamFilter) queryParams.push(rawTeam.toLowerCase().includes("nbfc") ? "Team NBFC" : "Team BPO");
+      let hasTeamColumn = false;
+      try {
+        const [teamColRows] = await pool.query("SHOW COLUMNS FROM recruiter LIKE 'team'");
+        hasTeamColumn = Array.isArray(teamColRows) && teamColRows.length > 0;
+      } catch (_) {
+        hasTeamColumn = false;
+      }
+
+      if (!hasTeamColumn) {
+        try {
+          await pool.query("ALTER TABLE recruiter ADD COLUMN team VARCHAR(50) NOT NULL DEFAULT 'Team BPO'");
+          hasTeamColumn = true;
+        } catch (_) {}
+      }
+
+      const teamCondition = hasTeamFilter && hasTeamColumn ? "AND COALESCE(r.team, 'Team BPO') = ?" : "";
+      if (hasTeamFilter && hasTeamColumn) queryParams.push(rawTeam.toLowerCase().includes("nbfc") ? "Team NBFC" : "Team BPO");
+      const teamSelect = hasTeamColumn ? "COALESCE(r.team, 'Team BPO') AS team," : "'Team BPO' AS team,";
 
       let hasAccountStatusColumn = false;
       try {
@@ -610,7 +626,7 @@ router.get(
           r.email,
           ${phoneSelect}
           COALESCE(r.role, 'recruiter') AS role,
-          COALESCE(r.team, 'Team BPO') AS team,
+          ${teamSelect}
           ${accountStatusSelect}
           COALESCE(stats.joined_count, 0) AS joined_count,
           COALESCE(r.points, 0) AS points
