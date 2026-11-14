@@ -714,7 +714,10 @@ router.get(
             '%Y-%m-%d %H:%i:%s.%f'
           ) AS submittedAt,
           DATE_FORMAT(
-            CASE WHEN jrs.selection_status = 'verified' THEN jrs.selected_at ELSE NULL END,
+            COALESCE(
+              ei.verified_at,
+              CASE WHEN jrs.selection_status = 'verified' THEN jrs.selected_at ELSE NULL END
+            ),
             '%Y-%m-%d %H:%i:%s.%f'
           ) AS verifiedAt,
           DATE_FORMAT(
@@ -725,56 +728,61 @@ router.get(
             '%Y-%m-%d %H:%i:%s.%f'
           ) AS othersAt,
           DATE_FORMAT(
-            CASE
-              WHEN c.walk_in IS NOT NULL THEN CAST(CONCAT(c.walk_in, ' 00:00:00.000000') AS DATETIME(6))
-              WHEN jrs.selection_status = 'walk_in' THEN jrs.selected_at
-              ELSE NULL
-            END,
+            COALESCE(
+              ei.walk_in_at,
+              CASE WHEN c.walk_in IS NOT NULL THEN CAST(CONCAT(c.walk_in, ' 00:00:00.000000') AS DATETIME(6)) ELSE NULL END,
+              CASE WHEN jrs.selection_status = 'walk_in' THEN jrs.selected_at ELSE NULL END
+            ),
             '%Y-%m-%d %H:%i:%s.%f'
           ) AS walkInAt,
           DATE_FORMAT(
             COALESCE(
-              CASE WHEN jrs.selection_status = 'selected' THEN ei.selected_at ELSE NULL END,
+              ei.selected_at,
               CASE WHEN jrs.selection_status = 'selected' THEN jrs.selected_at ELSE NULL END
             ),
             '%Y-%m-%d %H:%i:%s.%f'
           ) AS selectedAt,
           DATE_FORMAT(
             COALESCE(
-              CASE WHEN jrs.selection_status = 'rejected' THEN ei.rejected_at ELSE NULL END,
+              ei.rejected_at,
               CASE WHEN jrs.selection_status = 'rejected' THEN jrs.selected_at ELSE NULL END
             ),
             '%Y-%m-%d %H:%i:%s.%f'
           ) AS rejectedAt,
           DATE_FORMAT(
             COALESCE(
-              CASE WHEN jrs.selection_status IN ('shortlisted', 'pending_joining') THEN ei.shortlisted_at ELSE NULL END,
+              ei.shortlisted_at,
               CASE WHEN jrs.selection_status IN ('shortlisted', 'pending_joining') THEN jrs.selected_at ELSE NULL END
             ),
             '%Y-%m-%d %H:%i:%s.%f'
           ) AS shortlistedAt,
           DATE_FORMAT(
-            CASE
-              WHEN jrs.selection_status = 'joined' THEN
-                COALESCE(
-                  ei.joined_at,
-                  jrs.selected_at,
-                  CASE WHEN c.joining_date IS NOT NULL THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6)) ELSE NULL END
-                )
-              ELSE NULL
-            END,
+            COALESCE(
+              ei.joined_at,
+              CASE WHEN jrs.selection_status = 'joined' THEN jrs.selected_at ELSE NULL END,
+              CASE WHEN c.joining_date IS NOT NULL THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6)) ELSE NULL END
+            ),
             '%Y-%m-%d %H:%i:%s.%f'
           ) AS joinedAt,
           DATE_FORMAT(
-            CASE WHEN jrs.selection_status = 'dropout' THEN jrs.selected_at ELSE NULL END,
+            COALESCE(
+              ei.dropout_at,
+              CASE WHEN jrs.selection_status = 'dropout' THEN jrs.selected_at ELSE NULL END
+            ),
             '%Y-%m-%d %H:%i:%s.%f'
           ) AS dropoutAt,
           DATE_FORMAT(
-            CASE WHEN jrs.selection_status = 'billed' THEN jrs.selected_at ELSE NULL END,
+            COALESCE(
+              ei.billed_at,
+              CASE WHEN jrs.selection_status = 'billed' THEN jrs.selected_at ELSE NULL END
+            ),
             '%Y-%m-%d %H:%i:%s.%f'
           ) AS billedAt,
           DATE_FORMAT(
-            CASE WHEN jrs.selection_status = 'left' THEN jrs.selected_at ELSE NULL END,
+            COALESCE(
+              ei.left_at,
+              CASE WHEN jrs.selection_status = 'left' THEN jrs.selected_at ELSE NULL END
+            ),
             '%Y-%m-%d %H:%i:%s.%f'
           ) AS leftAt,
           DATE_FORMAT(c.walk_in, '%Y-%m-%d') AS walkInDate,

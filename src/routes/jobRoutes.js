@@ -1776,10 +1776,10 @@ router.post(
           });
         }
 
-        if (persistedStatus === "walk_in" && customDate) {
+        if (persistedStatus === "walk_in") {
           await upsertCandidateFields(connection, {
             resId: normalizedResId,
-            walkIn: customDate,
+            walkIn: customDate || getCurrentDateOnlyInBusinessTimeZone(),
           });
         }
 
@@ -1827,11 +1827,15 @@ router.post(
           });
         }
 
+        const intakeCreatedAt = customTimestamp
+          ? customTimestamp
+          : effectiveJoiningDate
+            ? `${effectiveJoiningDate} 00:00:00`
+            : null;
+
         if (persistedStatus === "joined") {
           await addCandidateBillIntakeEntry(connection, normalizedResId, {
-            createdAt: effectiveJoiningDate
-              ? `${effectiveJoiningDate} 00:00:00`
-              : null,
+            createdAt: intakeCreatedAt,
           });
         }
 
@@ -1842,9 +1846,7 @@ router.post(
             {
               amount: resolvedRevenueAmount,
               reason: "candidate's bill",
-              createdAt: effectiveJoiningDate
-                ? `${effectiveJoiningDate} 00:00:00`
-                : null,
+              createdAt: intakeCreatedAt,
             },
           );
           if (!intakeEntry) {
