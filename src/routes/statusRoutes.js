@@ -1082,10 +1082,12 @@ router.get(
         hasSubmittedByRoleColumn,
         hasJobRecruiterAccessTable,
         hasAccessModeColumn,
+        hasJoiningTargetCol,
       ] = await Promise.all([
         columnExists("resumes_data", "submitted_by_role"),
         tableExists("job_recruiter_access"),
         columnExists("jobs", "access_mode"),
+        columnExists("recruiter", "joining_target"),
       ]);
       const recruiterSubmissionFilter = hasSubmittedByRoleColumn
         ? "WHERE LOWER(TRIM(COALESCE(rd.submitted_by_role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader', 'job creator') AND COALESCE(rd.duplicate_hidden, FALSE) = FALSE"
@@ -1144,12 +1146,17 @@ router.get(
       }
       statsQueryParams.push(rid);
 
+      const joiningTargetSelect = hasJoiningTargetCol
+        ? "COALESCE(r.joining_target, 0) AS joining_target,"
+        : "0 AS joining_target,";
+
       const [recruiterRows] = await pool.query(
         `SELECT
           r.rid,
           r.name,
           r.email,
           COALESCE(r.points, 0) AS points,
+          ${joiningTargetSelect}
           COALESCE(rs.submitted, 0) AS submitted,
           COALESCE(rs.verified, 0) AS verified,
           COALESCE(rs.others, 0) AS others,
@@ -1236,6 +1243,146 @@ router.get(
 
       const stats = mapStats(recruiterRow);
 
+      // Resolve joining target & progress for this recruiter
+      let targetInfo = null;
+      try {
+        const hasTargetsTable = await tableExists("recruiter_targets");
+        let matchedTarget = null;
+
+        const now = new Date();
+        const toYmd = (d) =>
+          `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        const currentMonthStart = toYmd(new Date(now.getFullYear(), now.getMonth(), 1));
+        const currentMonthEnd = toYmd(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+
+        if (hasTargetsTable) {
+          // 1. If explicit date range provided, try exact match
+          if (hasDateRange && startDate && endDate) {
+            const [exactRows] = await pool.query(
+              `SELECT id, DATE_FORMAT(start_date, '%Y-%m-%d') AS startDate, DATE_FORMAT(end_date, '%Y-%m-%d') AS endDate, target, note, updated_at AS updatedAt
+               FROM recruiter_targets
+               WHERE recruiter_rid = ? AND start_date = ? AND end_date = ?
+               LIMIT 1`,
+              [rid, startDate, endDate],
+            );
+            if (exactRows.length > 0) {
+              matchedTarget = exactRows[0];
+            }
+          }
+
+          // 2. If no exact match and explicit date range, check if target encompasses dates
+          if (!matchedTarget && hasDateRange && startDate && endDate) {
+            const [overlapRows] = await pool.query(
+              `SELECT id, DATE_FORMAT(start_date, '%Y-%m-%d') AS startDate, DATE_FORMAT(end_date, '%Y-%m-%d') AS endDate, target, note, updated_at AS updatedAt
+               FROM recruiter_targets
+               WHERE recruiter_rid = ? AND start_date <= ? AND end_date >= ?
+               ORDER BY start_date DESC, end_date DESC
+               LIMIT 1`,
+              [rid, startDate, endDate],
+            );
+            if (overlapRows.length > 0) {
+              matchedTarget = overlapRows[0];
+            }
+          }
+
+          // 3. Fallback: check current month target
+          if (!matchedTarget) {
+            const [monthRows] = await pool.query(
+              `SELECT id, DATE_FORMAT(start_date, '%Y-%m-%d') AS startDate, DATE_FORMAT(end_date, '%Y-%m-%d') AS endDate, target, note, updated_at AS updatedAt
+               FROM recruiter_targets
+               WHERE recruiter_rid = ? AND start_date <= ? AND end_date >= ?
+               ORDER BY start_date DESC, end_date DESC
+               LIMIT 1`,
+              [rid, toYmd(now), toYmd(now)],
+            );
+            if (monthRows.length > 0) {
+              matchedTarget = monthRows[0];
+            }
+          }
+
+          // 4. Fallback: latest target record
+          if (!matchedTarget) {
+            const [latestRows] = await pool.query(
+              `SELECT id, DATE_FORMAT(start_date, '%Y-%m-%d') AS startDate, DATE_FORMAT(end_date, '%Y-%m-%d') AS endDate, target, note, updated_at AS updatedAt
+               FROM recruiter_targets
+               WHERE recruiter_rid = ?
+               ORDER BY start_date DESC, end_date DESC
+               LIMIT 1`,
+              [rid],
+            );
+            if (latestRows.length > 0) {
+              matchedTarget = latestRows[0];
+            }
+          }
+        }
+
+        const defaultTarget = Number(recruiterRow.joining_target) || 0;
+        const targetValue =
+          matchedTarget !== null && matchedTarget !== undefined
+            ? Number(matchedTarget.target) || 0
+            : defaultTarget;
+
+        const targetStart = matchedTarget?.startDate
+          ? matchedTarget.startDate
+          : hasDateRange
+          ? startDate
+          : currentMonthStart;
+        const targetEnd = matchedTarget?.endDate
+          ? matchedTarget.endDate
+          : hasDateRange
+          ? endDate
+          : currentMonthEnd;
+
+        // Count joined achievement specifically for targetStart to targetEnd
+        const targetStartDt = `${targetStart} 00:00:00.000000`;
+        const targetEndDt = `${targetEnd} 23:59:59.999999`;
+
+        const [cntRows] = await pool.query(
+          `SELECT
+            COUNT(DISTINCT rd.res_id) AS joinedCount
+          FROM resumes_data rd
+          LEFT JOIN candidate c ON c.res_id = rd.res_id
+          LEFT JOIN job_resume_selection jrs
+            ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
+          ${buildExtraInfoJoin("rd.res_id")}
+          WHERE rd.rid = ?
+            AND COALESCE(
+              ei.joined_at,
+              CASE WHEN jrs.selection_status = 'joined' THEN jrs.selected_at ELSE NULL END,
+              CASE WHEN c.joining_date IS NOT NULL THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6)) ELSE NULL END
+            ) >= ?
+            AND COALESCE(
+              ei.joined_at,
+              CASE WHEN jrs.selection_status = 'joined' THEN jrs.selected_at ELSE NULL END,
+              CASE WHEN c.joining_date IS NOT NULL THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6)) ELSE NULL END
+            ) <= ?`,
+          [rid, targetStartDt, targetEndDt],
+        );
+
+        const joinedVal = Number(cntRows[0]?.joinedCount) || 0;
+        const remainingVal = Math.max(0, targetValue - joinedVal);
+        const progressPct =
+          targetValue > 0
+            ? Math.min(100, Math.round((joinedVal / targetValue) * 100))
+            : joinedVal > 0
+            ? 100
+            : 0;
+
+        targetInfo = {
+          target: targetValue,
+          defaultTarget,
+          joined: joinedVal,
+          remaining: remainingVal,
+          progressPct,
+          startDate: targetStart,
+          endDate: targetEnd,
+          note: matchedTarget?.note || null,
+          hasCustomTarget: Boolean(matchedTarget),
+        };
+      } catch (targetErr) {
+        console.warn("Failed to compute recruiter target:", targetErr.message);
+      }
+
       return res.status(200).json({
         recruiter: {
           rid: recruiterRow.rid,
@@ -1244,6 +1391,7 @@ router.get(
           points: Number(recruiterRow.points) || 0,
         },
         stats,
+        target: targetInfo,
         accessibleJobsCount: Number(accessibleJobsCountRow?.total) || 0,
         dateRange: hasDateRange ? { startDate, endDate } : null,
       });
