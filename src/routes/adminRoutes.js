@@ -6790,6 +6790,7 @@ router.get("/api/admin/recruiter-targets", async (req, res) => {
         COALESCE(r.joining_target, 0) AS defaultTarget
       FROM recruiter r
       WHERE LOWER(TRIM(COALESCE(r.role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader')
+        AND LOWER(TRIM(COALESCE(r.account_status, 'active'))) NOT IN ('inactive', 'disabled', 'deactivated', 'blocked')
       ORDER BY r.name ASC
     `);
 
@@ -6841,6 +6842,28 @@ router.get("/api/admin/recruiter-targets", async (req, res) => {
         END) AS walkInCount,
         COUNT(DISTINCT CASE
           WHEN COALESCE(
+            ei.selected_at,
+            CASE WHEN jrs.selection_status = 'selected' THEN jrs.selected_at ELSE NULL END
+          ) >= ?
+           AND COALESCE(
+            ei.selected_at,
+            CASE WHEN jrs.selection_status = 'selected' THEN jrs.selected_at ELSE NULL END
+          ) <= ?
+          THEN rd.res_id ELSE NULL
+        END) AS selectedCount,
+        COUNT(DISTINCT CASE
+          WHEN COALESCE(
+            ei.shortlisted_at,
+            CASE WHEN jrs.selection_status IN ('shortlisted', 'pending_joining') THEN jrs.selected_at ELSE NULL END
+          ) >= ?
+           AND COALESCE(
+            ei.shortlisted_at,
+            CASE WHEN jrs.selection_status IN ('shortlisted', 'pending_joining') THEN jrs.selected_at ELSE NULL END
+          ) <= ?
+          THEN rd.res_id ELSE NULL
+        END) AS pendingCount,
+        COUNT(DISTINCT CASE
+          WHEN COALESCE(
             ei.joined_at,
             CASE WHEN jrs.selection_status = 'joined' THEN jrs.selected_at ELSE NULL END,
             CASE WHEN c.joining_date IS NOT NULL THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6)) ELSE NULL END
@@ -6851,7 +6874,18 @@ router.get("/api/admin/recruiter-targets", async (req, res) => {
             CASE WHEN c.joining_date IS NOT NULL THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6)) ELSE NULL END
           ) <= ?
           THEN rd.res_id ELSE NULL
-        END) AS joinedCount
+        END) AS joinedCount,
+        COUNT(DISTINCT CASE
+          WHEN COALESCE(
+            ei.dropout_at,
+            CASE WHEN jrs.selection_status = 'dropout' THEN jrs.selected_at ELSE NULL END
+          ) >= ?
+           AND COALESCE(
+            ei.dropout_at,
+            CASE WHEN jrs.selection_status = 'dropout' THEN jrs.selected_at ELSE NULL END
+          ) <= ?
+          THEN rd.res_id ELSE NULL
+        END) AS dropCount
       FROM resumes_data rd
       LEFT JOIN candidate c ON c.res_id = rd.res_id
       LEFT JOIN job_resume_selection jrs
@@ -6859,20 +6893,37 @@ router.get("/api/admin/recruiter-targets", async (req, res) => {
       ${buildExtraInfoJoin("rd.res_id")}
       WHERE rd.rid IS NOT NULL
       GROUP BY rd.rid
-    `, [startDt, endDt, startDt, endDt, startDt, endDt]);
+    `, [
+      startDt, endDt,
+      startDt, endDt,
+      startDt, endDt,
+      startDt, endDt,
+      startDt, endDt,
+      startDt, endDt,
+    ]);
 
     const statsMap = new Map();
     for (const s of statsRows) {
       statsMap.set(s.recruiterRid, {
         submitted: Number(s.submittedCount) || 0,
         walkIn: Number(s.walkInCount) || 0,
+        selected: Number(s.selectedCount) || 0,
+        pending: Number(s.pendingCount) || 0,
         joined: Number(s.joinedCount) || 0,
+        drop: Number(s.dropCount) || 0,
       });
     }
 
     const result = recruiters.map((r) => {
       const pTarget = targetMap.get(r.rid);
-      const stats = statsMap.get(r.rid) || { submitted: 0, walkIn: 0, joined: 0 };
+      const stats = statsMap.get(r.rid) || {
+        submitted: 0,
+        walkIn: 0,
+        selected: 0,
+        pending: 0,
+        joined: 0,
+        drop: 0,
+      };
       const targetVal = pTarget !== undefined ? pTarget.target : Number(r.defaultTarget) || 0;
       const joinedVal = stats.joined;
       const progressPct =
@@ -6894,6 +6945,10 @@ router.get("/api/admin/recruiter-targets", async (req, res) => {
         joined: joinedVal,
         submitted: stats.submitted,
         walkIn: stats.walkIn,
+        walk_in: stats.walkIn,
+        selected: stats.selected,
+        pending: stats.pending,
+        drop: stats.drop,
         progressPct,
         targetUpdatedAt: pTarget?.updatedAt || null,
       };
@@ -6921,9 +6976,9 @@ router.get("/api/admin/recruiter-targets/history", async (req, res) => {
     const filterRid = String(req.query?.rid || "").trim();
 
     const queryParams = [];
-    let whereClause = "";
+    let whereClause = "WHERE LOWER(TRIM(COALESCE(r.account_status, 'active'))) NOT IN ('inactive', 'disabled', 'deactivated', 'blocked')";
     if (filterRid) {
-      whereClause = "WHERE t.recruiter_rid = ?";
+      whereClause += " AND t.recruiter_rid = ?";
       queryParams.push(filterRid);
     }
 
@@ -6981,6 +7036,28 @@ router.get("/api/admin/recruiter-targets/history", async (req, res) => {
             END) AS walkInCount,
             COUNT(DISTINCT CASE
               WHEN COALESCE(
+                ei.selected_at,
+                CASE WHEN jrs.selection_status = 'selected' THEN jrs.selected_at ELSE NULL END
+              ) >= ?
+               AND COALESCE(
+                ei.selected_at,
+                CASE WHEN jrs.selection_status = 'selected' THEN jrs.selected_at ELSE NULL END
+              ) <= ?
+              THEN rd.res_id ELSE NULL
+            END) AS selectedCount,
+            COUNT(DISTINCT CASE
+              WHEN COALESCE(
+                ei.shortlisted_at,
+                CASE WHEN jrs.selection_status IN ('shortlisted', 'pending_joining') THEN jrs.selected_at ELSE NULL END
+              ) >= ?
+               AND COALESCE(
+                ei.shortlisted_at,
+                CASE WHEN jrs.selection_status IN ('shortlisted', 'pending_joining') THEN jrs.selected_at ELSE NULL END
+              ) <= ?
+              THEN rd.res_id ELSE NULL
+            END) AS pendingCount,
+            COUNT(DISTINCT CASE
+              WHEN COALESCE(
                 ei.joined_at,
                 CASE WHEN jrs.selection_status = 'joined' THEN jrs.selected_at ELSE NULL END,
                 CASE WHEN c.joining_date IS NOT NULL THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6)) ELSE NULL END
@@ -6991,18 +7068,40 @@ router.get("/api/admin/recruiter-targets/history", async (req, res) => {
                 CASE WHEN c.joining_date IS NOT NULL THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6)) ELSE NULL END
               ) <= ?
               THEN rd.res_id ELSE NULL
-            END) AS joinedCount
+            END) AS joinedCount,
+            COUNT(DISTINCT CASE
+              WHEN COALESCE(
+                ei.dropout_at,
+                CASE WHEN jrs.selection_status = 'dropout' THEN jrs.selected_at ELSE NULL END
+              ) >= ?
+               AND COALESCE(
+                ei.dropout_at,
+                CASE WHEN jrs.selection_status = 'dropout' THEN jrs.selected_at ELSE NULL END
+              ) <= ?
+              THEN rd.res_id ELSE NULL
+            END) AS dropCount
           FROM resumes_data rd
           LEFT JOIN candidate c ON c.res_id = rd.res_id
           LEFT JOIN job_resume_selection jrs
             ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
           ${buildExtraInfoJoin("rd.res_id")}
           WHERE rd.rid = ?
-        `, [startDt, endDt, startDt, endDt, startDt, endDt, row.rid]);
+        `, [
+          startDt, endDt,
+          startDt, endDt,
+          startDt, endDt,
+          startDt, endDt,
+          startDt, endDt,
+          startDt, endDt,
+          row.rid,
+        ]);
 
         const joinedVal = Number(cntRows[0]?.joinedCount) || 0;
         const submittedVal = Number(cntRows[0]?.submittedCount) || 0;
         const walkInVal = Number(cntRows[0]?.walkInCount) || 0;
+        const selectedVal = Number(cntRows[0]?.selectedCount) || 0;
+        const pendingVal = Number(cntRows[0]?.pendingCount) || 0;
+        const dropVal = Number(cntRows[0]?.dropCount) || 0;
         const targetVal = Number(row.target) || 0;
         const progressPct =
           targetVal > 0
@@ -7029,6 +7128,9 @@ router.get("/api/admin/recruiter-targets/history", async (req, res) => {
           joined: joinedVal,
           submitted: submittedVal,
           walkIn: walkInVal,
+          selected: selectedVal,
+          pending: pendingVal,
+          drop: dropVal,
           progressPct,
           status,
           note: row.note || "",
