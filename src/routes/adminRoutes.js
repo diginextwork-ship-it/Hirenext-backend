@@ -6954,6 +6954,16 @@ router.get("/api/admin/recruiter-targets", async (req, res) => {
       };
     });
 
+    result.sort((a, b) => {
+      const joinedDiff = Number(b.joined || 0) - Number(a.joined || 0);
+      if (joinedDiff !== 0) return joinedDiff;
+      const walkDiff = Number(b.walkIn || 0) - Number(a.walkIn || 0);
+      if (walkDiff !== 0) return walkDiff;
+      const subDiff = Number(b.submitted || 0) - Number(a.submitted || 0);
+      if (subDiff !== 0) return subDiff;
+      return String(a.name || "").localeCompare(String(b.name || ""));
+    });
+
     return res.status(200).json({
       startDate,
       endDate,
