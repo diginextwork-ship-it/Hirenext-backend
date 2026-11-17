@@ -6977,6 +6977,249 @@ router.get("/api/admin/recruiter-targets", async (req, res) => {
   }
 });
 
+router.get("/api/admin/recruiter-targets/export", async (req, res) => {
+  if (!ensureAdminAuthorized(req, res)) return;
+
+  try {
+    await ensureRecruiterTargetsTable();
+
+    let startDate = String(req.query?.startDate || "").trim();
+    let endDate = String(req.query?.endDate || "").trim();
+
+    const now = new Date();
+    const toYmd = (d) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+    if (!startDate || !endDate) {
+      const year = now.getFullYear();
+      const month = now.getMonth();
+      const firstDay = new Date(year, month, 1);
+      const lastDay = new Date(year, month + 1, 0);
+      if (!startDate) startDate = toYmd(firstDay);
+      if (!endDate) endDate = toYmd(lastDay);
+    }
+
+    const [recruiters] = await pool.query(`
+      SELECT
+        r.rid,
+        r.name,
+        r.email,
+        COALESCE(r.team, 'Team BPO') AS team,
+        COALESCE(NULLIF(TRIM(r.account_status), ''), 'active') AS accountStatus,
+        COALESCE(r.joining_target, 0) AS defaultTarget
+      FROM recruiter r
+      WHERE LOWER(TRIM(COALESCE(r.role, 'recruiter'))) IN ('recruiter', 'team leader', 'team_leader')
+        AND LOWER(TRIM(COALESCE(r.account_status, 'active'))) NOT IN ('inactive', 'disabled', 'deactivated', 'blocked')
+      ORDER BY r.name ASC
+    `);
+
+    const [periodTargets] = await pool.query(
+      `SELECT recruiter_rid, target, note, updated_at
+       FROM recruiter_targets
+       WHERE start_date = ? AND end_date = ?`,
+      [startDate, endDate],
+    );
+
+    const targetMap = new Map();
+    for (const pt of periodTargets) {
+      targetMap.set(pt.recruiter_rid, {
+        target: Number(pt.target) || 0,
+        note: pt.note || null,
+        updatedAt: pt.updated_at,
+      });
+    }
+
+    const startDt = `${startDate} 00:00:00.000000`;
+    const endDt = `${endDate} 23:59:59.999999`;
+
+    const [statsRows] = await pool.query(`
+      SELECT
+        rd.rid AS recruiterRid,
+        COUNT(DISTINCT CASE
+          WHEN COALESCE(
+            ei.joined_at,
+            CASE WHEN jrs.selection_status = 'joined' THEN jrs.selected_at ELSE NULL END
+          ) >= ?
+           AND COALESCE(
+            ei.joined_at,
+            CASE WHEN jrs.selection_status = 'joined' THEN jrs.selected_at ELSE NULL END
+          ) <= ?
+          THEN rd.res_id ELSE NULL
+        END) AS joinedCount
+      FROM resumes_data rd
+      LEFT JOIN candidate c ON c.res_id = rd.res_id
+      LEFT JOIN job_resume_selection jrs
+        ON jrs.job_jid = rd.job_jid AND jrs.res_id = rd.res_id
+      ${buildExtraInfoJoin("rd.res_id")}
+      WHERE rd.rid IS NOT NULL
+      GROUP BY rd.rid
+    `, [startDt, endDt]);
+
+    const statsMap = new Map();
+    for (const s of statsRows) {
+      statsMap.set(s.recruiterRid, Number(s.joinedCount) || 0);
+    }
+
+    const recruiterRows = recruiters.map((r) => {
+      const pTarget = targetMap.get(r.rid);
+      const targetVal = pTarget !== undefined ? pTarget.target : Number(r.defaultTarget) || 0;
+      const joinedVal = statsMap.get(r.rid) || 0;
+      const pct =
+        targetVal > 0
+          ? Math.min(100, Math.round((joinedVal / targetVal) * 100))
+          : joinedVal > 0
+          ? 100
+          : 0;
+
+      let perfLabel = "Poor";
+      if (pct > 75) perfLabel = "Excellent";
+      else if (pct > 50) perfLabel = "Very Good";
+      else if (pct > 25) perfLabel = "Good";
+
+      return {
+        rid: r.rid,
+        name: r.name,
+        team: r.team || "Team BPO",
+        target: targetVal,
+        joined: joinedVal,
+        progressPct: pct,
+        perfLabel,
+      };
+    });
+
+    // Sort descending by joins achieved (highest joining first)
+    recruiterRows.sort((a, b) => {
+      if (b.joined !== a.joined) return b.joined - a.joined;
+      return String(a.name || "").localeCompare(String(b.name || ""));
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = "HireNext Admin";
+    workbook.created = new Date();
+
+    const buildSheet = (worksheet, list, showTeam = false) => {
+      worksheet.views = [{ showGridLines: true }];
+
+      const columns = [
+        { header: "S.No.", key: "sno", width: 9 },
+        { header: "NAME", key: "name", width: 24 },
+      ];
+      if (showTeam) {
+        columns.push({ header: "TEAM", key: "team", width: 18 });
+      }
+      columns.push(
+        { header: "JOINING TARGET", key: "target", width: 20 },
+        { header: "TARGET ACHIEVED", key: "achieved", width: 20 },
+        { header: "PERFORMANCE", key: "performance", width: 18 },
+      );
+
+      worksheet.columns = columns;
+
+      const headerRow = worksheet.getRow(1);
+      headerRow.height = 24;
+      headerRow.eachCell((cell) => {
+        cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FF000000" } };
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FFF1C232" }, // Gold / Amber Yellow as in Image 2
+        };
+        cell.alignment = { vertical: "middle", horizontal: "center" };
+        cell.border = {
+          top: { style: "thin", color: { argb: "FF000000" } },
+          left: { style: "thin", color: { argb: "FF000000" } },
+          bottom: { style: "thin", color: { argb: "FF000000" } },
+          right: { style: "thin", color: { argb: "FF000000" } },
+        };
+      });
+
+      list.forEach((item, index) => {
+        const rowData = {
+          sno: index + 1,
+          name: item.name || "Unknown",
+          target: item.target,
+          achieved: item.joined,
+          performance: item.perfLabel,
+        };
+        if (showTeam) {
+          rowData.team = item.team;
+        }
+
+        const row = worksheet.addRow(rowData);
+        row.height = 22;
+
+        row.eachCell((cell, colNumber) => {
+          cell.border = {
+            top: { style: "thin", color: { argb: "FF000000" } },
+            left: { style: "thin", color: { argb: "FF000000" } },
+            bottom: { style: "thin", color: { argb: "FF000000" } },
+            right: { style: "thin", color: { argb: "FF000000" } },
+          };
+
+          if (colNumber === 2) {
+            cell.alignment = { vertical: "middle", horizontal: "left" };
+            cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FF000000" } };
+          } else {
+            cell.alignment = { vertical: "middle", horizontal: "center" };
+            cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FF000000" } };
+          }
+
+          const perfColIndex = showTeam ? 6 : 5;
+          if (colNumber === perfColIndex) {
+            const val = String(cell.value || "").trim().toLowerCase();
+            if (["good", "very good", "excellent"].includes(val)) {
+              cell.fill = {
+                type: "pattern",
+                pattern: "solid",
+                fgColor: { argb: "FF38761D" }, // Forest Green as in Image 2
+              };
+              cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
+            } else {
+              cell.fill = {
+                type: "pattern",
+                pattern: "solid",
+                fgColor: { argb: "FFFF0000" }, // Bright Red as in Image 2
+              };
+              cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
+            }
+          }
+        });
+      });
+    };
+
+    const bpoList = recruiterRows.filter((r) =>
+      String(r.team || "").toLowerCase().includes("bpo"),
+    );
+    const nbfcList = recruiterRows.filter((r) =>
+      String(r.team || "").toLowerCase().includes("nbfc"),
+    );
+
+    // Create sheets for both teams and all teams
+    buildSheet(workbook.addWorksheet("Team BPO"), bpoList, false);
+    buildSheet(workbook.addWorksheet("Team NBFC"), nbfcList, false);
+    buildSheet(workbook.addWorksheet("All Teams"), recruiterRows, true);
+
+    const fileDate = new Date().toISOString().slice(0, 10);
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="recruiter-targets-${startDate}-to-${endDate}.xlsx"`,
+    );
+
+    await workbook.xlsx.write(res);
+    return res.end();
+  } catch (error) {
+    console.error("GET /api/admin/recruiter-targets/export error:", error);
+    return res.status(500).json({
+      message: "Failed to export recruiter targets.",
+      error: error.message,
+    });
+  }
+});
+
 router.get("/api/admin/recruiter-targets/history", async (req, res) => {
   if (!ensureAdminAuthorized(req, res)) return;
 
