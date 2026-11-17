@@ -41,6 +41,8 @@ const {
   escapeLike,
   extractCandidateSnapshot,
   buildJobAtsContext,
+  cleanInstitutionName,
+  safeTruncate,
 } = require("../utils/formatters");
 const {
   CANONICAL_VERIFY_STATUS,
@@ -1247,6 +1249,10 @@ router.post(
         const resId = `res_${sequenceValue}`;
         const cid = buildCandidateId(sequenceValue);
 
+        const safeResumeFilename = safeTruncate(originalName, 255) || "resume";
+        const safeResumeExtension = safeTruncate(validation.extension, 10) || "pdf";
+        const safeRecruiterRid = safeTruncate(recruiterRid, 20);
+
         await connection.query(
           `INSERT INTO applications
           (
@@ -1262,7 +1268,7 @@ router.post(
           [
             safeJobId,
             resId,
-            originalName,
+            safeResumeFilename,
             safeJsonOrNull(storedParsedData),
             parsed.atsScore,
             parsed.atsMatchPercentage,
@@ -1286,10 +1292,10 @@ router.post(
         const resumeInsertValuesSql = ["?", "?", "?", "?", "?", "?"];
         const resumeInsertValues = [
           resId,
-          recruiterRid,
+          safeRecruiterRid,
           safeJobId,
-          originalName,
-          validation.extension,
+          safeResumeFilename,
+          safeResumeExtension,
           submittedAt,
         ];
 
@@ -1303,7 +1309,7 @@ router.post(
         if (hasSourceColumn) {
           resumeInsertColumns.push("source");
           resumeInsertValuesSql.push("?");
-          resumeInsertValues.push(resumeSource);
+          resumeInsertValues.push(safeTruncate(resumeSource, 50));
         }
 
         resumeInsertColumns.push(
@@ -1334,7 +1340,7 @@ router.post(
           cid,
           resId,
           jobJid: safeJobId,
-          recruiterRid,
+          recruiterRid: safeRecruiterRid,
           name: candidateName,
           phone,
           email,
@@ -1351,12 +1357,12 @@ router.post(
          ON DUPLICATE KEY UPDATE
            submitted = COALESCE(submitted, 0) + 1,
            last_updated = VALUES(last_updated)`,
-          [recruiterRid, submittedAt],
+          [safeRecruiterRid, submittedAt],
         );
 
         await upsertExtraInfoFields(connection, {
           resId,
-          recruiterRid,
+          recruiterRid: safeRecruiterRid,
           jobJid: safeJobId,
           candidateName,
           email,
@@ -1371,7 +1377,7 @@ router.post(
          FROM status
          WHERE recruiter_rid = ?
          LIMIT 1`,
-          [recruiterRid],
+          [safeRecruiterRid],
         );
 
         await connection.commit();
@@ -1392,10 +1398,11 @@ router.post(
         connection.release();
       }
     } catch (error) {
+      console.error("POST /api/resumes/submit error:", error);
       return res.status(500).json({
         success: false,
         error: "Failed to submit resume.",
-        details: error.message,
+        details: error?.message || String(error),
       });
     }
   },
@@ -1735,6 +1742,7 @@ router.post(
         connection.release();
       }
     } catch (error) {
+      console.error("POST /api/recruiters/:rid/resumes error:", error);
       return res.status(500).json({
         message: "Failed to add resume.",
         error: error.message,

@@ -5,6 +5,8 @@ const {
   normalizeCandidateName,
   normalizePhoneForStorage,
   normalizeJobJid,
+  cleanInstitutionName,
+  safeTruncate,
 } = require("./formatters");
 
 const tableExists = async (tableName) => {
@@ -508,17 +510,18 @@ const upsertExtraInfoFields = async (connection, payload) => {
     placeholders.push("?");
   };
 
-  addColumnValue("res_id", payload.resId);
-  addColumnValue("resume_id", payload.resId);
+  addColumnValue("res_id", safeTruncate(payload.resId, 30));
+  addColumnValue("resume_id", safeTruncate(payload.resId, 30));
   addColumnValue("job_jid", payload.jobJid);
-  addColumnValue("recruiter_rid", payload.recruiterRid);
-  addColumnValue("rid", payload.recruiterRid);
+  addColumnValue("recruiter_rid", safeTruncate(payload.recruiterRid, 50));
+  addColumnValue("rid", safeTruncate(payload.recruiterRid, 50));
   if (
     payload.officeLocationCity !== undefined &&
     columns.has("office_location_city")
   ) {
+    const safeCity = safeTruncate(payload.officeLocationCity, 120);
     insertColumns.push("office_location_city");
-    insertValues.push(payload.officeLocationCity);
+    insertValues.push(safeCity);
     placeholders.push("?");
     updates.push("office_location_city = VALUES(office_location_city)");
   }
@@ -735,26 +738,31 @@ const upsertCandidateFields = async (connection, payload) => {
       ? String(payload.email).trim().toLowerCase() || null
       : undefined;
 
-  addColumnValue("cid", effectiveCid, { update: false });
-  addColumnValue("res_id", normalizedResId || payload.resId, { update: false });
+  addColumnValue("cid", safeTruncate(effectiveCid, 20), { update: false });
+  addColumnValue("res_id", safeTruncate(normalizedResId || payload.resId, 30), { update: false });
   addColumnValue("job_jid", payload.jobJid);
-  addColumnValue("recruiter_rid", payload.recruiterRid);
-  addColumnValue("rid", payload.recruiterRid);
-  addColumnValue("name", normalizedCandidateName);
-  addColumnValue("phone", normalizedCandidatePhone);
-  addColumnValue("email", normalizedCandidateEmail);
-  addColumnValue("level_of_edu", payload.levelOfEdu);
-  addColumnValue("board_uni", payload.boardUni);
-  addColumnValue("institution_name", payload.institutionName);
-  addColumnValue("location", payload.location);
+  addColumnValue("recruiter_rid", safeTruncate(payload.recruiterRid, 20));
+  addColumnValue("rid", safeTruncate(payload.recruiterRid, 20));
+  addColumnValue("name", safeTruncate(normalizedCandidateName, 100));
+  addColumnValue("phone", safeTruncate(normalizedCandidatePhone, 15));
+  addColumnValue("email", safeTruncate(normalizedCandidateEmail, 100));
+  addColumnValue("level_of_edu", safeTruncate(payload.levelOfEdu, 50));
+  addColumnValue("board_uni", safeTruncate(payload.boardUni, 100));
+  addColumnValue(
+    "institution_name",
+    payload.institutionName !== undefined
+      ? cleanInstitutionName(payload.institutionName) || null
+      : undefined,
+  );
+  addColumnValue("location", safeTruncate(payload.location, 150));
   addColumnValue("marks", payload.marks);
   addColumnValue("age", payload.age);
-  addColumnValue("industry", payload.industry);
+  addColumnValue("industry", safeTruncate(payload.industry, 50));
   addColumnValue("expected_sal", payload.expectedSal);
   addColumnValue("prev_sal", payload.prevSal);
   addColumnValue("notice_period", payload.noticePeriod);
   addColumnValue("experience", payload.experience);
-  addColumnValue("years_of_exp", payload.yearsOfExp);
+  addColumnValue("years_of_exp", safeTruncate(payload.yearsOfExp, 20));
   addColumnValue("joining_date", payload.joiningDate);
   addColumnValue("walk_in", payload.walkIn);
   addColumnValue("revenue", payload.revenue);

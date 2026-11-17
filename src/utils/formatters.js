@@ -166,6 +166,37 @@ const unwrapRepeatedFieldValue = (value) => {
   return undefined;
 };
 
+const cleanInstitutionName = (value) => {
+  if (value === undefined || value === null) return "";
+  let text = String(value).trim();
+  if (!text) return "";
+
+  // If text contains something like "Completed ... from [College]" or "graduated from [College]"
+  const fromMatch = text.match(/\b(?:from|at)\s+\[?([^\]\r\n]+)\]?/i);
+  if (fromMatch && fromMatch[1]) {
+    text = fromMatch[1].trim();
+  }
+
+  // Remove leading/trailing brackets, parentheses, quotes
+  text = text.replace(/^[\[\("']+|[\]\)"']+$/g, "").trim();
+
+  // Strip prefixes like "College:", "Institute:", "University:"
+  text = text.replace(/^(?:college|institute|institution|university)\s*:\s*/i, "").trim();
+
+  // Safe slice to 190 characters
+  if (text.length > 190) {
+    text = text.slice(0, 190).trim();
+  }
+  return text;
+};
+
+const safeTruncate = (val, maxLen) => {
+  if (val === undefined || val === null) return val;
+  const str = String(val).trim();
+  if (!str) return null;
+  return str.length > maxLen ? str.slice(0, maxLen).trim() : str;
+};
+
 const pickFirstFilled = (...values) => {
   for (const value of values) {
     const normalizedValue = unwrapRepeatedFieldValue(value);
@@ -273,13 +304,15 @@ const buildAutofillFromParsedData = (parsedData) => {
       "university_name",
       "board",
     ),
-    institutionName: pickFromEducation(
-      "institution_name",
-      "institutionName",
-      "college_name",
-      "college",
-      "school_name",
-      "school",
+    institutionName: cleanInstitutionName(
+      pickFromEducation(
+        "institution_name",
+        "institutionName",
+        "college_name",
+        "college",
+        "school_name",
+        "school",
+      ),
     ),
     age: derivedAge,
   };
@@ -302,77 +335,95 @@ const extractCandidateSnapshot = ({ source, parsedData, fallback } = {}) => {
   );
 
   return {
-    name: normalizeCandidateName(
+    name: safeTruncate(
+      normalizeCandidateName(
+        pickFirstFilled(
+          pickAlias(
+            "candidate_name",
+            "candidateName",
+            "applicant_name",
+            "applicantName",
+            "name",
+          ),
+          autofill.name,
+          safeFallback.name,
+        ) || "",
+      ),
+      100,
+    ) || "",
+    phone: safeTruncate(
+      normalizePhoneForStorage(
+        pickFirstFilled(
+          pickAlias(
+            "candidate_phone",
+            "candidatePhone",
+            "phone",
+            "phone_number",
+            "phoneNumber",
+            "mobile",
+            "mobile_number",
+            "mobileNumber",
+          ),
+          autofill.phone,
+          safeFallback.phone,
+        ) || "",
+      ),
+      15,
+    ) || "",
+    email: safeTruncate(
+      String(
+        pickFirstFilled(
+          pickAlias(
+            "candidate_email",
+            "candidateEmail",
+            "applicant_email",
+            "applicantEmail",
+            "email",
+          ),
+          autofill.email,
+          safeFallback.email,
+        ) || "",
+      )
+        .trim()
+        .toLowerCase(),
+      100,
+    ) || "",
+    levelOfEdu: safeTruncate(
+      String(
+        pickFirstFilled(
+          pickAlias("latest_education_level"),
+          autofill.latestEducationLevel,
+          safeFallback.levelOfEdu,
+        ) || "",
+      ).trim(),
+      50,
+    ) || "",
+    boardUni: safeTruncate(
+      String(
+        pickFirstFilled(
+          pickAlias("board_university"),
+          autofill.boardUniversity,
+          safeFallback.boardUni,
+        ) || "",
+      ).trim(),
+      100,
+    ) || "",
+    institutionName: cleanInstitutionName(
       pickFirstFilled(
-        pickAlias(
-          "candidate_name",
-          "candidateName",
-          "applicant_name",
-          "applicantName",
-          "name",
-        ),
-        autofill.name,
-        safeFallback.name,
-      ) || "",
-    ),
-    phone: normalizePhoneForStorage(
-      pickFirstFilled(
-        pickAlias(
-          "candidate_phone",
-          "candidatePhone",
-          "phone",
-          "phone_number",
-          "phoneNumber",
-          "mobile",
-          "mobile_number",
-          "mobileNumber",
-        ),
-        autofill.phone,
-        safeFallback.phone,
-      ) || "",
-    ),
-    email: String(
-      pickFirstFilled(
-        pickAlias(
-          "candidate_email",
-          "candidateEmail",
-          "applicant_email",
-          "applicantEmail",
-          "email",
-        ),
-        autofill.email,
-        safeFallback.email,
-      ) || "",
-    )
-      .trim()
-      .toLowerCase(),
-    levelOfEdu: String(
-      pickFirstFilled(
-        pickAlias("latest_education_level"),
-        autofill.latestEducationLevel,
-        safeFallback.levelOfEdu,
-      ) || "",
-    ).trim(),
-    boardUni: String(
-      pickFirstFilled(
-        pickAlias("board_university"),
-        autofill.boardUniversity,
-        safeFallback.boardUni,
-      ) || "",
-    ).trim(),
-    institutionName: String(
-      pickFirstFilled(
-        pickAlias("institution_name"),
+        pickAlias("institution_name", "institutionName", "college_name", "college"),
         autofill.institutionName,
         safeFallback.institutionName,
-      ) || "",
-    ).trim(),
-    location: String(
-      pickFirstFilled(
-        pickAlias("candidate_location", "candidateLocation", "location"),
-        safeFallback.location,
-      ) || "",
-    ).trim(),
+      ),
+    ),
+    location: safeTruncate(
+      String(
+        pickFirstFilled(
+          pickAlias("candidate_location", "candidateLocation", "location"),
+          safeFallback.location,
+        ) || "",
+      ).trim(),
+      150,
+    ) || "",
     age: toNumberOrNull(rawAge),
     jobJid:
       String(
@@ -381,13 +432,15 @@ const extractCandidateSnapshot = ({ source, parsedData, fallback } = {}) => {
           safeFallback.jobJid,
         ) || "",
       ).trim() || null,
-    recruiterRid:
+    recruiterRid: safeTruncate(
       String(
         pickFirstFilled(
           pickAlias("recruiter_rid"),
           safeFallback.recruiterRid,
         ) || "",
-      ).trim() || null,
+      ).trim() || "",
+      20,
+    ) || null,
   };
 };
 
@@ -429,4 +482,6 @@ module.exports = {
   buildAutofillFromParsedData,
   extractCandidateSnapshot,
   buildJobAtsContext,
+  cleanInstitutionName,
+  safeTruncate,
 };
