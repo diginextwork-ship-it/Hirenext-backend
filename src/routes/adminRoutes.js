@@ -334,6 +334,18 @@ const ensurePerformanceExtraInfoColumns = async () => {
       "ALTER TABLE extra_info ADD COLUMN others_at TIMESTAMP NULL DEFAULT NULL",
     );
   }
+
+  if (!(await columnExists("extra_info", "didnt_turn_up_reason"))) {
+    await pool.query(
+      "ALTER TABLE extra_info ADD COLUMN didnt_turn_up_reason TEXT NULL",
+    );
+  }
+
+  if (!(await columnExists("extra_info", "didnt_turn_up_at"))) {
+    await pool.query(
+      "ALTER TABLE extra_info ADD COLUMN didnt_turn_up_at TIMESTAMP NULL DEFAULT NULL",
+    );
+  }
 };
 
 const buildTaskAssignmentAdminRow = (row) => {
@@ -3443,6 +3455,7 @@ router.get("/api/admin/recruiters/:rid/resumes", async (req, res) => {
         ei.verified_reason AS verifiedReason,
         ei.others_reason AS othersReason,
         ei.walk_in_reason AS walkInReason,
+        ei.didnt_turn_up_reason AS didntTurnUpReason,
         ei.select_reason AS selectReason,
         ei.shortlisted_reason AS shortlistedReason,
         ei.reject_reason AS rejectReason,
@@ -4431,6 +4444,7 @@ const PERFORMANCE_EVENT_META = {
   verified: { recruiterField: "verified", summaryField: "totalVerified" },
   others: { recruiterField: "others", summaryField: "totalOthers" },
   walk_in: { recruiterField: "walk_in", summaryField: "totalWalkIn" },
+  didnt_turn_up: { recruiterField: "didnt_turn_up", summaryField: "totalDidntTurnUp" },
   selected: { recruiterField: "selected", summaryField: "totalSelected" },
   rejected: { recruiterField: "rejected", summaryField: "totalRejected" },
   shortlisted: {
@@ -4486,6 +4500,7 @@ const resolveLatestPerformanceNote = (row = {}) => {
     verified: firstNonEmptyText(row.verifiedReason),
     others: firstNonEmptyText(row.othersReason),
     walk_in: firstNonEmptyText(row.walkInReason),
+    didnt_turn_up: firstNonEmptyText(row.didntTurnUpReason),
     shortlisted: firstNonEmptyText(row.shortlistedReason),
     selected: firstNonEmptyText(row.selectReason),
     joined: firstNonEmptyText(row.joinedReason, row.joiningNote),
@@ -4508,6 +4523,7 @@ const resolveLatestPerformanceNote = (row = {}) => {
     row.selectReason,
     row.shortlistedReason,
     row.rejectReason,
+    row.didntTurnUpReason,
     row.walkInReason,
     row.othersReason,
     row.verifiedReason,
@@ -4912,6 +4928,7 @@ router.post(
       "verified",
       "others",
       "walk_in",
+      "didnt_turn_up",
       "selected",
       "shortlisted",
       "rejected",
@@ -5149,6 +5166,7 @@ router.post(
         verified: "verifiedAt",
         others: "othersAt",
         walk_in: "walkInAt",
+        didnt_turn_up: "didntTurnUpAt",
         further: "furtherAt",
         selected: "selectedAt",
         shortlisted: "shortlistedAt",
@@ -5432,6 +5450,16 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
         recruiterRid: resume.rid || undefined,
         walkInReason: null,
         walkInAt: null,
+      });
+    }
+
+    if (currentDerivedStatus === "didnt_turn_up") {
+      await upsertExtraInfoFields(connection, {
+        resId: normalizedResId,
+        jobJid: resume.jobJid || undefined,
+        recruiterRid: resume.rid || undefined,
+        didntTurnUpReason: null,
+        didntTurnUpAt: null,
       });
     }
 
@@ -5746,6 +5774,13 @@ router.get("/api/admin/performance", async (req, res) => {
         ) AS walkInAt,
         DATE_FORMAT(
           COALESCE(
+            ei.didnt_turn_up_at,
+            CASE WHEN jrs.selection_status = 'didnt_turn_up' THEN jrs.selected_at ELSE NULL END
+          ),
+          '%Y-%m-%d %H:%i:%s.%f'
+        ) AS didntTurnUpAt,
+        DATE_FORMAT(
+          COALESCE(
             ei.selected_at,
             CASE WHEN jrs.selection_status = 'selected' THEN jrs.selected_at ELSE NULL END
           ),
@@ -5838,6 +5873,7 @@ router.get("/api/admin/performance", async (req, res) => {
         ei.verified_reason AS verifiedReason,
         ei.others_reason AS othersReason,
         ei.walk_in_reason AS walkInReason,
+        ei.didnt_turn_up_reason AS didntTurnUpReason,
         ei.select_reason AS selectReason,
         ei.shortlisted_reason AS shortlistedReason,
         ei.reject_reason AS rejectReason,
@@ -5902,6 +5938,7 @@ router.get("/api/admin/performance", async (req, res) => {
         verifiedReason: row.verifiedReason || null,
         othersReason: row.othersReason || null,
         walkInReason: row.walkInReason || null,
+        didntTurnUpReason: row.didntTurnUpReason || null,
         selectReason: row.selectReason || null,
         shortlistedReason: row.shortlistedReason || null,
         rejectReason: row.rejectReason || null,
@@ -5924,6 +5961,7 @@ router.get("/api/admin/performance", async (req, res) => {
       verified: [],
       others: [],
       walk_in: [],
+      didnt_turn_up: [],
       selected: [],
       shortlisted: [],
       joined: [],
@@ -5954,6 +5992,7 @@ router.get("/api/admin/performance", async (req, res) => {
           verified: 0,
           others: 0,
           walk_in: 0,
+          didnt_turn_up: 0,
           further: 0,
           selected: 0,
           shortlisted: 0,
@@ -5977,6 +6016,7 @@ router.get("/api/admin/performance", async (req, res) => {
         verifiedAt: normalizePerformanceTimestamp(rawRow.verifiedAt),
         othersAt: normalizePerformanceTimestamp(rawRow.othersAt),
         walkInAt: normalizePerformanceTimestamp(rawRow.walkInAt),
+        didntTurnUpAt: normalizePerformanceTimestamp(rawRow.didntTurnUpAt),
         selectedAt: normalizePerformanceTimestamp(rawRow.selectedAt),
         rejectedAt: normalizePerformanceTimestamp(rawRow.rejectedAt),
         shortlistedAt: normalizePerformanceTimestamp(rawRow.shortlistedAt),
@@ -6046,6 +6086,12 @@ router.get("/api/admin/performance", async (req, res) => {
         },
         walk_in: {
           eventAt: row.walkInAt,
+          teamLeaderSource: row.statusActorRole,
+          teamLeaderRid: row.statusActorRid,
+          teamLeaderName: row.statusActorName,
+        },
+        didnt_turn_up: {
+          eventAt: row.didntTurnUpAt,
           teamLeaderSource: row.statusActorRole,
           teamLeaderRid: row.statusActorRid,
           teamLeaderName: row.statusActorName,

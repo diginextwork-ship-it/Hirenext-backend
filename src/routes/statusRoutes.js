@@ -207,6 +207,7 @@ const TEAM_LEADER_PERFORMANCE_EVENT_KEYS = [
   "verified",
   "others",
   "walk_in",
+  "didnt_turn_up",
   "shortlisted",
   "selected",
   "rejected",
@@ -221,6 +222,7 @@ const TEAM_LEADER_PERFORMANCE_EVENT_META = {
   verified: { summaryField: "totalVerified" },
   others: { summaryField: "totalOthers" },
   walk_in: { summaryField: "totalWalkIn" },
+  didnt_turn_up: { summaryField: "totalDidntTurnUp" },
   shortlisted: { summaryField: "totalShortlisted" },
   selected: { summaryField: "totalSelected" },
   rejected: { summaryField: "totalRejected" },
@@ -242,6 +244,14 @@ const normalizeWorkflowStatus = (value, joiningDate = null) => {
   if (!normalized) return "submitted";
   if (normalized === "walkin") return "walk_in";
   if (normalized === "select") return "selected";
+  if (
+    normalized === "didnt_turn_up" ||
+    normalized === "did_not_turn_up" ||
+    normalized === "didntturnup" ||
+    normalized === "didn't_turn_up"
+  ) {
+    return "didnt_turn_up";
+  }
   if (normalized === "pendingjoining" || normalized === "pending_joining") {
     return "shortlisted";
   }
@@ -753,6 +763,13 @@ router.get(
           ) AS walkInAt,
           DATE_FORMAT(
             COALESCE(
+              ei.didnt_turn_up_at,
+              CASE WHEN jrs.selection_status = 'didnt_turn_up' THEN jrs.selected_at ELSE NULL END
+            ),
+            '%Y-%m-%d %H:%i:%s.%f'
+          ) AS didntTurnUpAt,
+          DATE_FORMAT(
+            COALESCE(
               ei.selected_at,
               CASE WHEN jrs.selection_status = 'selected' THEN jrs.selected_at ELSE NULL END
             ),
@@ -811,6 +828,7 @@ router.get(
           ei.verified_reason AS verifiedReason,
           ei.others_reason AS othersReason,
           ei.walk_in_reason AS walkInReason,
+          ei.didnt_turn_up_reason AS didntTurnUpReason,
           ei.shortlisted_reason AS shortlistedReason,
           ei.select_reason AS selectReason,
           ei.reject_reason AS rejectReason,
@@ -849,6 +867,7 @@ router.get(
         verified: [],
         others: [],
         walk_in: [],
+        didnt_turn_up: [],
         shortlisted: [],
         selected: [],
         rejected: [],
@@ -865,6 +884,7 @@ router.get(
           verifiedAt: normalizePerformanceTimestamp(rawRow.verifiedAt),
           othersAt: normalizePerformanceTimestamp(rawRow.othersAt),
           walkInAt: normalizePerformanceTimestamp(rawRow.walkInAt),
+          didntTurnUpAt: normalizePerformanceTimestamp(rawRow.didntTurnUpAt),
           shortlistedAt: normalizePerformanceTimestamp(rawRow.shortlistedAt),
           selectedAt: normalizePerformanceTimestamp(rawRow.selectedAt),
           rejectedAt: normalizePerformanceTimestamp(rawRow.rejectedAt),
@@ -883,6 +903,7 @@ router.get(
           verified: row.verifiedAt,
           others: row.othersAt,
           walk_in: row.walkInAt,
+          didnt_turn_up: row.didntTurnUpAt,
           shortlisted: row.shortlistedAt,
           selected: row.selectedAt,
           rejected: row.rejectedAt,
@@ -1142,6 +1163,8 @@ router.get(
           endExclusiveDateTime,
           startDateTime,
           endExclusiveDateTime,
+          startDateTime,
+          endExclusiveDateTime,
         );
       }
       statsQueryParams.push(rid);
@@ -1161,6 +1184,7 @@ router.get(
           COALESCE(rs.verified, 0) AS verified,
           COALESCE(rs.others, 0) AS others,
           COALESCE(rs.walk_in, 0) AS walk_in,
+          COALESCE(rs.didnt_turn_up, 0) AS didnt_turn_up,
           COALESCE(rs.further, 0) AS further,
           COALESCE(rs.shortlisted, 0) AS shortlisted,
           COALESCE(rs.selected, 0) AS \`select\`,
@@ -1178,6 +1202,7 @@ router.get(
             SUM(CASE WHEN jrs.selection_status = 'verified' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS verified,
             SUM(CASE WHEN jrs.selection_status = 'others' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS others,
             SUM(CASE WHEN jrs.selection_status = 'walk_in' AND ${walkInRangeCondition} THEN 1 ELSE 0 END) AS walk_in,
+            SUM(CASE WHEN jrs.selection_status = 'didnt_turn_up' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS didnt_turn_up,
             SUM(CASE WHEN jrs.selection_status = 'further' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS further,
             SUM(CASE WHEN jrs.selection_status = 'selected' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS selected,
             SUM(CASE WHEN jrs.selection_status IN ('shortlisted', 'pending_joining') AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS shortlisted,

@@ -253,6 +253,10 @@ const resolveManualRollbackTarget = (resume = {}) => {
       : "submitted";
   }
 
+  if (currentDerivedStatus === "didnt_turn_up") {
+    return "verified";
+  }
+
   if (
     currentDerivedStatus === "walk_in" &&
     (resume.othersAt || resume.othersReason)
@@ -1795,6 +1799,7 @@ router.post(
           verified: "verifiedAt",
           others: "othersAt",
           walk_in: "walkInAt",
+          didnt_turn_up: "didntTurnUpAt",
           further: "furtherAt",
           selected: "selectedAt",
           shortlisted: "shortlistedAt",
@@ -2060,6 +2065,16 @@ router.post(
             recruiterRid: resume.recruiterRid || undefined,
             walkInReason: null,
             walkInAt: null,
+          });
+        }
+
+        if (currentDerivedStatus === "didnt_turn_up") {
+          await upsertExtraInfoFields(connection, {
+            resId: normalizedResId,
+            jobJid: req.ownedJob.jid,
+            recruiterRid: resume.recruiterRid || undefined,
+            didntTurnUpReason: null,
+            didntTurnUpAt: null,
           });
         }
 

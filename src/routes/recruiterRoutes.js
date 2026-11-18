@@ -2910,6 +2910,7 @@ const resolveRecruiterRollbackTarget = (resume = {}) => {
 const statusReasonColumnMap = {
   others: "others_reason",
   walk_in: "walk_in_reason",
+  didnt_turn_up: "didnt_turn_up_reason",
   further: "further_reason",
   selected: "select_reason",
   rejected: "reject_reason",
@@ -3133,6 +3134,7 @@ router.post(
             verified: "verifiedAt",
             others: "othersAt",
             walk_in: "walkInAt",
+            didnt_turn_up: "didntTurnUpAt",
             further: "furtherAt",
             selected: "selectedAt",
             shortlisted: "shortlistedAt",
@@ -3162,6 +3164,7 @@ router.post(
           verified: "verified",
           others: "others",
           walk_in: "walk_in",
+          didnt_turn_up: "didnt_turn_up",
           selected: "`select`",
           rejected: "reject",
           joined: "joined",
@@ -3385,6 +3388,16 @@ router.post(
           recruiterRid: rid || undefined,
           walkInReason: null,
           walkInAt: null,
+        });
+      }
+
+      if (currentStatus === "didnt_turn_up") {
+        await upsertExtraInfoFields(connection, {
+          resId: normalizedResId,
+          jobJid: resume.jobJid || undefined,
+          recruiterRid: rid || undefined,
+          didntTurnUpReason: null,
+          didntTurnUpAt: null,
         });
       }
 

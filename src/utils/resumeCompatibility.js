@@ -4,6 +4,7 @@ const STATUS_REASON_FIELD_MAP = Object.freeze({
   submitted: "submittedReason",
   verified: "verifiedReason",
   walk_in: "walkInReason",
+  didnt_turn_up: "didntTurnUpReason",
   further: "furtherReason",
   selected: "selectReason",
   rejected: "rejectReason",
@@ -19,6 +20,12 @@ const STATUS_REASON_INPUT_KEYS = Object.freeze({
   submitted: ["submittedReason", "submitted_reason"],
   verified: ["verifiedReason", "verified_reason"],
   walk_in: ["walkInReason", "walk_in_reason"],
+  didnt_turn_up: [
+    "didntTurnUpReason",
+    "didnt_turn_up_reason",
+    "didNotTurnUpReason",
+    "did_not_turn_up_reason",
+  ],
   further: ["furtherReason", "further_reason"],
   selected: [
     "selectReason",

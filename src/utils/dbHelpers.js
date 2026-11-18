@@ -556,6 +556,17 @@ const upsertExtraInfoFields = async (connection, payload) => {
     updates.push("walk_in_reason = VALUES(walk_in_reason)");
   }
 
+  if (
+    (payload.didntTurnUpReason !== undefined || payload.didnt_turn_up_reason !== undefined) &&
+    columns.has("didnt_turn_up_reason")
+  ) {
+    const dtuReason = payload.didntTurnUpReason !== undefined ? payload.didntTurnUpReason : payload.didnt_turn_up_reason;
+    insertColumns.push("didnt_turn_up_reason");
+    insertValues.push(dtuReason);
+    placeholders.push("?");
+    updates.push("didnt_turn_up_reason = VALUES(didnt_turn_up_reason)");
+  }
+
   if (payload.furtherReason !== undefined && columns.has("further_reason")) {
     insertColumns.push("further_reason");
     insertValues.push(payload.furtherReason);
@@ -640,6 +651,7 @@ const upsertExtraInfoFields = async (connection, payload) => {
     verifiedAt: "verified_at",
     othersAt: "others_at",
     walkInAt: "walk_in_at",
+    didntTurnUpAt: "didnt_turn_up_at",
     furtherAt: "further_at",
     selectedAt: "selected_at",
     shortlistedAt: columns.has("shortlisted_at")
