@@ -46,6 +46,7 @@ const {
   resolveStatusReasonInput,
 } = require("../utils/resumeCompatibility");
 const {
+  formatSqlDateTimeInBusinessTimeZone,
   getCurrentDateOnlyInBusinessTimeZone,
   parseInclusiveDateRange,
 } = require("../utils/dateTime");
@@ -5158,7 +5159,8 @@ router.post(
         left: "leftAt",
       };
 
-      const eventTimestampValue = customTimestamp || "__CURRENT_TIMESTAMP__";
+      const eventTimestampValue =
+        customTimestamp || formatSqlDateTimeInBusinessTimeZone();
 
       if (reasonField) {
         await upsertExtraInfoFields(connection, {

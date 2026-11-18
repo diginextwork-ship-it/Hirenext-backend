@@ -64,6 +64,7 @@ const getDbConfig = () => {
     user,
     password,
     database,
+    timezone: "+05:30",
     ssl: resolveSslConfig(host),
     connectTimeout: 10000, // 10 seconds for initial connection
   };
@@ -73,6 +74,7 @@ const dbConfig = getDbConfig();
 
 const pool = mysql.createPool({
   ...dbConfig,
+  timezone: "+05:30",
   waitForConnections: true,
   connectionLimit: 3,
   queueLimit: 0,
