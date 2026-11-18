@@ -110,6 +110,7 @@ const buildExtraInfoJoin = (resumeIdReference, alias = "ei") => `
       submitted_reason,
       verified_reason,
       others_reason,
+      didnt_turn_up_reason,
       shortlisted_reason,
       walk_in_reason,
       left_reason,
@@ -123,6 +124,7 @@ const buildExtraInfoJoin = (resumeIdReference, alias = "ei") => `
       verified_at,
       others_at,
       walk_in_at,
+      didnt_turn_up_at,
       further_at,
       selected_at,
       shortlisted_at,
@@ -147,6 +149,7 @@ const buildExtraInfoJoin = (resumeIdReference, alias = "ei") => `
       fallback_ei.submitted_reason,
       fallback_ei.verified_reason,
       fallback_ei.others_reason,
+      fallback_ei.didnt_turn_up_reason,
       fallback_ei.shortlisted_reason,
       fallback_ei.walk_in_reason,
       fallback_ei.left_reason,
@@ -160,6 +163,7 @@ const buildExtraInfoJoin = (resumeIdReference, alias = "ei") => `
       fallback_ei.verified_at,
       fallback_ei.others_at,
       fallback_ei.walk_in_at,
+      fallback_ei.didnt_turn_up_at,
       fallback_ei.further_at,
       fallback_ei.selected_at,
       fallback_ei.shortlisted_at,
@@ -200,6 +204,7 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
   const hasSubmittedReason = columns.has("submitted_reason");
   const hasVerifiedReason = columns.has("verified_reason");
   const hasOthersReason = columns.has("others_reason");
+  const hasDidntTurnUpReason = columns.has("didnt_turn_up_reason");
   const hasWalkInReason = columns.has("walk_in_reason");
   const hasFurtherReason = columns.has("further_reason");
   const hasSelectReason = columns.has("select_reason");
@@ -216,6 +221,7 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
     hasSubmittedReason ||
     hasVerifiedReason ||
     hasOthersReason ||
+    hasDidntTurnUpReason ||
     hasWalkInReason ||
     hasFurtherReason ||
     hasSelectReason ||
@@ -237,6 +243,8 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
   if (hasVerifiedReason)
     selectColumns.push("verified_reason AS verifiedReason");
   if (hasOthersReason) selectColumns.push("others_reason AS othersReason");
+  if (hasDidntTurnUpReason)
+    selectColumns.push("didnt_turn_up_reason AS didntTurnUpReason");
   if (hasWalkInReason) selectColumns.push("walk_in_reason AS walkInReason");
   if (hasFurtherReason) selectColumns.push("further_reason AS furtherReason");
   if (hasSelectReason) selectColumns.push("select_reason AS selectReason");
