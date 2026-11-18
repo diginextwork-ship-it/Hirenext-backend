@@ -28,6 +28,7 @@ const {
   normalizeCandidateName,
   parseJsonField,
   extractCandidateSnapshot,
+  renderCandidateProfileHtml,
 } = require("../utils/formatters");
 const {
   ADMIN_STATUS_TRANSITIONS,
@@ -5591,6 +5592,25 @@ router.get("/api/admin/resumes/:resId/file", async (req, res) => {
     const mimeType =
       mimeTypeByResumeType[String(row.resumeType || "").toLowerCase()] ||
       "application/octet-stream";
+
+    if (!row.resume || row.resume.length === 0) {
+      try {
+        const [candRows] = await pool.query(
+          `SELECT c.*, j.role_name, j.company_name, e.submitted_reason, e.office_location_city
+           FROM candidate c
+           LEFT JOIN jobs j ON j.jid = c.job_jid
+           LEFT JOIN extra_info e ON e.res_id = c.res_id
+           WHERE c.res_id = ?
+           LIMIT 1`,
+          [resId],
+        );
+        const cand = candRows[0] || {};
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        return res.send(renderCandidateProfileHtml(cand));
+      } catch {
+        return res.status(404).json({ message: "Resume file not found." });
+      }
+    }
 
     res.setHeader("Content-Type", mimeType);
     res.setHeader(

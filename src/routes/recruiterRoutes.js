@@ -43,6 +43,7 @@ const {
   buildJobAtsContext,
   cleanInstitutionName,
   safeTruncate,
+  renderCandidateProfileHtml,
 } = require("../utils/formatters");
 const {
   CANONICAL_VERIFY_STATUS,
@@ -1069,26 +1070,29 @@ router.post(
       }
 
       const resumeFile = req.file;
-      if (!resumeFile || !resumeFile.buffer || resumeFile.buffer.length === 0) {
-        return res.status(400).json({
-          success: false,
-          error: "A resume file is required.",
-        });
-      }
+      const hasFile = Boolean(
+        resumeFile && resumeFile.buffer && resumeFile.buffer.length > 0,
+      );
 
-      const originalName = String(resumeFile.originalname || "").trim();
-      const validation = validateResumeFile({
-        filename: originalName,
-        mimetype: resumeFile.mimetype,
-        buffer: resumeFile.buffer,
-        maxBytes: 5 * 1024 * 1024,
-      });
+      let originalName = "Manual_Entry_Profile.pdf";
+      let fileExtension = "manual";
 
-      if (!validation.ok) {
-        return res.status(400).json({
-          success: false,
-          error: validation.message,
+      if (hasFile) {
+        originalName = String(resumeFile.originalname || "").trim();
+        const validation = validateResumeFile({
+          filename: originalName,
+          mimetype: resumeFile.mimetype,
+          buffer: resumeFile.buffer,
+          maxBytes: 5 * 1024 * 1024,
         });
+
+        if (!validation.ok) {
+          return res.status(400).json({
+            success: false,
+            error: validation.message,
+          });
+        }
+        fileExtension = validation.extension;
       }
 
       const [jobRows] = await pool.query(
@@ -1127,11 +1131,11 @@ router.post(
         req.body?.atsRawJson ?? req.body?.ats_raw_json,
       );
       const shouldSkipParsing =
+        !hasFile ||
         clientParsedData ||
         clientAtsRawJson ||
         clientAtsScore !== null ||
         clientAtsMatch !== null;
-      const isImageResume = isImageResumeType(validation.extension);
 
       const parsed = shouldSkipParsing
         ? {
@@ -1300,7 +1304,7 @@ router.post(
         ];
 
         const hasBlobTable = await tableExists("resumes_blob", connection);
-        if (!hasBlobTable && (await columnExists("resumes_data", "resume"))) {
+        if (hasFile && !hasBlobTable && (await columnExists("resumes_data", "resume"))) {
           resumeInsertColumns.splice(3, 0, "resume");
           resumeInsertValuesSql.splice(3, 0, "?");
           resumeInsertValues.splice(3, 0, resumeFile.buffer);
@@ -1334,7 +1338,9 @@ router.post(
           `INSERT INTO resumes_data (${resumeInsertColumns.join(", ")}) VALUES (${resumeInsertValuesSql.join(", ")})`,
           resumeInsertValues,
         );
-        await storeResumeBinary(connection, resId, resumeFile.buffer);
+        if (hasFile && resumeFile?.buffer) {
+          await storeResumeBinary(connection, resId, resumeFile.buffer);
+        }
 
         await upsertCandidateFields(connection, {
           cid,
@@ -2036,6 +2042,25 @@ router.get(
       const mimeType =
         mimeTypeByResumeType[String(row.resumeType || "").toLowerCase()] ||
         "application/octet-stream";
+
+      if (!row.resume || row.resume.length === 0) {
+        try {
+          const [candRows] = await pool.query(
+            `SELECT c.*, j.role_name, j.company_name, e.submitted_reason, e.office_location_city
+             FROM candidate c
+             LEFT JOIN jobs j ON j.jid = c.job_jid
+             LEFT JOIN extra_info e ON e.res_id = c.res_id
+             WHERE c.res_id = ?
+             LIMIT 1`,
+            [resId],
+          );
+          const cand = candRows[0] || {};
+          res.setHeader("Content-Type", "text/html; charset=utf-8");
+          return res.send(renderCandidateProfileHtml(cand));
+        } catch {
+          return res.status(404).json({ message: "Resume file not found." });
+        }
+      }
 
       res.setHeader("Content-Type", mimeType);
       res.setHeader(

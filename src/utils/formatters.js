@@ -463,6 +463,54 @@ const buildJobAtsContext = (jobRow) => {
   return parts.filter((line) => !line.endsWith(":")).join("\n");
 };
 
+const renderCandidateProfileHtml = (cand = {}) => `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Candidate Profile - ${cand.name || "Candidate"}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #f1f5f9; padding: 40px 20px; color: #1e293b; }
+    .card { max-width: 680px; margin: 0 auto; background: #ffffff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); padding: 32px; border: 1px solid #e2e8f0; }
+    .header { border-bottom: 2px solid #e2e8f0; padding-bottom: 16px; margin-bottom: 24px; }
+    h1 { font-size: 24px; margin: 0 0 6px 0; color: #0f172a; font-weight: 700; }
+    .badge { display: inline-block; padding: 4px 12px; background: #fef3c7; color: #92400e; border-radius: 20px; font-size: 12px; font-weight: 600; border: 1px solid #fde68a; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+    .field { margin-bottom: 8px; }
+    .label { font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: 600; letter-spacing: 0.5px; margin-bottom: 4px; }
+    .value { font-size: 15px; color: #0f172a; font-weight: 500; word-break: break-word; }
+    .note-box { background: #f8fafc; padding: 14px 18px; border-radius: 8px; font-size: 14px; margin-top: 16px; border: 1px solid #e2e8f0; border-left: 4px solid #ef4444; }
+    .footer { margin-top: 24px; font-size: 12px; color: #94a3b8; text-align: center; border-top: 1px solid #f1f5f9; padding-top: 16px; }
+    @media print { body { background: #fff; padding: 0; } .card { box-shadow: none; border: none; } }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <h1>${cand.name || "Candidate Profile"}</h1>
+      <span class="badge">Submitted without Resume File (Manual Entry)</span>
+    </div>
+    <div class="grid">
+      <div class="field"><div class="label">Candidate Name</div><div class="value">${cand.name || "N/A"}</div></div>
+      <div class="field"><div class="label">Contact Phone</div><div class="value">${cand.phone || "N/A"}</div></div>
+      <div class="field"><div class="label">Email Address</div><div class="value">${cand.email || "N/A"}</div></div>
+      <div class="field"><div class="label">Current Location</div><div class="value">${cand.location || "N/A"}</div></div>
+      <div class="field"><div class="label">Office Location</div><div class="value">${cand.office_location_city || "As per JD"}</div></div>
+      <div class="field"><div class="label">Education Level</div><div class="value">${cand.level_of_edu || "N/A"}</div></div>
+      <div class="field"><div class="label">Institution / College</div><div class="value">${cand.institution_name || "N/A"}</div></div>
+      <div class="field"><div class="label">Board / University</div><div class="value">${cand.board_uni || "N/A"}</div></div>
+      <div class="field"><div class="label">Age</div><div class="value">${cand.age ? cand.age + " years" : "N/A"}</div></div>
+      <div class="field"><div class="label">Job Applied</div><div class="value">${cand.role_name || "N/A"}${cand.company_name ? ` (${cand.company_name})` : ""}</div></div>
+      <div class="field"><div class="label">Submitted By (RID)</div><div class="value">${cand.recruiter_rid || cand.rid || "N/A"}</div></div>
+      <div class="field"><div class="label">Candidate ID / Res ID</div><div class="value">${cand.cid || ""} / ${cand.res_id || ""}</div></div>
+    </div>
+    ${cand.submitted_reason ? `<div class="note-box"><div class="label">Candidate Availability / Notes</div><div class="value" style="font-size: 14px; margin-top: 4px;">${cand.submitted_reason}</div></div>` : ""}
+    <div class="footer">HireNext India ATS &bull; Candidate Record</div>
+  </div>
+</body>
+</html>`;
+
 module.exports = {
   toNumberOrNull,
   toMoneyNumber,
@@ -484,4 +532,5 @@ module.exports = {
   buildJobAtsContext,
   cleanInstitutionName,
   safeTruncate,
+  renderCandidateProfileHtml,
 };
