@@ -1254,7 +1254,7 @@ router.post(
         const cid = buildCandidateId(sequenceValue);
 
         const safeResumeFilename = safeTruncate(originalName, 255) || "resume";
-        const safeResumeExtension = safeTruncate(validation.extension, 10) || "pdf";
+        const safeResumeExtension = safeTruncate(fileExtension, 10) || "pdf";
         const safeRecruiterRid = safeTruncate(recruiterRid, 20);
 
         await connection.query(
