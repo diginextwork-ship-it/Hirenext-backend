@@ -1802,6 +1802,7 @@ router.post(
           didnt_turn_up: "didntTurnUpAt",
           further: "furtherAt",
           selected: "selectedAt",
+          pending: "pendingAt",
           shortlisted: "shortlistedAt",
           rejected: "rejectedAt",
           joined: "joinedAt",
@@ -2075,6 +2076,16 @@ router.post(
             recruiterRid: resume.recruiterRid || undefined,
             didntTurnUpReason: null,
             didntTurnUpAt: null,
+          });
+        }
+
+        if (currentDerivedStatus === "pending") {
+          await upsertExtraInfoFields(connection, {
+            resId: normalizedResId,
+            jobJid: req.ownedJob.jid,
+            recruiterRid: resume.recruiterRid || undefined,
+            pendingReason: null,
+            pendingAt: null,
           });
         }
 

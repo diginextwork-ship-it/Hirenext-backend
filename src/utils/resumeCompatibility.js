@@ -7,6 +7,7 @@ const STATUS_REASON_FIELD_MAP = Object.freeze({
   didnt_turn_up: "didntTurnUpReason",
   further: "furtherReason",
   selected: "selectReason",
+  pending: "pendingReason",
   rejected: "rejectReason",
   shortlisted: "shortlistedReason",
   joined: "joinedReason",
@@ -32,6 +33,12 @@ const STATUS_REASON_INPUT_KEYS = Object.freeze({
     "select_reason",
     "selectionReason",
     "selection_reason",
+  ],
+  pending: [
+    "pendingReason",
+    "pending_reason",
+    "pendingNote",
+    "pending_note",
   ],
   rejected: ["rejectReason", "reject_reason"],
   shortlisted: [

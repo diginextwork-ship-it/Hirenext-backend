@@ -346,6 +346,18 @@ const ensurePerformanceExtraInfoColumns = async () => {
       "ALTER TABLE extra_info ADD COLUMN didnt_turn_up_at TIMESTAMP NULL DEFAULT NULL",
     );
   }
+
+  if (!(await columnExists("extra_info", "pending_reason"))) {
+    await pool.query(
+      "ALTER TABLE extra_info ADD COLUMN pending_reason TEXT NULL",
+    );
+  }
+
+  if (!(await columnExists("extra_info", "pending_at"))) {
+    await pool.query(
+      "ALTER TABLE extra_info ADD COLUMN pending_at TIMESTAMP NULL DEFAULT NULL",
+    );
+  }
 };
 
 const buildTaskAssignmentAdminRow = (row) => {
@@ -1815,6 +1827,7 @@ const getAllSubmittedResumesHandler = async (req, res) => {
         ei.walk_in_reason AS walkInReason,
         ei.further_reason AS furtherReason,
         ei.select_reason AS selectReason,
+        ei.pending_reason AS pendingReason,
         ei.shortlisted_reason AS shortlistedReason,
         ei.reject_reason AS rejectReason,
         ei.joined_reason AS joinedReason,
@@ -1899,6 +1912,7 @@ const getAllSubmittedResumesHandler = async (req, res) => {
         walkInReason: row.walkInReason || null,
         furtherReason: row.furtherReason || null,
         selectReason: row.selectReason || null,
+        pendingReason: row.pendingReason || null,
         shortlistedReason: row.shortlistedReason || null,
         rejectReason: row.rejectReason || null,
         joinedReason: row.joinedReason || null,
@@ -2006,6 +2020,7 @@ const exportAllSubmittedResumesHandler = async (req, res) => {
         ei.walk_in_reason AS walkInReason,
         ei.further_reason AS furtherReason,
         ei.select_reason AS selectReason,
+        ei.pending_reason AS pendingReason,
         ei.shortlisted_reason AS shortlistedReason,
         ei.reject_reason AS rejectReason,
         ei.joined_reason AS joinedReason,
@@ -3457,6 +3472,7 @@ router.get("/api/admin/recruiters/:rid/resumes", async (req, res) => {
         ei.walk_in_reason AS walkInReason,
         ei.didnt_turn_up_reason AS didntTurnUpReason,
         ei.select_reason AS selectReason,
+        ei.pending_reason AS pendingReason,
         ei.shortlisted_reason AS shortlistedReason,
         ei.reject_reason AS rejectReason,
         ei.joined_reason AS joinedReason,
@@ -4434,6 +4450,78 @@ router.put("/api/admin/resumes/:resId/verified-reason", async (req, res) => {
   }
 });
 
+router.put("/api/admin/resumes/:resId/note", async (req, res) => {
+  if (!ensureAdminAuthorized(req, res)) return;
+
+  const resId = String(req.params.resId || "").trim();
+  const note =
+    req.body?.note === undefined || req.body?.note === null
+      ? ""
+      : String(req.body.note).trim();
+  const status = String(req.body?.status || "").trim().toLowerCase();
+
+  if (!resId) {
+    return res.status(400).json({ message: "resId is required." });
+  }
+
+  try {
+    // 1. Update job_resume_selection selection_note if table exists
+    if (await tableExists("job_resume_selection")) {
+      await pool.query(
+        "UPDATE job_resume_selection SET selection_note = ? WHERE res_id = ?",
+        [note || null, resId],
+      );
+    }
+
+    // 2. Update extra_info
+    if (await tableExists("extra_info")) {
+      const updates = [];
+      const updateVals = [];
+
+      if (status === "pending" || (await columnExists("extra_info", "pending_reason"))) {
+        updates.push("pending_reason = ?");
+        updateVals.push(note || null);
+      }
+      if (status === "verified" && (await columnExists("extra_info", "verified_reason"))) {
+        updates.push("verified_reason = ?");
+        updateVals.push(note || null);
+      }
+      if (status === "selected" && (await columnExists("extra_info", "select_reason"))) {
+        updates.push("select_reason = ?");
+        updateVals.push(note || null);
+      }
+      if (await columnExists("extra_info", "updated_at")) {
+        updates.push("updated_at = CURRENT_TIMESTAMP");
+      }
+
+      if (updates.length > 0) {
+        const [result] = await pool.query(
+          `UPDATE extra_info SET ${updates.join(", ")} WHERE res_id = ?`,
+          [...updateVals, resId],
+        );
+        if (result.affectedRows === 0) {
+          await upsertExtraInfoFields(resId, {
+            pendingReason: note || null,
+            selectionNote: note || null,
+          });
+        }
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Note updated successfully.",
+      resId,
+      note,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to update note.",
+      error: error.message,
+    });
+  }
+});
+
 // ─── Advance Resume Workflow Status ─────────────────────────────────────────────
 
 const VALID_STATUS_TRANSITIONS = ADMIN_STATUS_TRANSITIONS;
@@ -4446,6 +4534,7 @@ const PERFORMANCE_EVENT_META = {
   walk_in: { recruiterField: "walk_in", summaryField: "totalWalkIn" },
   didnt_turn_up: { recruiterField: "didnt_turn_up", summaryField: "totalDidntTurnUp" },
   selected: { recruiterField: "selected", summaryField: "totalSelected" },
+  pending: { recruiterField: "pending", summaryField: "totalPending" },
   rejected: { recruiterField: "rejected", summaryField: "totalRejected" },
   shortlisted: {
     recruiterField: "shortlisted",
@@ -4503,6 +4592,7 @@ const resolveLatestPerformanceNote = (row = {}) => {
     didnt_turn_up: firstNonEmptyText(row.didntTurnUpReason),
     shortlisted: firstNonEmptyText(row.shortlistedReason),
     selected: firstNonEmptyText(row.selectReason),
+    pending: firstNonEmptyText(row.pendingReason, row.selectionNote),
     joined: firstNonEmptyText(row.joinedReason, row.joiningNote),
     billed: firstNonEmptyText(row.billedReason),
     left: firstNonEmptyText(row.leftReason),
@@ -4930,6 +5020,7 @@ router.post(
       "walk_in",
       "didnt_turn_up",
       "selected",
+      "pending",
       "shortlisted",
       "rejected",
       "joined",
@@ -5169,6 +5260,7 @@ router.post(
         didnt_turn_up: "didntTurnUpAt",
         further: "furtherAt",
         selected: "selectedAt",
+        pending: "pendingAt",
         shortlisted: "shortlistedAt",
         joined: "joinedAt",
         rejected: "rejectedAt",
@@ -5470,6 +5562,16 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
         recruiterRid: resume.rid || undefined,
         selectReason: null,
         selectedAt: null,
+      });
+    }
+
+    if (currentDerivedStatus === "pending") {
+      await upsertExtraInfoFields(connection, {
+        resId: normalizedResId,
+        jobJid: resume.jobJid || undefined,
+        recruiterRid: resume.rid || undefined,
+        pendingReason: null,
+        pendingAt: null,
       });
     }
 
@@ -5788,6 +5890,13 @@ router.get("/api/admin/performance", async (req, res) => {
         ) AS selectedAt,
         DATE_FORMAT(
           COALESCE(
+            ei.pending_at,
+            CASE WHEN jrs.selection_status = 'pending' THEN jrs.selected_at ELSE NULL END
+          ),
+          '%Y-%m-%d %H:%i:%s.%f'
+        ) AS pendingAt,
+        DATE_FORMAT(
+          COALESCE(
             ei.rejected_at,
             CASE WHEN jrs.selection_status = 'rejected' THEN jrs.selected_at ELSE NULL END
           ),
@@ -5875,6 +5984,7 @@ router.get("/api/admin/performance", async (req, res) => {
         ei.walk_in_reason AS walkInReason,
         ei.didnt_turn_up_reason AS didntTurnUpReason,
         ei.select_reason AS selectReason,
+        ei.pending_reason AS pendingReason,
         ei.shortlisted_reason AS shortlistedReason,
         ei.reject_reason AS rejectReason,
         ei.joined_reason AS joinedReason,
@@ -5940,6 +6050,7 @@ router.get("/api/admin/performance", async (req, res) => {
         walkInReason: row.walkInReason || null,
         didntTurnUpReason: row.didntTurnUpReason || null,
         selectReason: row.selectReason || null,
+        pendingReason: row.pendingReason || null,
         shortlistedReason: row.shortlistedReason || null,
         rejectReason: row.rejectReason || null,
         joinedReason: row.joinedReason || null,
@@ -5963,6 +6074,7 @@ router.get("/api/admin/performance", async (req, res) => {
       walk_in: [],
       didnt_turn_up: [],
       selected: [],
+      pending: [],
       shortlisted: [],
       joined: [],
       dropout: [],
@@ -5995,6 +6107,7 @@ router.get("/api/admin/performance", async (req, res) => {
           didnt_turn_up: 0,
           further: 0,
           selected: 0,
+          pending: 0,
           shortlisted: 0,
           rejected: 0,
           joined: 0,
@@ -6018,6 +6131,7 @@ router.get("/api/admin/performance", async (req, res) => {
         walkInAt: normalizePerformanceTimestamp(rawRow.walkInAt),
         didntTurnUpAt: normalizePerformanceTimestamp(rawRow.didntTurnUpAt),
         selectedAt: normalizePerformanceTimestamp(rawRow.selectedAt),
+        pendingAt: normalizePerformanceTimestamp(rawRow.pendingAt),
         rejectedAt: normalizePerformanceTimestamp(rawRow.rejectedAt),
         shortlistedAt: normalizePerformanceTimestamp(rawRow.shortlistedAt),
         joinedAt: normalizePerformanceTimestamp(rawRow.joinedAt),
@@ -6104,6 +6218,12 @@ router.get("/api/admin/performance", async (req, res) => {
         },
         selected: {
           eventAt: row.selectedAt,
+          teamLeaderSource: row.statusActorRole,
+          teamLeaderRid: row.statusActorRid,
+          teamLeaderName: row.statusActorName,
+        },
+        pending: {
+          eventAt: row.pendingAt,
           teamLeaderSource: row.statusActorRole,
           teamLeaderRid: row.statusActorRid,
           teamLeaderName: row.statusActorName,

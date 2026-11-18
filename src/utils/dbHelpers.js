@@ -117,6 +117,7 @@ const buildExtraInfoJoin = (resumeIdReference, alias = "ei") => `
       billed_reason,
       further_reason,
       select_reason,
+      pending_reason,
       joined_reason,
       dropout_reason,
       reject_reason,
@@ -127,6 +128,7 @@ const buildExtraInfoJoin = (resumeIdReference, alias = "ei") => `
       didnt_turn_up_at,
       further_at,
       selected_at,
+      pending_at,
       shortlisted_at,
       joined_at,
       dropout_at,
@@ -156,6 +158,7 @@ const buildExtraInfoJoin = (resumeIdReference, alias = "ei") => `
       fallback_ei.billed_reason,
       fallback_ei.further_reason,
       fallback_ei.select_reason,
+      fallback_ei.pending_reason,
       fallback_ei.joined_reason,
       fallback_ei.dropout_reason,
       fallback_ei.reject_reason,
@@ -166,6 +169,7 @@ const buildExtraInfoJoin = (resumeIdReference, alias = "ei") => `
       fallback_ei.didnt_turn_up_at,
       fallback_ei.further_at,
       fallback_ei.selected_at,
+      fallback_ei.pending_at,
       fallback_ei.shortlisted_at,
       fallback_ei.joined_at,
       fallback_ei.dropout_at,
@@ -208,6 +212,7 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
   const hasWalkInReason = columns.has("walk_in_reason");
   const hasFurtherReason = columns.has("further_reason");
   const hasSelectReason = columns.has("select_reason");
+  const hasPendingReason = columns.has("pending_reason");
   const hasShortlistedReason =
     columns.has("shortlisted_reason") || columns.has("pending_joining_reason");
   const hasJoinedReason = columns.has("joined_reason");
@@ -225,6 +230,7 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
     hasWalkInReason ||
     hasFurtherReason ||
     hasSelectReason ||
+    hasPendingReason ||
     hasShortlistedReason ||
     hasJoinedReason ||
     hasDropoutReason ||
@@ -248,6 +254,7 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
   if (hasWalkInReason) selectColumns.push("walk_in_reason AS walkInReason");
   if (hasFurtherReason) selectColumns.push("further_reason AS furtherReason");
   if (hasSelectReason) selectColumns.push("select_reason AS selectReason");
+  if (hasPendingReason) selectColumns.push("pending_reason AS pendingReason");
   if (columns.has("shortlisted_reason")) {
     selectColumns.push("shortlisted_reason AS shortlistedReason");
   } else if (columns.has("pending_joining_reason")) {
@@ -590,6 +597,17 @@ const upsertExtraInfoFields = async (connection, payload) => {
   }
 
   if (
+    (payload.pendingReason !== undefined || payload.pending_reason !== undefined) &&
+    columns.has("pending_reason")
+  ) {
+    const pendReason = payload.pendingReason !== undefined ? payload.pendingReason : payload.pending_reason;
+    insertColumns.push("pending_reason");
+    insertValues.push(pendReason);
+    placeholders.push("?");
+    updates.push("pending_reason = VALUES(pending_reason)");
+  }
+
+  if (
     payload.shortlistedReason !== undefined &&
     columns.has("shortlisted_reason")
   ) {
@@ -662,6 +680,7 @@ const upsertExtraInfoFields = async (connection, payload) => {
     didntTurnUpAt: "didnt_turn_up_at",
     furtherAt: "further_at",
     selectedAt: "selected_at",
+    pendingAt: "pending_at",
     shortlistedAt: columns.has("shortlisted_at")
       ? "shortlisted_at"
       : "pending_joining_at",

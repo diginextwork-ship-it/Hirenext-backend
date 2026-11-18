@@ -2913,6 +2913,7 @@ const statusReasonColumnMap = {
   didnt_turn_up: "didnt_turn_up_reason",
   further: "further_reason",
   selected: "select_reason",
+  pending: "pending_reason",
   rejected: "reject_reason",
   shortlisted: "shortlisted_reason",
   joined: "joined_reason",
@@ -3137,6 +3138,7 @@ router.post(
             didnt_turn_up: "didntTurnUpAt",
             further: "furtherAt",
             selected: "selectedAt",
+            pending: "pendingAt",
             shortlisted: "shortlistedAt",
             rejected: "rejectedAt",
             joined: "joinedAt",
@@ -3413,6 +3415,16 @@ router.post(
           recruiterRid: rid || undefined,
           selectReason: null,
           selectedAt: null,
+        });
+      }
+
+      if (currentStatus === "pending") {
+        await upsertExtraInfoFields(connection, {
+          resId: normalizedResId,
+          jobJid: resume.jobJid || undefined,
+          recruiterRid: rid || undefined,
+          pendingReason: null,
+          pendingAt: null,
         });
       }
 
