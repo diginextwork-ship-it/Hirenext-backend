@@ -1073,13 +1073,25 @@ const ensureExtraInfoTable = async () => {
       "ALTER TABLE extra_info ADD COLUMN reject_reason TEXT NULL",
     );
   }
+  if (!(await columnExists("extra_info", "didnt_turn_up_reason"))) {
+    await pool.query(
+      "ALTER TABLE extra_info ADD COLUMN didnt_turn_up_reason TEXT NULL",
+    );
+  }
+  if (!(await columnExists("extra_info", "pending_reason"))) {
+    await pool.query(
+      "ALTER TABLE extra_info ADD COLUMN pending_reason TEXT NULL",
+    );
+  }
   const extraInfoTimestampColumns = [
     "submitted_at",
     "verified_at",
     "others_at",
     "walk_in_at",
+    "didnt_turn_up_at",
     "further_at",
     "selected_at",
+    "pending_at",
     "shortlisted_at",
     "joined_at",
     "dropout_at",
