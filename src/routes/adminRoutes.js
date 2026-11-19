@@ -6332,11 +6332,12 @@ router.get("/api/admin/performance", async (req, res) => {
           }
         };
 
-        if (hasRecord(target)) return true;
-
         const targetIndex = LINEAR_STAGES.indexOf(target);
         if (targetIndex !== -1) {
           const currentIndex = LINEAR_STAGES.indexOf(current);
+          if (currentIndex !== -1 && currentIndex < targetIndex) {
+            return false;
+          }
           if (currentIndex > targetIndex) {
             if (target === "verified" && hasRecord("others") && !hasRecord("verified")) {
               return false;
@@ -6355,10 +6356,12 @@ router.get("/api/admin/performance", async (req, res) => {
 
           if (current === "rejected") {
             if (candidateRow.joiningDate && targetIndex <= 4) return true;
-            if ((candidateRow.walkInDate || candidateRow.walkInReason || candidateRow.walkInAt) && targetIndex <= 2) return true;
+            if ((candidateRow.walkInReason || candidateRow.walkInAt) && targetIndex <= 2) return true;
             if ((candidateRow.verifiedReason || candidateRow.verifiedAt) && targetIndex <= 1) return true;
           }
         }
+
+        if (hasRecord(target)) return true;
 
         return false;
       };
