@@ -1261,7 +1261,7 @@ const ensureJobResumeSelectionTable = async () => {
       job_jid ${jobJidColumnSql} NOT NULL,
       res_id ${resumeIdColumnSql} NOT NULL,
       selected_by_admin VARCHAR(50) NOT NULL,
-      selection_status ENUM('selected', 'rejected', 'on_hold') NOT NULL DEFAULT 'selected',
+      selection_status VARCHAR(50) NOT NULL DEFAULT 'selected',
       selection_note TEXT NULL,
       selected_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE KEY uniq_job_resume_selection (job_jid, res_id),
@@ -1296,33 +1296,21 @@ const ensureJobResumeSelectionTable = async () => {
   const selectionStatusType = String(
     selectionStatusMetadata?.columnType || "",
   ).toLowerCase();
-  const requiredStatuses = [
-    "submitted",
-    "verified",
-    "others",
-    "walk_in",
-    "further",
-    "selected",
-    "shortlisted",
-    "pending_joining",
-    "rejected",
-    "joined",
-    "dropout",
-    "on_hold",
-    "billed",
-    "left",
-  ];
-  const hasAllStatuses = requiredStatuses.every((status) =>
-    selectionStatusType.includes(`'${status}'`),
-  );
 
-  if (!hasAllStatuses) {
-    await pool.query(
-      `ALTER TABLE job_resume_selection
-       MODIFY COLUMN selection_status
-       ENUM('submitted','verified','others','walk_in','further','selected','shortlisted','pending_joining','rejected','joined','dropout','on_hold','billed','left')
-       NOT NULL DEFAULT 'selected'`,
-    );
+  if (selectionStatusType.startsWith("enum")) {
+    try {
+      await pool.query(
+        `ALTER TABLE job_resume_selection
+         MODIFY COLUMN selection_status VARCHAR(50) NOT NULL DEFAULT 'selected'`,
+      );
+    } catch {
+      await pool.query(
+        `ALTER TABLE job_resume_selection
+         MODIFY COLUMN selection_status
+         ENUM('submitted','verified','others','walk_in','didnt_turn_up','further','selected','pending','shortlisted','pending_joining','rejected','joined','dropout','on_hold','billed','left')
+         NOT NULL DEFAULT 'selected'`,
+      );
+    }
   }
 
   if (await columnExists("job_resume_selection", "joining_date")) {

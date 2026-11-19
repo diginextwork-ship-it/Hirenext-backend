@@ -13,6 +13,7 @@ const {
   columnExists,
   getColumnMetadata,
   constraintExists,
+  ensureSelectionStatusColumn,
   buildExtraInfoJoin,
   buildResumeBinarySelect,
   upsertExtraInfoFields,
@@ -323,6 +324,7 @@ const ensureRecruiterAccountStatusColumn = async () => {
 };
 
 const ensurePerformanceExtraInfoColumns = async () => {
+  await ensureSelectionStatusColumn();
   if (!(await columnExists("extra_info", "others_reason"))) {
     await pool.query(
       "ALTER TABLE extra_info ADD COLUMN others_reason TEXT NULL",
@@ -2210,6 +2212,7 @@ router.post("/api/admin/resumes/:resId/accept", async (req, res) => {
       .json({ message: "Acceptance columns are not initialized." });
   }
 
+  await ensureSelectionStatusColumn(pool);
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
@@ -2831,6 +2834,7 @@ router.put("/api/admin/attendance", async (req, res) => {
     });
   }
 
+  await ensureSelectionStatusColumn(pool);
   const connection = await pool.getConnection();
   try {
     await ensureRecruiterAttendanceTable();
@@ -3242,6 +3246,7 @@ router.post("/api/admin/reimbursements/:id/decision", async (req, res) => {
       .json({ message: "decision must be 'accepted' or 'rejected'." });
   }
 
+  await ensureSelectionStatusColumn(pool);
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
@@ -3642,6 +3647,7 @@ router.put("/api/admin/recruiters/:rid/salary-history", async (req, res) => {
     });
   }
 
+  await ensureSelectionStatusColumn(pool);
   const connection = await pool.getConnection();
   try {
     await ensureRecruiterSalaryHistoryTable();
@@ -4060,6 +4066,7 @@ router.post(
     const safeReason = reasonResult.reason || "";
     const safePhoto = toRevenueAttachmentDataUrl(req.file) || null;
 
+    await ensureSelectionStatusColumn(pool);
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
@@ -4188,6 +4195,7 @@ router.delete("/api/admin/revenue/entries/:id", async (req, res) => {
       .json({ message: "Entry id must be a positive integer." });
   }
 
+  await ensureSelectionStatusColumn(pool);
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
@@ -4240,6 +4248,7 @@ const handleUpdateRevenueEntryAmount = async (req, res) => {
   }
 
   const normalizedAmount = Math.round(parsedAmount * 100) / 100;
+  await ensureSelectionStatusColumn(pool);
   const connection = await pool.getConnection();
 
   try {
@@ -5061,6 +5070,7 @@ router.post(
 
     const isBilledStatus = newStatus === "billed";
 
+    await ensureSelectionStatusColumn(pool);
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
@@ -5436,6 +5446,7 @@ router.post("/api/admin/resumes/:resId/rollback-status", async (req, res) => {
     return res.status(400).json({ message: "resId is required." });
   }
 
+  await ensureSelectionStatusColumn(pool);
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();

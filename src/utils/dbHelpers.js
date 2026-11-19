@@ -1246,7 +1246,39 @@ const removeCandidateBillIntakeEntry = async (
   return { removedCount };
 };
 
+const ensureSelectionStatusColumn = async (db = pool) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT COLUMN_TYPE, DATA_TYPE
+       FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'job_resume_selection'
+         AND COLUMN_NAME = 'selection_status'`
+    );
+    if (!rows || rows.length === 0) return;
+    const colType = String(rows[0].COLUMN_TYPE || rows[0].DATA_TYPE || "").toLowerCase();
+    if (colType.startsWith("enum")) {
+      try {
+        await db.query(
+          `ALTER TABLE job_resume_selection
+           MODIFY COLUMN selection_status VARCHAR(50) NOT NULL DEFAULT 'selected'`
+        );
+      } catch {
+        await db.query(
+          `ALTER TABLE job_resume_selection
+           MODIFY COLUMN selection_status
+           ENUM('submitted','verified','others','walk_in','didnt_turn_up','further','selected','pending','shortlisted','pending_joining','rejected','joined','dropout','on_hold','billed','left')
+           NOT NULL DEFAULT 'selected'`
+        );
+      }
+    }
+  } catch (err) {
+    // Non-fatal fallback
+  }
+};
+
 module.exports = {
+  ensureSelectionStatusColumn,
   tableExists,
   columnExists,
   getTableColumns,

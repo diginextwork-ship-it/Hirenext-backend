@@ -18,6 +18,7 @@ const { validateResumeFile } = require("../middleware/uploadValidation");
 const {
   tableExists,
   columnExists,
+  ensureSelectionStatusColumn,
   findResumeDuplicateDecision,
   buildExtraInfoJoin,
   buildResumeBinarySelect,
@@ -1227,6 +1228,7 @@ router.post(
         });
       }
 
+      await ensureSelectionStatusColumn(pool);
       const connection = await pool.getConnection();
       try {
         await connection.beginTransaction();
@@ -1595,6 +1597,7 @@ router.post(
             }
           : resumeAts.atsRawJson ?? null;
 
+      await ensureSelectionStatusColumn(pool);
       const connection = await pool.getConnection();
       try {
         await connection.beginTransaction();
@@ -3066,6 +3069,7 @@ router.post(
       const customTimestamp = customDate ? `${customDate} ${nowTimeStr}` : null;
       const historicalSelectedAt = customTimestamp || null;
 
+      await ensureSelectionStatusColumn(pool);
       const connection = await pool.getConnection();
       try {
         await connection.beginTransaction();
