@@ -1277,8 +1277,27 @@ const ensureSelectionStatusColumn = async (db = pool) => {
   }
 };
 
+const ensureStatusTableColumns = async (db = pool) => {
+  try {
+    const requiredCols = ["didnt_turn_up", "pending", "others"];
+    for (const col of requiredCols) {
+      const [rows] = await db.query(
+        `SELECT 1 FROM information_schema.columns 
+         WHERE table_schema = DATABASE() AND table_name = 'status' AND column_name = ?`,
+        [col],
+      );
+      if (rows.length === 0) {
+        await db.query(`ALTER TABLE status ADD COLUMN \`${col}\` INT NULL DEFAULT 0`);
+      }
+    }
+  } catch (err) {
+    // Non-fatal fallback
+  }
+};
+
 module.exports = {
   ensureSelectionStatusColumn,
+  ensureStatusTableColumns,
   tableExists,
   columnExists,
   getTableColumns,

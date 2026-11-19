@@ -19,6 +19,7 @@ const {
   tableExists,
   columnExists,
   ensureSelectionStatusColumn,
+  ensureStatusTableColumns,
   findResumeDuplicateDecision,
   buildExtraInfoJoin,
   buildResumeBinarySelect,
@@ -3172,6 +3173,7 @@ router.post(
           walk_in: "walk_in",
           didnt_turn_up: "didnt_turn_up",
           selected: "`select`",
+          pending: "pending",
           rejected: "reject",
           joined: "joined",
           dropout: "dropout",
@@ -3182,21 +3184,29 @@ router.post(
         const targetCol = statusDeltaMap[targetStatus];
 
         if (currentCol || targetCol) {
-          const updateParts = [];
-          if (currentCol)
-            updateParts.push(
-              `${currentCol} = GREATEST(0, COALESCE(${currentCol}, 0) - 1)`,
-            );
-          if (targetCol)
-            updateParts.push(`${targetCol} = COALESCE(${targetCol}, 0) + 1`);
-          updateParts.push("last_updated = CURRENT_TIMESTAMP");
+          try {
+            await ensureStatusTableColumns(connection);
+            const updateParts = [];
+            if (currentCol)
+              updateParts.push(
+                `${currentCol} = GREATEST(0, COALESCE(${currentCol}, 0) - 1)`,
+              );
+            if (targetCol)
+              updateParts.push(`${targetCol} = COALESCE(${targetCol}, 0) + 1`);
+            updateParts.push("last_updated = CURRENT_TIMESTAMP");
 
-          await connection.query(
-            `INSERT INTO status (recruiter_rid, submitted, last_updated)
-             VALUES (?, 0, CURRENT_TIMESTAMP)
-             ON DUPLICATE KEY UPDATE ${updateParts.join(", ")}`,
-            [rid],
-          );
+            await connection.query(
+              `INSERT INTO status (recruiter_rid, submitted, last_updated)
+               VALUES (?, 0, CURRENT_TIMESTAMP)
+               ON DUPLICATE KEY UPDATE ${updateParts.join(", ")}`,
+              [rid],
+            );
+          } catch (statusDeltaErr) {
+            console.warn(
+              "[recruiterRoutes] status table delta update skipped:",
+              statusDeltaErr.message,
+            );
+          }
         }
 
         if (targetStatus === "joined") {

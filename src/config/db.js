@@ -1565,6 +1565,18 @@ const ensureStatusTable = async () => {
     await pool.query("ALTER TABLE status ADD COLUMN `left` INT NULL");
   }
 
+  if (!(await columnExists("status", "didnt_turn_up"))) {
+    await pool.query("ALTER TABLE status ADD COLUMN didnt_turn_up INT NULL DEFAULT 0");
+  }
+
+  if (!(await columnExists("status", "pending"))) {
+    await pool.query("ALTER TABLE status ADD COLUMN pending INT NULL DEFAULT 0");
+  }
+
+  if (!(await columnExists("status", "others"))) {
+    await pool.query("ALTER TABLE status ADD COLUMN others INT NULL DEFAULT 0");
+  }
+
   if (!(await columnExists("status", "last_updated"))) {
     await pool.query(
       "ALTER TABLE status ADD COLUMN last_updated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP",
