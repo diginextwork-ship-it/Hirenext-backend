@@ -101,7 +101,7 @@ const recruiterStatsSubquery = `
     SUM(CASE WHEN jrs.selection_status = 'didnt_turn_up' THEN 1 ELSE 0 END) AS didnt_turn_up,
     SUM(CASE WHEN jrs.selection_status = 'further' THEN 1 ELSE 0 END) AS further,
     SUM(CASE WHEN jrs.selection_status = 'selected' THEN 1 ELSE 0 END) AS selected,
-    SUM(CASE WHEN jrs.selection_status = 'pending' THEN 1 ELSE 0 END) AS pending,
+    SUM(CASE WHEN jrs.selection_status IN ('pending', 'selected', 'shortlisted', 'pending_joining') THEN 1 ELSE 0 END) AS pending,
     SUM(CASE WHEN jrs.selection_status IN ('shortlisted', 'pending_joining') THEN 1 ELSE 0 END) AS shortlisted,
     SUM(CASE WHEN jrs.selection_status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
     SUM(CASE WHEN jrs.selection_status = 'joined' THEN 1 ELSE 0 END) AS joined,
@@ -928,7 +928,14 @@ router.get(
           didnt_turn_up: row.didntTurnUpAt,
           shortlisted: row.shortlistedAt,
           selected: row.selectedAt,
-          pending: row.pendingAt,
+          pending:
+            row.pendingAt ||
+            (workflowStatus === "selected"
+              ? row.selectedAt
+              : workflowStatus === "shortlisted"
+                ? row.shortlistedAt
+                : null) ||
+            row.submittedAt,
           rejected: row.rejectedAt,
           joined: row.joinedAt,
           dropout: row.dropoutAt,
@@ -946,7 +953,16 @@ router.get(
           if (!isEventInRange) continue;
 
           // Strictly isolate status stages: candidate must belong to their current active status
-          if (metricKey !== "submitted" && workflowStatus !== metricKey) continue;
+          if (metricKey !== "submitted" && workflowStatus !== metricKey) {
+            if (
+              metricKey === "pending" &&
+              (workflowStatus === "selected" || workflowStatus === "shortlisted")
+            ) {
+              // candidates in selected or shortlisted also belong in pending
+            } else {
+              continue;
+            }
+          }
 
           statusDrilldown[metricKey].push({
             resId: row.resId || null,
@@ -1231,7 +1247,7 @@ router.get(
             SUM(CASE WHEN jrs.selection_status = 'didnt_turn_up' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS didnt_turn_up,
             SUM(CASE WHEN jrs.selection_status = 'further' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS further,
             SUM(CASE WHEN jrs.selection_status = 'selected' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS selected,
-            SUM(CASE WHEN jrs.selection_status = 'pending' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS pending,
+            SUM(CASE WHEN jrs.selection_status IN ('pending', 'selected', 'shortlisted', 'pending_joining') AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS pending,
             SUM(CASE WHEN jrs.selection_status IN ('shortlisted', 'pending_joining') AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS shortlisted,
             SUM(CASE WHEN jrs.selection_status = 'rejected' AND ${statusRangeCondition} THEN 1 ELSE 0 END) AS rejected,
             SUM(CASE WHEN jrs.selection_status = 'joined' AND ${joinedRangeCondition} THEN 1 ELSE 0 END) AS joined,

@@ -6234,7 +6234,14 @@ router.get("/api/admin/performance", async (req, res) => {
           teamLeaderName: row.statusActorName,
         },
         pending: {
-          eventAt: row.pendingAt,
+          eventAt:
+            row.pendingAt ||
+            (row.workflowStatus === "selected"
+              ? row.selectedAt
+              : row.workflowStatus === "shortlisted"
+                ? row.shortlistedAt
+                : null) ||
+            row.submittedAt,
           teamLeaderSource: row.statusActorRole,
           teamLeaderRid: row.statusActorRid,
           teamLeaderName: row.statusActorName,
@@ -6294,6 +6301,9 @@ router.get("/api/admin/performance", async (req, res) => {
 
         if (current === target) return true;
         if (target === "submitted") return true;
+        if (target === "pending") {
+          return current === "pending" || current === "selected" || current === "shortlisted";
+        }
 
         const hasRecord = (key) => {
           switch (key) {
