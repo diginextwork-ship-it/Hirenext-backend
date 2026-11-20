@@ -113,6 +113,7 @@ const buildExtraInfoJoin = (resumeIdReference, alias = "ei") => `
       didnt_turn_up_reason,
       shortlisted_reason,
       walk_in_reason,
+      process,
       left_reason,
       billed_reason,
       further_reason,
@@ -154,6 +155,7 @@ const buildExtraInfoJoin = (resumeIdReference, alias = "ei") => `
       fallback_ei.didnt_turn_up_reason,
       fallback_ei.shortlisted_reason,
       fallback_ei.walk_in_reason,
+      fallback_ei.process,
       fallback_ei.left_reason,
       fallback_ei.billed_reason,
       fallback_ei.further_reason,
@@ -221,6 +223,7 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
   const hasLeftReason = columns.has("left_reason");
   const hasBilledReason = columns.has("billed_reason");
   const hasOfficeLocationCity = columns.has("office_location_city");
+  const hasProcess = columns.has("process");
 
   const hasAnyReason =
     hasSubmittedReason ||
@@ -237,7 +240,8 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
     hasRejectReason ||
     hasLeftReason ||
     hasBilledReason ||
-    hasOfficeLocationCity;
+    hasOfficeLocationCity ||
+    hasProcess;
 
   if (resumeIdColumns.length === 0 || !hasAnyReason) return new Map();
 
@@ -267,6 +271,9 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
   if (hasBilledReason) selectColumns.push("billed_reason AS billedReason");
   if (hasOfficeLocationCity) {
     selectColumns.push("office_location_city AS officeLocationCity");
+  }
+  if (hasProcess) {
+    selectColumns.push("process");
   }
 
   const whereConditions = resumeIdColumns.map((column) => `${column} IN (?)`);
@@ -315,6 +322,7 @@ const fetchExtraInfoByResumeIds = async (resumeIds, connection = pool) => {
       furtherReason: row.furtherReason || null,
       officeLocationCity: row.officeLocationCity || null,
       office_location_city: row.officeLocationCity || null,
+      process: row.process || null,
     };
     const existing = extraInfoMap.get(resumeKey);
     extraInfoMap.set(
@@ -539,6 +547,16 @@ const upsertExtraInfoFields = async (connection, payload) => {
     insertValues.push(safeCity);
     placeholders.push("?");
     updates.push("office_location_city = VALUES(office_location_city)");
+  }
+  if (
+    payload.process !== undefined &&
+    columns.has("process")
+  ) {
+    const safeProcess = safeTruncate(payload.process, 255);
+    insertColumns.push("process");
+    insertValues.push(safeProcess);
+    placeholders.push("?");
+    updates.push("process = VALUES(process)");
   }
   if (
     payload.submittedReason !== undefined &&

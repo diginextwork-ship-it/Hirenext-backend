@@ -3066,6 +3066,14 @@ router.post(
         customDateRaw && /^\d{4}-\d{2}-\d{2}$/.test(String(customDateRaw).trim())
           ? String(customDateRaw).trim()
           : null;
+      const processRaw =
+        req.body?.process ??
+        req.body?.processName ??
+        req.body?.process_name;
+      const processValue =
+        processRaw !== undefined && processRaw !== null && String(processRaw).trim() !== ""
+          ? String(processRaw).trim()
+          : null;
       const nowTimeStr = new Date().toTimeString().slice(0, 8);
       const customTimestamp = customDate ? `${customDate} ${nowTimeStr}` : null;
       const historicalSelectedAt = customTimestamp || null;
@@ -3077,12 +3085,13 @@ router.post(
 
         await connection.query(
           `INSERT INTO job_resume_selection
-            (job_jid, res_id, selected_by_admin, selection_status, selection_note, selected_at)
-           VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+            (job_jid, res_id, selected_by_admin, selection_status, selection_note, process, selected_at)
+           VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
            ON DUPLICATE KEY UPDATE
              selected_by_admin = VALUES(selected_by_admin),
              selection_status = VALUES(selection_status),
              selection_note = VALUES(selection_note),
+             process = COALESCE(VALUES(process), process),
              selected_at = COALESCE(?, CURRENT_TIMESTAMP)`,
           [
             resume.jobJid,
@@ -3090,6 +3099,7 @@ router.post(
             rid,
             targetStatus,
             selectionNoteValue,
+            processValue,
             historicalSelectedAt,
             historicalSelectedAt,
           ],
@@ -3155,6 +3165,7 @@ router.post(
             resId,
             jobJid: resume.jobJid || undefined,
             recruiterRid: rid || undefined,
+            ...(processValue ? { process: processValue } : {}),
             [reasonField]: statusReasonValue,
             [statusTimestampFieldMap[targetStatus]]: eventTimestampValue,
           });

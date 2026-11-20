@@ -1916,6 +1916,7 @@ const getAllSubmittedResumesHandler = async (req, res) => {
         selectReason: row.selectReason || null,
         pendingReason: row.pendingReason || null,
         shortlistedReason: row.shortlistedReason || null,
+        process: row.process || null,
         rejectReason: row.rejectReason || null,
         joinedReason: row.joinedReason || null,
         dropoutReason: row.dropoutReason || null,
@@ -4899,6 +4900,7 @@ const fetchAdminResumeWorkflowPayload = async (connection, resId) => {
       DATE_FORMAT(c.joining_date, '%Y-%m-%d') AS currentJoiningDate,
       jrs.selection_status AS selectionStatus,
       jrs.selection_note AS selectionNote,
+      COALESCE(jrs.process, ei.process) AS process,
       jrs.selected_by_admin AS selectedByAdmin,
       jrs.selected_at AS selectedAt,
       ei.submitted_reason AS submittedReason,
@@ -4990,6 +4992,14 @@ router.post(
 
     const newStatus = normalizeResumeStatusInput(req.body?.status);
     const reason = resolveStatusReasonInput(req.body, newStatus);
+    const processRaw =
+      req.body?.process ??
+      req.body?.processName ??
+      req.body?.process_name;
+    const processValue =
+      processRaw !== undefined && processRaw !== null && String(processRaw).trim() !== ""
+        ? String(processRaw).trim()
+        : null;
     const joiningDate = String(req.body?.joining_date || "").trim();
     const customDateRaw =
       req.body?.custom_date ??
@@ -5207,18 +5217,20 @@ router.post(
       if (resume.jobJid) {
         await connection.query(
           `INSERT INTO job_resume_selection
-          (job_jid, res_id, selected_by_admin, selection_status, selection_note, selected_at)
-        VALUES (?, ?, 'admin-panel', ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+          (job_jid, res_id, selected_by_admin, selection_status, selection_note, process, selected_at)
+        VALUES (?, ?, 'admin-panel', ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
         ON DUPLICATE KEY UPDATE
           selected_by_admin = VALUES(selected_by_admin),
           selection_status = VALUES(selection_status),
           selection_note = VALUES(selection_note),
+          process = COALESCE(VALUES(process), process),
           selected_at = COALESCE(?, CURRENT_TIMESTAMP)`,
           [
             resume.jobJid,
             normalizedResId,
             newStatus,
             selectionNoteValue,
+            processValue,
             historicalSelectedAt,
             historicalSelectedAt,
           ],
@@ -5287,6 +5299,7 @@ router.post(
           resId: normalizedResId,
           jobJid: resume.jobJid || undefined,
           recruiterRid: resume.rid || undefined,
+          ...(processValue ? { process: processValue } : {}),
           [reasonField]: statusReasonValue,
           [statusTimestampFieldMap[newStatus]]: eventTimestampValue,
         });
@@ -5295,6 +5308,7 @@ router.post(
           resId: normalizedResId,
           jobJid: resume.jobJid || undefined,
           recruiterRid: resume.rid || undefined,
+          ...(processValue ? { process: processValue } : {}),
           [statusTimestampFieldMap[newStatus]]: eventTimestampValue,
         });
       }
@@ -5980,6 +5994,7 @@ router.get("/api/admin/performance", async (req, res) => {
         statusActor.role AS statusActorRole,
         jrs.selected_by_admin AS selectedByAdmin,
         jrs.selection_note AS selectionNote,
+        COALESCE(jrs.process, ei.process) AS process,
         c.name AS candidateName,
         c.phone AS candidatePhone,
         c.level_of_edu AS latestEducationLevel,
@@ -6063,6 +6078,7 @@ router.get("/api/admin/performance", async (req, res) => {
         selectReason: row.selectReason || null,
         pendingReason: row.pendingReason || null,
         shortlistedReason: row.shortlistedReason || null,
+        process: row.process || null,
         rejectReason: row.rejectReason || null,
         joinedReason: row.joinedReason || null,
         joiningNote: row.joinedReason || null,

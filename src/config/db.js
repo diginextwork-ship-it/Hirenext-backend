@@ -1043,6 +1043,9 @@ const ensureExtraInfoTable = async () => {
   if (!(await columnExists("extra_info", "left_reason"))) {
     await pool.query("ALTER TABLE extra_info ADD COLUMN left_reason TEXT NULL");
   }
+  if (!(await columnExists("extra_info", "process"))) {
+    await pool.query("ALTER TABLE extra_info ADD COLUMN process VARCHAR(255) NULL");
+  }
   if (!(await columnExists("extra_info", "billed_reason"))) {
     await pool.query(
       "ALTER TABLE extra_info ADD COLUMN billed_reason TEXT NULL",
@@ -1328,6 +1331,11 @@ const ensureJobResumeSelectionTable = async () => {
   if (await columnExists("job_resume_selection", "joining_date")) {
     await pool.query(
       "ALTER TABLE job_resume_selection DROP COLUMN joining_date",
+    );
+  }
+  if (!(await columnExists("job_resume_selection", "process"))) {
+    await pool.query(
+      "ALTER TABLE job_resume_selection ADD COLUMN process VARCHAR(255) NULL",
     );
   }
 };
