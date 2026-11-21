@@ -48,6 +48,7 @@ const getDbConfig = () => {
       database: decodeURIComponent(
         String(parsedUrl.pathname || "").replace(/^\//, ""),
       ),
+      timezone: "+05:30",
       ssl: resolveSslConfig(host),
       connectTimeout: 10000, // 10 seconds for initial connection
     };
@@ -80,6 +81,10 @@ const pool = mysql.createPool({
   queueLimit: 0,
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
+});
+
+pool.on("connection", (connection) => {
+  connection.query("SET time_zone = '+05:30'");
 });
 
 const columnExists = async (tableName, columnName) => {
