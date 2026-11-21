@@ -49,6 +49,7 @@ const {
 const {
   buildSqlEffectiveSubmittedAt,
   buildSqlEffectiveUploadedAt,
+  buildSqlEffectiveStatusTimestamp,
   formatSqlDateTimeInBusinessTimeZone,
   getCurrentDateOnlyInBusinessTimeZone,
   parseInclusiveDateRange,
@@ -362,6 +363,31 @@ const ensurePerformanceExtraInfoColumns = async () => {
       "ALTER TABLE extra_info ADD COLUMN pending_at TIMESTAMP NULL DEFAULT NULL",
     );
   }
+
+  try {
+    await pool.query(`
+      UPDATE extra_info
+      SET 
+        verified_at = CASE WHEN DATE(verified_at) = '2026-11-21' AND TIME(verified_at) BETWEEN '06:00:00' AND '09:15:00' THEN DATE_ADD(verified_at, INTERVAL 330 MINUTE) ELSE verified_at END,
+        others_at = CASE WHEN DATE(others_at) = '2026-11-21' AND TIME(others_at) BETWEEN '06:00:00' AND '09:15:00' THEN DATE_ADD(others_at, INTERVAL 330 MINUTE) ELSE others_at END,
+        walk_in_at = CASE WHEN DATE(walk_in_at) = '2026-11-21' AND TIME(walk_in_at) BETWEEN '06:00:00' AND '09:15:00' THEN DATE_ADD(walk_in_at, INTERVAL 330 MINUTE) ELSE walk_in_at END,
+        didnt_turn_up_at = CASE WHEN DATE(didnt_turn_up_at) = '2026-11-21' AND TIME(didnt_turn_up_at) BETWEEN '06:00:00' AND '09:15:00' THEN DATE_ADD(didnt_turn_up_at, INTERVAL 330 MINUTE) ELSE didnt_turn_up_at END,
+        rejected_at = CASE WHEN DATE(rejected_at) = '2026-11-21' AND TIME(rejected_at) BETWEEN '06:00:00' AND '09:15:00' THEN DATE_ADD(rejected_at, INTERVAL 330 MINUTE) ELSE rejected_at END,
+        shortlisted_at = CASE WHEN DATE(shortlisted_at) = '2026-11-21' AND TIME(shortlisted_at) BETWEEN '06:00:00' AND '09:15:00' THEN DATE_ADD(shortlisted_at, INTERVAL 330 MINUTE) ELSE shortlisted_at END,
+        selected_at = CASE WHEN DATE(selected_at) = '2026-11-21' AND TIME(selected_at) BETWEEN '06:00:00' AND '09:15:00' THEN DATE_ADD(selected_at, INTERVAL 330 MINUTE) ELSE selected_at END,
+        pending_at = CASE WHEN DATE(pending_at) = '2026-11-21' AND TIME(pending_at) BETWEEN '06:00:00' AND '09:15:00' THEN DATE_ADD(pending_at, INTERVAL 330 MINUTE) ELSE pending_at END,
+        joined_at = CASE WHEN DATE(joined_at) = '2026-11-21' AND TIME(joined_at) BETWEEN '06:00:00' AND '09:15:00' THEN DATE_ADD(joined_at, INTERVAL 330 MINUTE) ELSE joined_at END,
+        dropout_at = CASE WHEN DATE(dropout_at) = '2026-11-21' AND TIME(dropout_at) BETWEEN '06:00:00' AND '09:15:00' THEN DATE_ADD(dropout_at, INTERVAL 330 MINUTE) ELSE dropout_at END,
+        billed_at = CASE WHEN DATE(billed_at) = '2026-11-21' AND TIME(billed_at) BETWEEN '06:00:00' AND '09:15:00' THEN DATE_ADD(billed_at, INTERVAL 330 MINUTE) ELSE billed_at END,
+        left_at = CASE WHEN DATE(left_at) = '2026-11-21' AND TIME(left_at) BETWEEN '06:00:00' AND '09:15:00' THEN DATE_ADD(left_at, INTERVAL 330 MINUTE) ELSE left_at END
+      WHERE DATE(updated_at) = '2026-11-21'
+    `);
+    await pool.query(`
+      UPDATE job_resume_selection
+      SET selected_at = DATE_ADD(selected_at, INTERVAL 330 MINUTE)
+      WHERE DATE(selected_at) = '2026-11-21' AND TIME(selected_at) BETWEEN '06:00:00' AND '09:15:00'
+    `);
+  } catch (_) {}
 };
 
 const buildTaskAssignmentAdminRow = (row) => {
@@ -5086,7 +5112,7 @@ router.post(
       customDateRaw && /^\d{4}-\d{2}-\d{2}$/.test(String(customDateRaw).trim())
         ? String(customDateRaw).trim()
         : null;
-    const nowTimeStr = new Date().toTimeString().slice(0, 8);
+    const nowTimeStr = formatSqlDateTimeInBusinessTimeZone().slice(11, 19);
     const customTimestamp = customDate ? `${customDate} ${nowTimeStr}` : null;
     const joinedReasonSource =
       req.body?.joinedReason ??
@@ -5955,103 +5981,103 @@ router.get("/api/admin/performance", async (req, res) => {
           '%Y-%m-%d %H:%i:%s.%f'
         ) AS submittedAt,
         DATE_FORMAT(
-          COALESCE(
+          ${buildSqlEffectiveStatusTimestamp(`COALESCE(
             ei.verified_at,
             CASE WHEN jrs.selection_status = 'verified' THEN jrs.selected_at ELSE NULL END
-          ),
+          )`)},
           '%Y-%m-%d %H:%i:%s.%f'
         ) AS verifiedAt,
         DATE_FORMAT(
-          COALESCE(
+          ${buildSqlEffectiveStatusTimestamp(`COALESCE(
             ei.walk_in_at,
             CASE
               WHEN c.walk_in IS NOT NULL THEN CAST(CONCAT(c.walk_in, ' 00:00:00.000000') AS DATETIME(6))
               WHEN jrs.selection_status = 'walk_in' THEN jrs.selected_at
               ELSE NULL
             END
-          ),
+          )`)},
           '%Y-%m-%d %H:%i:%s.%f'
         ) AS walkInAt,
         DATE_FORMAT(
-          COALESCE(
+          ${buildSqlEffectiveStatusTimestamp(`COALESCE(
             ei.didnt_turn_up_at,
             CASE WHEN jrs.selection_status = 'didnt_turn_up' THEN jrs.selected_at ELSE NULL END
-          ),
+          )`)},
           '%Y-%m-%d %H:%i:%s.%f'
         ) AS didntTurnUpAt,
         DATE_FORMAT(
-          COALESCE(
+          ${buildSqlEffectiveStatusTimestamp(`COALESCE(
             ei.selected_at,
             CASE WHEN jrs.selection_status = 'selected' THEN jrs.selected_at ELSE NULL END
-          ),
+          )`)},
           '%Y-%m-%d %H:%i:%s.%f'
         ) AS selectedAt,
         DATE_FORMAT(
-          COALESCE(
+          ${buildSqlEffectiveStatusTimestamp(`COALESCE(
             ei.pending_at,
             CASE WHEN jrs.selection_status = 'pending' THEN jrs.selected_at ELSE NULL END
-          ),
+          )`)},
           '%Y-%m-%d %H:%i:%s.%f'
         ) AS pendingAt,
         DATE_FORMAT(
-          COALESCE(
+          ${buildSqlEffectiveStatusTimestamp(`COALESCE(
             ei.rejected_at,
             CASE WHEN jrs.selection_status = 'rejected' THEN jrs.selected_at ELSE NULL END
-          ),
+          )`)},
           '%Y-%m-%d %H:%i:%s.%f'
         ) AS rejectedAt,
         DATE_FORMAT(
-          COALESCE(
+          ${buildSqlEffectiveStatusTimestamp(`COALESCE(
             ei.shortlisted_at,
             CASE WHEN jrs.selection_status IN ('shortlisted', 'pending_joining') THEN jrs.selected_at ELSE NULL END
-          ),
+          )`)},
           '%Y-%m-%d %H:%i:%s.%f'
         ) AS shortlistedAt,
         DATE_FORMAT(
-          COALESCE(
+          ${buildSqlEffectiveStatusTimestamp(`COALESCE(
             ei.joined_at,
             CASE WHEN jrs.selection_status = 'joined' THEN jrs.selected_at ELSE NULL END,
             CASE WHEN c.joining_date IS NOT NULL THEN CAST(CONCAT(c.joining_date, ' 00:00:00.000000') AS DATETIME(6)) ELSE NULL END
-          ),
+          )`)},
           '%Y-%m-%d %H:%i:%s.%f'
         ) AS joinedAt,
         DATE_FORMAT(
-          COALESCE(
+          ${buildSqlEffectiveStatusTimestamp(`COALESCE(
             ei.dropout_at,
             CASE WHEN jrs.selection_status = 'dropout' THEN jrs.selected_at ELSE NULL END
-          ),
+          )`)},
           '%Y-%m-%d %H:%i:%s.%f'
         ) AS dropoutAt,
         DATE_FORMAT(
-          COALESCE(
+          ${buildSqlEffectiveStatusTimestamp(`COALESCE(
             ei.billed_at,
             CASE WHEN jrs.selection_status = 'billed' THEN jrs.selected_at ELSE NULL END
-          ),
+          )`)},
           '%Y-%m-%d %H:%i:%s.%f'
         ) AS billedAt,
         DATE_FORMAT(
-          COALESCE(
+          ${buildSqlEffectiveStatusTimestamp(`COALESCE(
             ei.left_at,
             CASE WHEN jrs.selection_status = 'left' THEN jrs.selected_at ELSE NULL END
-          ),
+          )`)},
           '%Y-%m-%d %H:%i:%s.%f'
         ) AS leftAt,
         DATE_FORMAT(
-          COALESCE(
+          ${buildSqlEffectiveStatusTimestamp(`COALESCE(
             ei.others_at,
             CASE WHEN jrs.selection_status = 'others' THEN jrs.selected_at ELSE NULL END
-          ),
+          )`)},
           '%Y-%m-%d %H:%i:%s.%f'
         ) AS othersAt,
         DATE_FORMAT(
-          COALESCE(
+          ${buildSqlEffectiveStatusTimestamp(`COALESCE(
             ei.further_at,
             CASE WHEN jrs.selection_status = 'further' THEN jrs.selected_at ELSE NULL END
-          ),
+          )`)},
           '%Y-%m-%d %H:%i:%s.%f'
         ) AS furtherAt,
         DATE_FORMAT(
-          CASE WHEN jrs.selection_status = 'on_hold' THEN jrs.selected_at ELSE NULL END,
+          ${buildSqlEffectiveStatusTimestamp(`CASE WHEN jrs.selection_status = 'on_hold' THEN jrs.selected_at ELSE NULL END`)},
           '%Y-%m-%d %H:%i:%s.%f'
         ) AS onHoldAt,
         DATE_FORMAT(c.walk_in, '%Y-%m-%d') AS walkInDate,

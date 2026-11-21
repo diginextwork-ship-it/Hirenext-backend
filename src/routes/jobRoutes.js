@@ -59,6 +59,7 @@ const {
 } = require("../utils/resumeCompatibility");
 const {
   buildSqlEffectiveUploadedAt,
+  formatSqlDateTimeInBusinessTimeZone,
   getCurrentDateOnlyInBusinessTimeZone,
 } = require("../utils/dateTime");
 
@@ -1743,7 +1744,7 @@ router.post(
           customDateRaw && /^\d{4}-\d{2}-\d{2}$/.test(String(customDateRaw).trim())
             ? String(customDateRaw).trim()
             : null;
-        const nowTimeStr = new Date().toTimeString().slice(0, 8);
+        const nowTimeStr = formatSqlDateTimeInBusinessTimeZone().slice(11, 19);
         const customTimestamp = customDate ? `${customDate} ${nowTimeStr}` : null;
         const historicalSelectedAt = customTimestamp || null;
 

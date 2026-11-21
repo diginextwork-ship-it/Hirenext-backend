@@ -136,11 +136,18 @@ const buildSqlEffectiveUploadedAt = (
   ELSE ${uploadedAtCol}
 END`;
 
+const buildSqlEffectiveStatusTimestamp = (columnExpr) => `CASE
+  WHEN DATE(${columnExpr}) = '2026-11-21' AND TIME(${columnExpr}) BETWEEN '06:00:00' AND '09:15:00'
+  THEN DATE_ADD(${columnExpr}, INTERVAL 330 MINUTE)
+  ELSE ${columnExpr}
+END`;
+
 module.exports = {
   DEFAULT_BUSINESS_TIME_ZONE,
   SQL_HISTORICAL_CUTOFF_RES_NUM,
   buildSqlEffectiveSubmittedAt,
   buildSqlEffectiveUploadedAt,
+  buildSqlEffectiveStatusTimestamp,
   formatSqlDateTimeInBusinessTimeZone,
   getCurrentDateOnlyInBusinessTimeZone,
   isValidDateOnly,

@@ -3076,7 +3076,7 @@ router.post(
         processRaw !== undefined && processRaw !== null && String(processRaw).trim() !== ""
           ? String(processRaw).trim()
           : null;
-      const nowTimeStr = new Date().toTimeString().slice(0, 8);
+      const nowTimeStr = formatSqlDateTimeInBusinessTimeZone().slice(11, 19);
       const customTimestamp = customDate ? `${customDate} ${nowTimeStr}` : null;
       const historicalSelectedAt = customTimestamp || null;
 
