@@ -748,7 +748,7 @@ router.get(
           rd.job_jid AS jobJid,
           rd.resume_filename AS resumeFilename,
           DATE_FORMAT(
-            COALESCE(rd.uploaded_at, ei.submitted_at),
+            DATE_SUB(COALESCE(rd.uploaded_at, ei.submitted_at), INTERVAL 330 MINUTE),
             '%Y-%m-%d %H:%i:%s.%f'
           ) AS submittedAt,
           DATE_FORMAT(

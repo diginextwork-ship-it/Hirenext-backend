@@ -1895,10 +1895,10 @@ router.get(
         ${atsScoreSelection}
         ${atsMatchSelection}
         DATE_FORMAT(
-          COALESCE(rd.uploaded_at, ei.submitted_at),
+          DATE_SUB(COALESCE(rd.uploaded_at, ei.submitted_at), INTERVAL 330 MINUTE),
           '%Y-%m-%d %H:%i:%s.%f'
         ) AS submittedAt,
-        rd.uploaded_at AS uploadedAt,
+        DATE_SUB(rd.uploaded_at, INTERVAL 330 MINUTE) AS uploadedAt,
         COALESCE(jrs.selection_status, 'pending') AS workflowStatus,
         jrs.selection_note AS workflowNote,
         jrs.selected_by_admin AS workflowUpdatedBy,
