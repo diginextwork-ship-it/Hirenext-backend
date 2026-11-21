@@ -4687,11 +4687,82 @@ const resolveRollbackSourceStatus = (resume) => {
   }
 
   if (currentStatus === "dropout") {
-    return hasNonEmptyValue(resume.currentJoiningDate) ||
+    return (
+      hasNonEmptyValue(resume.currentJoiningDate) ||
       hasNonEmptyValue(resume.selectedAtHistory) ||
       hasNonEmptyValue(resume.selectedAt)
-      ? "selected"
-      : "shortlisted";
+        ? "selected"
+        : hasNonEmptyValue(resume.shortlistedAt)
+        ? "shortlisted"
+        : hasNonEmptyValue(resume.currentWalkInDate) || hasNonEmptyValue(resume.walkInAt)
+        ? "walk_in"
+        : "shortlisted"
+    );
+  }
+
+  if (currentStatus === "joined") {
+    if (hasNonEmptyValue(resume.pendingAt) || hasNonEmptyValue(resume.pendingReason)) {
+      return "pending";
+    }
+    if (
+      hasNonEmptyValue(resume.selectedAtHistory) ||
+      hasNonEmptyValue(resume.selectedAt)
+    ) {
+      return "selected";
+    }
+    if (hasNonEmptyValue(resume.shortlistedAt)) {
+      return "shortlisted";
+    }
+    if (
+      hasNonEmptyValue(resume.currentWalkInDate) ||
+      hasNonEmptyValue(resume.walkInAt)
+    ) {
+      return "walk_in";
+    }
+    return "selected";
+  }
+
+  if (currentStatus === "selected") {
+    if (hasNonEmptyValue(resume.shortlistedAt)) {
+      return "shortlisted";
+    }
+    if (
+      hasNonEmptyValue(resume.currentWalkInDate) ||
+      hasNonEmptyValue(resume.walkInAt)
+    ) {
+      return "walk_in";
+    }
+    return "shortlisted";
+  }
+
+  if (currentStatus === "pending") {
+    if (
+      hasNonEmptyValue(resume.selectedAtHistory) ||
+      hasNonEmptyValue(resume.selectedAt)
+    ) {
+      return "selected";
+    }
+    if (hasNonEmptyValue(resume.shortlistedAt)) {
+      return "shortlisted";
+    }
+    if (
+      hasNonEmptyValue(resume.currentWalkInDate) ||
+      hasNonEmptyValue(resume.walkInAt)
+    ) {
+      return "walk_in";
+    }
+    return "selected";
+  }
+
+  if (currentStatus === "billed") {
+    return "joined";
+  }
+
+  if (currentStatus === "left") {
+    if (hasNonEmptyValue(resume.billedAt) || hasNonEmptyValue(resume.billedReason)) {
+      return "billed";
+    }
+    return "joined";
   }
 
   if (currentStatus === "others") {
