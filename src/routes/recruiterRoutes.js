@@ -60,6 +60,8 @@ const {
   resolveStatusReasonInput,
 } = require("../utils/resumeCompatibility");
 const {
+  buildSqlEffectiveSubmittedAt,
+  buildSqlEffectiveUploadedAt,
   formatSqlDateTimeInBusinessTimeZone,
   getCurrentDateOnlyInBusinessTimeZone,
   isValidDateOnly,
@@ -1895,10 +1897,10 @@ router.get(
         ${atsScoreSelection}
         ${atsMatchSelection}
         DATE_FORMAT(
-          DATE_SUB(COALESCE(rd.uploaded_at, ei.submitted_at), INTERVAL 330 MINUTE),
+          ${buildSqlEffectiveSubmittedAt("rd.res_id", "rd.uploaded_at", "ei.submitted_at")},
           '%Y-%m-%d %H:%i:%s.%f'
         ) AS submittedAt,
-        DATE_SUB(rd.uploaded_at, INTERVAL 330 MINUTE) AS uploadedAt,
+        ${buildSqlEffectiveUploadedAt("rd.res_id", "rd.uploaded_at")} AS uploadedAt,
         COALESCE(jrs.selection_status, 'pending') AS workflowStatus,
         jrs.selection_note AS workflowNote,
         jrs.selected_by_admin AS workflowUpdatedBy,

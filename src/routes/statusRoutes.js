@@ -8,7 +8,10 @@ const {
   buildExtraInfoJoin,
   buildResumeBinarySelect,
 } = require("../utils/dbHelpers");
-const { parseInclusiveDateRange } = require("../utils/dateTime");
+const {
+  buildSqlEffectiveSubmittedAt,
+  parseInclusiveDateRange,
+} = require("../utils/dateTime");
 
 const router = express.Router();
 
@@ -748,7 +751,7 @@ router.get(
           rd.job_jid AS jobJid,
           rd.resume_filename AS resumeFilename,
           DATE_FORMAT(
-            DATE_SUB(COALESCE(rd.uploaded_at, ei.submitted_at), INTERVAL 330 MINUTE),
+            ${buildSqlEffectiveSubmittedAt("rd.res_id", "rd.uploaded_at", "ei.submitted_at")},
             '%Y-%m-%d %H:%i:%s.%f'
           ) AS submittedAt,
           DATE_FORMAT(

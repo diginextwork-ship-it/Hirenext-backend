@@ -57,7 +57,10 @@ const {
   buildResumeCompatibilityFields,
   resolveStatusReasonInput,
 } = require("../utils/resumeCompatibility");
-const { getCurrentDateOnlyInBusinessTimeZone } = require("../utils/dateTime");
+const {
+  buildSqlEffectiveUploadedAt,
+  getCurrentDateOnlyInBusinessTimeZone,
+} = require("../utils/dateTime");
 
 const router = express.Router();
 
@@ -317,7 +320,7 @@ const fetchJobResumeWorkflowPayload = async (connection, resId) => {
       rd.res_id AS resId,
       rd.job_jid AS jobJid,
       rd.rid AS recruiterRid,
-      DATE_SUB(rd.uploaded_at, INTERVAL 330 MINUTE) AS uploadedAt,
+      ${buildSqlEffectiveUploadedAt("rd.res_id", "rd.uploaded_at")} AS uploadedAt,
       rd.ats_raw_json AS atsRawJson,
       c.name AS candidateName,
       c.email AS candidateEmail,
@@ -1437,7 +1440,7 @@ router.get(
           ${atsScoreSelection}
           ${atsMatchSelection}
           c.walk_in AS walkInDate,
-          DATE_SUB(rd.uploaded_at, INTERVAL 330 MINUTE) AS uploadedAt,
+          ${buildSqlEffectiveUploadedAt("rd.res_id", "rd.uploaded_at")} AS uploadedAt,
           jrs.selection_status AS workflowStatus,
           jrs.selection_note AS workflowNote,
           jrs.selected_by_admin AS updatedBy,

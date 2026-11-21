@@ -47,6 +47,8 @@ const {
   resolveStatusReasonInput,
 } = require("../utils/resumeCompatibility");
 const {
+  buildSqlEffectiveSubmittedAt,
+  buildSqlEffectiveUploadedAt,
   formatSqlDateTimeInBusinessTimeZone,
   getCurrentDateOnlyInBusinessTimeZone,
   parseInclusiveDateRange,
@@ -1141,7 +1143,7 @@ router.get("/api/admin/dashboard", async (_req, res) => {
           ${acceptedSelect}
           ${acceptedAtSelect}
           ${acceptedByAdminSelect}
-          DATE_SUB(rd.uploaded_at, INTERVAL 330 MINUTE) AS uploadedAt
+          ${buildSqlEffectiveUploadedAt("rd.res_id", "rd.uploaded_at")} AS uploadedAt
         FROM resumes_data rd
         INNER JOIN recruiter r ON r.rid = rd.rid
         LEFT JOIN candidate c ON c.res_id = rd.res_id
@@ -1459,7 +1461,7 @@ const getCandidateResumesHandler = async (req, res) => {
         rd.resume_type AS resumeType,
         ${atsScoreSelect}
         ${atsMatchSelect}
-        DATE_SUB(rd.uploaded_at, INTERVAL 330 MINUTE) AS uploadedAt,
+        ${buildSqlEffectiveUploadedAt("rd.res_id", "rd.uploaded_at")} AS uploadedAt,
         j.role_name AS roleName,
         j.company_name AS companyName,
         j.city AS city,
@@ -1803,7 +1805,7 @@ const getAllSubmittedResumesHandler = async (req, res) => {
         rd.job_jid AS jobJid,
         rd.rid AS rid,
         COALESCE(rd.submitted_by_role, 'recruiter') AS source,
-        DATE_SUB(rd.uploaded_at, INTERVAL 330 MINUTE) AS uploadedAt,
+        ${buildSqlEffectiveUploadedAt("rd.res_id", "rd.uploaded_at")} AS uploadedAt,
         rd.resume_filename AS resumeFilename,
         rd.resume_type AS resumeType,
         rd.ats_score AS atsScore,
@@ -2001,7 +2003,7 @@ const exportAllSubmittedResumesHandler = async (req, res) => {
         rd.res_id AS resId,
         rd.job_jid AS jobJid,
         COALESCE(rd.submitted_by_role, 'recruiter') AS source,
-        DATE_SUB(rd.uploaded_at, INTERVAL 330 MINUTE) AS uploadedAt,
+        ${buildSqlEffectiveUploadedAt("rd.res_id", "rd.uploaded_at")} AS uploadedAt,
         rd.resume_filename AS resumeFilename,
         rd.ats_score AS atsScore,
         r.name AS recruiterName,
@@ -2413,7 +2415,7 @@ router.get("/api/admin/jobs/:jid/resumes", async (req, res) => {
         rd.resume_type AS resumeType,
         ${atsScoreSelect}
         ${atsMatchSelect}
-        DATE_SUB(rd.uploaded_at, INTERVAL 330 MINUTE) AS uploadedAt,
+        ${buildSqlEffectiveUploadedAt("rd.res_id", "rd.uploaded_at")} AS uploadedAt,
         ${submittedReasonSelect}
         ${verifiedReasonSelect}
         ${othersReasonSelect}
@@ -3456,8 +3458,8 @@ router.get("/api/admin/recruiters/:rid/resumes", async (req, res) => {
         rd.res_id AS resId,
         rd.job_jid AS jobJid,
         rd.rid AS rid,
-        DATE_SUB(rd.uploaded_at, INTERVAL 330 MINUTE) AS uploadedAt,
-        DATE_FORMAT(DATE_SUB(COALESCE(rd.uploaded_at, ei.submitted_at), INTERVAL 330 MINUTE), '%Y-%m-%d %H:%i:%s') AS submittedAt,
+        ${buildSqlEffectiveUploadedAt("rd.res_id", "rd.uploaded_at")} AS uploadedAt,
+        DATE_FORMAT(${buildSqlEffectiveSubmittedAt("rd.res_id", "rd.uploaded_at", "ei.submitted_at")}, '%Y-%m-%d %H:%i:%s') AS submittedAt,
         rd.resume_filename AS resumeFilename,
         rd.resume_type AS resumeType,
         ${atsScoreSelect}
@@ -4960,7 +4962,7 @@ const fetchAdminResumeWorkflowPayload = async (connection, resId) => {
       rd.res_id AS resId,
       rd.job_jid AS jobJid,
       rd.rid AS recruiterRid,
-      DATE_SUB(rd.uploaded_at, INTERVAL 330 MINUTE) AS uploadedAt,
+      ${buildSqlEffectiveUploadedAt("rd.res_id", "rd.uploaded_at")} AS uploadedAt,
       rd.ats_raw_json AS atsRawJson,
       c.name AS candidateName,
       c.email AS candidateEmail,
@@ -5949,7 +5951,7 @@ router.get("/api/admin/performance", async (req, res) => {
         rd.job_jid AS jobJid,
         rd.resume_filename AS resumeFilename,
         DATE_FORMAT(
-          DATE_SUB(COALESCE(rd.uploaded_at, ei.submitted_at), INTERVAL 330 MINUTE),
+          ${buildSqlEffectiveSubmittedAt("rd.res_id", "rd.uploaded_at", "ei.submitted_at")},
           '%Y-%m-%d %H:%i:%s.%f'
         ) AS submittedAt,
         DATE_FORMAT(
@@ -7116,8 +7118,8 @@ router.get("/api/admin/recruiter-targets", async (req, res) => {
       SELECT
         rd.rid AS recruiterRid,
         COUNT(DISTINCT CASE
-          WHEN DATE_SUB(COALESCE(rd.uploaded_at, ei.submitted_at), INTERVAL 330 MINUTE) >= ?
-           AND DATE_SUB(COALESCE(rd.uploaded_at, ei.submitted_at), INTERVAL 330 MINUTE) <= ?
+          WHEN ${buildSqlEffectiveSubmittedAt("rd.res_id", "rd.uploaded_at", "ei.submitted_at")} >= ?
+           AND ${buildSqlEffectiveSubmittedAt("rd.res_id", "rd.uploaded_at", "ei.submitted_at")} <= ?
           THEN rd.res_id ELSE NULL
         END) AS submittedCount,
         COUNT(DISTINCT CASE
@@ -7563,8 +7565,8 @@ router.get("/api/admin/recruiter-targets/history", async (req, res) => {
         const [cntRows] = await pool.query(`
           SELECT
             COUNT(DISTINCT CASE
-              WHEN DATE_SUB(COALESCE(rd.uploaded_at, ei.submitted_at), INTERVAL 330 MINUTE) >= ?
-               AND DATE_SUB(COALESCE(rd.uploaded_at, ei.submitted_at), INTERVAL 330 MINUTE) <= ?
+              WHEN ${buildSqlEffectiveSubmittedAt("rd.res_id", "rd.uploaded_at", "ei.submitted_at")} >= ?
+               AND ${buildSqlEffectiveSubmittedAt("rd.res_id", "rd.uploaded_at", "ei.submitted_at")} <= ?
               THEN rd.res_id ELSE NULL
             END) AS submittedCount,
             COUNT(DISTINCT CASE

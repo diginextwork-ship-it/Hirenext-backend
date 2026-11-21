@@ -105,8 +105,42 @@ const parseInclusiveDateRange = (startRaw, endRaw) => {
   };
 };
 
+const SQL_HISTORICAL_CUTOFF_RES_NUM = 9071;
+
+/**
+ * Resumes uploaded before commit 9fd2973 (up to res_9071) were inserted under
+ * MySQL session time_zone = '+00:00' with literal IST datetime strings, so MySQL
+ * stored them as UTC = real_IST. With the session now in '+05:30', MySQL converts
+ * that UTC by adding +5:30, requiring DATE_SUB(..., INTERVAL 330 MINUTE) to display true IST.
+ *
+ * Resumes uploaded starting from res_9072 onwards were inserted while the MySQL session
+ * was already in '+05:30', so MySQL converted the IST string to UTC properly on insert.
+ * Reading them back in '+05:30' produces true IST directly, requiring NO subtraction.
+ */
+const buildSqlEffectiveSubmittedAt = (
+  resIdCol = "rd.res_id",
+  uploadedAtCol = "rd.uploaded_at",
+  submittedAtCol = "ei.submitted_at",
+) => `CASE
+  WHEN ${resIdCol} REGEXP '^res_[0-9]+$' AND CAST(SUBSTRING(${resIdCol}, 5) AS UNSIGNED) <= ${SQL_HISTORICAL_CUTOFF_RES_NUM}
+  THEN DATE_SUB(COALESCE(${uploadedAtCol}, ${submittedAtCol}), INTERVAL 330 MINUTE)
+  ELSE COALESCE(${uploadedAtCol}, ${submittedAtCol})
+END`;
+
+const buildSqlEffectiveUploadedAt = (
+  resIdCol = "rd.res_id",
+  uploadedAtCol = "rd.uploaded_at",
+) => `CASE
+  WHEN ${resIdCol} REGEXP '^res_[0-9]+$' AND CAST(SUBSTRING(${resIdCol}, 5) AS UNSIGNED) <= ${SQL_HISTORICAL_CUTOFF_RES_NUM}
+  THEN DATE_SUB(${uploadedAtCol}, INTERVAL 330 MINUTE)
+  ELSE ${uploadedAtCol}
+END`;
+
 module.exports = {
   DEFAULT_BUSINESS_TIME_ZONE,
+  SQL_HISTORICAL_CUTOFF_RES_NUM,
+  buildSqlEffectiveSubmittedAt,
+  buildSqlEffectiveUploadedAt,
   formatSqlDateTimeInBusinessTimeZone,
   getCurrentDateOnlyInBusinessTimeZone,
   isValidDateOnly,
